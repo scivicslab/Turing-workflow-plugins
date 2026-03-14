@@ -57,7 +57,7 @@
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <pojo-actor.version>3.0.0</pojo-actor.version>
-        <turing-workflow.version>1.0.0</turing-workflow.version>
+        <turing-workflow.version>3.0.0</turing-workflow.version>
     </properties>
 
     <dependencyManagement>
