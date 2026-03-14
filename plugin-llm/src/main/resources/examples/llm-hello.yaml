@@ -1,35 +1,56 @@
 name: llm-hello
-description: Load LLM plugin via Maven, send a prompt to coder-agent, display result
+description: Load LLM plugin via Maven, send a prompt to LLM Console (Claude) via MCP Gateway
 
 steps:
-  - from: "1"
-    to: "2"
-    label: load-llm-plugin
-    note: Load LLM actor from Maven repository
+  - from: "0"
+    to: "1"
+    label: load-jar
+    note: Load LLM plugin JAR from local Maven repository
     actions:
       - actor: loader
-        method: loadMaven
-        arguments: com.scivicslab.turingworkflow.plugins:plugin-llm:1.0.0 llm com.scivicslab.turingworkflow.plugins.llm.LlmActor
+        method: loadJar
+        arguments: "com.scivicslab.turingworkflow.plugins:plugin-llm:1.0.0"
+
+  - from: "1"
+    to: "2"
+    label: create-llm-actor
+    note: Create llm actor under workflow root
+    actions:
+      - actor: loader
+        method: createChild
+        arguments:
+          - ROOT
+          - llm
+          - com.scivicslab.turingworkflow.plugins.llm.LlmActor
 
   - from: "2"
     to: "3"
+    label: set-gateway-url
+    note: Point LLM actor to MCP Gateway (llm-console-claude)
+    actions:
+      - actor: llm
+        method: setUrl
+        arguments: http://localhost:8888/mcp/llm-console-claude
+
+  - from: "3"
+    to: "4"
     label: check-status
-    note: Check coder-agent status via MCP
+    note: Check LLM Console status via MCP Gateway
     actions:
       - actor: llm
         method: status
         arguments: ""
 
-  - from: "3"
-    to: "4"
+  - from: "4"
+    to: "5"
     label: send-prompt
-    note: Send a simple prompt to coder-agent
+    note: Send a simple prompt to Claude via MCP Gateway
     actions:
       - actor: llm
         method: prompt
         arguments: "Hello! Please respond with a short greeting and tell me what you can do."
 
-  - from: "4"
+  - from: "5"
     to: end
     label: done
     note: Log completion
