@@ -1,0 +1,48 @@
+name: llm-hello
+description: Load LLM plugin via Maven, send a prompt to coder-agent, display result
+
+steps:
+  - from: "1"
+    to: "2"
+    label: load-llm-plugin
+    note: Load LLM actor from Maven repository
+    actions:
+      - actor: loader
+        method: loadMaven
+        arguments: com.scivicslab.turingworkflow.plugins:plugin-llm:1.0.0 llm com.scivicslab.turingworkflow.plugins.llm.LlmActor
+
+  - from: "2"
+    to: "3"
+    label: check-status
+    note: Check coder-agent status via MCP
+    actions:
+      - actor: llm
+        method: status
+        arguments: ""
+
+  - from: "3"
+    to: "4"
+    label: send-prompt
+    note: Send a simple prompt to coder-agent
+    actions:
+      - actor: llm
+        method: prompt
+        arguments: "Hello! Please respond with a short greeting and tell me what you can do."
+
+  - from: "4"
+    to: end
+    label: done
+    note: Log completion
+    actions:
+      - actor: log
+        method: info
+        arguments: Workflow completed successfully
+
+  - from: "!end"
+    to: end
+    label: catch-all
+    note: Prevent infinite loop
+    actions:
+      - actor: log
+        method: warn
+        arguments: Unexpected state - forcing end
