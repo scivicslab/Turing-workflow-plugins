@@ -2,8 +2,7 @@ name: llm-hello
 description: Load LLM plugin via Maven, send a prompt to LLM Console (Claude) via MCP Gateway
 
 steps:
-  - from: "0"
-    to: "1"
+  - states: ["0", "1"]
     label: load-jar
     note: Load LLM plugin JAR from local Maven repository
     actions:
@@ -11,8 +10,7 @@ steps:
         method: loadJar
         arguments: "com.scivicslab.turingworkflow.plugins:plugin-llm:1.0.0"
 
-  - from: "1"
-    to: "2"
+  - states: ["1", "2"]
     label: create-llm-actor
     note: Create llm actor under workflow root
     actions:
@@ -23,17 +21,15 @@ steps:
           - llm
           - com.scivicslab.turingworkflow.plugins.llm.LlmActor
 
-  - from: "2"
-    to: "3"
+  - states: ["2", "3"]
     label: set-gateway-url
     note: Point LLM actor to MCP Gateway (llm-console-claude)
     actions:
       - actor: llm
         method: setUrl
-        arguments: http://localhost:8888/mcp/llm-console-claude
+        arguments: http://localhost:8090/mcp
 
-  - from: "3"
-    to: "4"
+  - states: ["3", "4"]
     label: check-status
     note: Check LLM Console status via MCP Gateway
     actions:
@@ -41,8 +37,7 @@ steps:
         method: status
         arguments: ""
 
-  - from: "4"
-    to: "5"
+  - states: ["4", "5"]
     label: send-prompt
     note: Send a simple prompt to Claude via MCP Gateway
     actions:
@@ -50,8 +45,7 @@ steps:
         method: prompt
         arguments: "Hello! Please respond with a short greeting and tell me what you can do."
 
-  - from: "5"
-    to: end
+  - states: ["5", "end"]
     label: done
     note: Log completion
     actions:
@@ -59,8 +53,7 @@ steps:
         method: info
         arguments: Workflow completed successfully
 
-  - from: "!end"
-    to: end
+  - states: ["!end", "end"]
     label: catch-all
     note: Prevent infinite loop
     actions:

@@ -26,7 +26,7 @@ public class LlmActor extends IIActorRef<LlmActor> {
     private static final Logger logger = Logger.getLogger(LlmActor.class.getName());
     private static final Duration TIMEOUT = Duration.ofMinutes(5);
 
-    private String mcpBaseUrl = "http://localhost:8090";
+    private String mcpBaseUrl = "http://localhost:8090/mcp";
     private volatile Consumer<String> outputListener;
     private volatile String mcpSessionId = null;
     private final AtomicInteger requestId = new AtomicInteger(1);
@@ -55,7 +55,7 @@ public class LlmActor extends IIActorRef<LlmActor> {
         if (url == null || url.isBlank()) {
             return new ActionResult(false, "URL is required");
         }
-        this.mcpBaseUrl = url.trim();
+        this.mcpBaseUrl = stripQuotes(url.trim());
         this.mcpSessionId = null;
         emit("LLM endpoint set to: " + this.mcpBaseUrl);
         return new ActionResult(true, "URL set to " + this.mcpBaseUrl);
@@ -95,7 +95,7 @@ public class LlmActor extends IIActorRef<LlmActor> {
      * Get the LLM service status via MCP tools/call.
      */
     @Action("status")
-    public ActionResult status() {
+    public ActionResult status(String args) {
         try {
             ensureInitialized();
             String response = callMcpTool("getStatus", "{}");
@@ -111,7 +111,7 @@ public class LlmActor extends IIActorRef<LlmActor> {
      * List available tools on the MCP server.
      */
     @Action("listTools")
-    public ActionResult listTools() {
+    public ActionResult listTools(String args) {
         try {
             ensureInitialized();
             String response = sendJsonRpc("tools/list", "{}");
@@ -197,7 +197,7 @@ public class LlmActor extends IIActorRef<LlmActor> {
                 .build();
 
         var requestBuilder = HttpRequest.newBuilder()
-                .uri(URI.create(mcpBaseUrl + "/mcp"))
+                .uri(URI.create(mcpBaseUrl))
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json, text/event-stream")
                 .timeout(TIMEOUT)
