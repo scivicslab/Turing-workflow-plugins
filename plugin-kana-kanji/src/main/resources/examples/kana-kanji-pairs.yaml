@@ -1,0 +1,149 @@
+name: kana-kanji-pairs
+description: |
+  Two-step kana-kanji pair generation from OCR TSV.
+  Step 1: LLM merges OCR fragments into bunsetsu-segmented sentences.
+  Step 2: LLM converts bunsetsu text to hiragana readings.
+  Validation loop retries Step 2 if hiragana is missing (max 3 retries via state counter).
+
+  Variables (set via -D or vars.set):
+    ocr.file   - path to input OCR TSV file
+    pairs.file - path to output pairs TSV file
+    vllm.url   - vLLM endpoint (default: http://192.168.5.16:8000/v1/chat/completions)
+    vllm.model - model name (default: Qwen3.5-35B-A3B)
+
+steps:
+  # ── Setup ─────────────────────────────────────────────────────────────────
+
+  - states: ["0", "1"]
+    label: load-plugin
+    actions:
+      - actor: loader
+        method: loadJar
+        arguments: "com.scivicslab.turingworkflow.plugins:plugin-kana-kanji:1.0.0"
+
+  - states: ["1", "2"]
+    label: create-actors
+    actions:
+      - actor: loader
+        method: createChild
+        arguments: ["ROOT", "vllm", "com.scivicslab.turingworkflow.plugins.kanakanji.VllmActor"]
+      - actor: loader
+        method: createChild
+        arguments: ["ROOT", "ocr", "com.scivicslab.turingworkflow.plugins.kanakanji.OcrActor"]
+      - actor: loader
+        method: createChild
+        arguments: ["ROOT", "pairs", "com.scivicslab.turingworkflow.plugins.kanakanji.PairsActor"]
+
+  - states: ["2", "3"]
+    label: configure
+    actions:
+      - actor: vllm
+        method: setUrl
+        arguments: "${vllm.url}"
+      - actor: vllm
+        method: setModel
+        arguments: "${vllm.model}"
+      - actor: ocr
+        method: loadFile
+        arguments: "${ocr.file}"
+      - actor: pairs
+        method: openOutput
+        arguments: "${pairs.file}"
+
+  # ── Page loop ─────────────────────────────────────────────────────────────
+
+  # Try to advance to next page; fails → all done
+  - states: ["3", "4"]
+    label: next-page
+    actions:
+      - actor: ocr
+        method: nextPage
+        arguments: ""
+
+  # All pages processed → close and end
+  - states: ["3", "end"]
+    label: all-done
+    actions:
+      - actor: pairs
+        method: closeOutput
+        arguments: ""
+      - actor: log
+        method: add
+        arguments: {"source": "kana-kanji", "type": "stdout", "data": "All pages processed."}
+
+  # ── Step 1: Bunsetsu segmentation ─────────────────────────────────────────
+
+  - states: ["4", "5"]
+    label: get-page-text
+    actions:
+      - actor: ocr
+        method: getPageText
+        arguments: ""
+
+  - states: ["5", "6"]
+    label: step1-segment
+    note: Send OCR text to LLM for bunsetsu segmentation; save result as 'segmented'
+    actions:
+      - actor: vllm
+        method: segment
+        arguments: "${result}"
+      - actor: interpreter
+        method: putJson
+        arguments: {path: segmented, value: "${result}"}
+
+  # Step 1 failed (LLM error) → skip page, go to next
+  - states: ["5", "3"]
+    label: step1-failed-skip
+    actions:
+      - actor: log
+        method: add
+        arguments: {"source": "kana-kanji", "type": "stderr", "data": "Step 1 failed, skipping page"}
+
+  # ── Step 2: Hiragana conversion with retry loop ───────────────────────────
+
+  - states: ["6", "7"]
+    label: set-page-info
+    actions:
+      - actor: ocr
+        method: getPageInfo
+        arguments: ""
+
+  - states: ["7", "8"]
+    label: set-pairs-page-info
+    actions:
+      - actor: pairs
+        method: setPageInfo
+        arguments: "${result}"
+
+  # Step 2: toHiragana handles batching (20 lines) and per-line retry internally.
+  # Writes pairs on success; on failure goes to next page.
+  - states: ["8", "3"]
+    label: step2-to-hiragana-and-write
+    note: Convert segmented text to hiragana (batched, with per-line retry), then write pairs
+    actions:
+      - actor: vllm
+        method: toHiragana
+        arguments: "${segmented}"
+      - actor: pairs
+        method: writePairs
+        arguments: "${result}"
+
+  # Step 2 failed entirely → skip page
+  - states: ["8", "3"]
+    label: step2-failed-skip
+    actions:
+      - actor: log
+        method: add
+        arguments: {"source": "kana-kanji", "type": "stderr", "data": "Step 2 failed, skipping page"}
+
+  # ── Error fallback ────────────────────────────────────────────────────────
+
+  - states: ["!end", "end"]
+    label: catch-all
+    actions:
+      - actor: pairs
+        method: closeOutput
+        arguments: ""
+      - actor: log
+        method: add
+        arguments: {"source": "kana-kanji", "type": "stderr", "data": "Workflow ended unexpectedly"}

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.scivicslab.turingworkflow.plugins</groupId>
+        <artifactId>turing-workflow-plugins-parent</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>plugin-log-db</artifactId>
+    <name>Turing Workflow Plugin: Log Database</name>
+    <description>H2 database-backed distributed log storage for Turing-workflow</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.scivicslab</groupId>
+            <artifactId>pojo-actor</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.scivicslab</groupId>
+            <artifactId>turing-workflow</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <version>2.2.224</version>
+        </dependency>
+        <dependency>
+            <groupId>org.json</groupId>
+            <artifactId>json</artifactId>
+            <version>20231013</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

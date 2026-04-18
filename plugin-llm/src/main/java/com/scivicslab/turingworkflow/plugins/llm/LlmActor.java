@@ -10,31 +10,65 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Actor that calls an LLM service via MCP Streamable HTTP transport.
- * Default target: quarkus-coder-agent-claude at localhost:8090.
+ * Actor that calls an LLM service via MCP (Model Context Protocol) Streamable HTTP transport.
  *
- * <p>Can be dynamically loaded via loader.loadMaven in workflow YAML.</p>
+ * <p>Default target: quarkus-chat-ui-claude at {@code localhost:8090}.
+ * Can be dynamically loaded via {@code loader.loadMaven} in workflow YAML.</p>
+ *
+ * <p>Supported actions:</p>
+ * <ul>
+ *   <li>{@code setUrl} - Configure the MCP server base URL</li>
+ *   <li>{@code prompt} - Send a prompt to the LLM and receive a response</li>
+ *   <li>{@code status} - Query the LLM service status</li>
+ *   <li>{@code listTools} - List available tools on the MCP server</li>
+ * </ul>
+ *
+ * @author devteam@scivicslab.com
+ * @since 1.0.0
  */
 public class LlmActor extends IIActorRef<LlmActor> {
 
     private static final Logger logger = Logger.getLogger(LlmActor.class.getName());
+
+    /** HTTP request timeout for MCP calls (5 minutes to allow for long LLM responses). */
     private static final Duration TIMEOUT = Duration.ofMinutes(5);
 
+    /** Base URL of the MCP server endpoint. */
     private String mcpBaseUrl = "http://localhost:8090/mcp";
+
+    /** Optional listener that receives output messages (prompt results, status, errors). */
     private volatile Consumer<String> outputListener;
+
+    /** MCP session identifier, obtained during the initialize handshake. */
     private volatile String mcpSessionId = null;
+
+    /** Monotonically increasing JSON-RPC request ID counter. */
     private final AtomicInteger requestId = new AtomicInteger(1);
 
+    /**
+     * Creates a new {@code LlmActor} with the given name and actor system.
+     *
+     * @param name   the actor name used for identification within the workflow
+     * @param system the actor system this actor belongs to
+     */
     public LlmActor(String name, IIActorSystem system) {
         super(name, null, system);
     }
 
+    /**
+     * Sets an output listener that will be called with status messages,
+     * LLM responses, and error notifications.
+     *
+     * @param listener a consumer that receives output messages, or {@code null} to disable
+     */
     public void setOutputListener(Consumer<String> listener) {
         this.outputListener = listener;
     }
@@ -47,23 +81,35 @@ public class LlmActor extends IIActorRef<LlmActor> {
     }
 
     /**
-     * Set the MCP server base URL.
-     * Arguments: URL (e.g., "http://localhost:8090")
+     * Sets the MCP server base URL. Resets any existing MCP session.
+     *
+     * <p>Expected argument: the base URL string (e.g., {@code "http://localhost:8090/mcp"}).</p>
+     *
+     * @param url the MCP server base URL; must not be {@code null} or blank
+     * @return an {@link ActionResult} indicating success with the configured URL,
+     *         or failure if the URL is missing
      */
     @Action("setUrl")
     public ActionResult setUrl(String url) {
         if (url == null || url.isBlank()) {
             return new ActionResult(false, "URL is required");
         }
-        this.mcpBaseUrl = stripQuotes(url.trim());
+        this.mcpBaseUrl = unwrapJsonArray(url.trim());
         this.mcpSessionId = null;
         emit("LLM endpoint set to: " + this.mcpBaseUrl);
         return new ActionResult(true, "URL set to " + this.mcpBaseUrl);
     }
 
     /**
-     * Send a prompt to the LLM via MCP tools/call.
-     * Arguments: the prompt text
+     * Sends a prompt to the LLM via the MCP {@code tools/call} method.
+     *
+     * <p>Expected argument: the prompt text as a plain string. The prompt is sent
+     * to the {@code sendPrompt} tool on the MCP server with an empty model selector
+     * (server default).</p>
+     *
+     * @param promptText the prompt text to send; must not be {@code null} or blank
+     * @return an {@link ActionResult} containing the LLM response text on success,
+     *         or an error message on failure
      */
     @Action("prompt")
     public ActionResult prompt(String promptText) {
@@ -92,7 +138,13 @@ public class LlmActor extends IIActorRef<LlmActor> {
     }
 
     /**
-     * Get the LLM service status via MCP tools/call.
+     * Retrieves the LLM service status via the MCP {@code tools/call} method.
+     *
+     * <p>Expected argument: ignored (may be {@code null} or empty).</p>
+     *
+     * @param args unused argument (required by the action framework signature)
+     * @return an {@link ActionResult} containing the status information on success,
+     *         or an error message on failure
      */
     @Action("status")
     public ActionResult status(String args) {
@@ -108,7 +160,13 @@ public class LlmActor extends IIActorRef<LlmActor> {
     }
 
     /**
-     * List available tools on the MCP server.
+     * Lists available tools on the MCP server via the {@code tools/list} JSON-RPC method.
+     *
+     * <p>Expected argument: ignored (may be {@code null} or empty).</p>
+     *
+     * @param args unused argument (required by the action framework signature)
+     * @return an {@link ActionResult} containing the JSON list of available tools on success,
+     *         or an error message on failure
      */
     @Action("listTools")
     public ActionResult listTools(String args) {
@@ -121,6 +179,124 @@ public class LlmActor extends IIActorRef<LlmActor> {
             emit("!!! LLM error: " + e.getMessage());
             return new ActionResult(false, "MCP call failed: " + e.getMessage());
         }
+    }
+
+    /**
+     * Calls the {@code call_agent} tool on the MCP Gateway, which routes the prompt
+     * to a named agent and blocks until the reply arrives (up to 5 minutes).
+     *
+     * <p>Expected argument formats:</p>
+     * <ul>
+     *   <li>JSON array: {@code ["agentName", "prompt text"]}</li>
+     *   <li>JSON object: {@code {"agent": "agentName", "prompt": "text", "model": "sonnet"}}</li>
+     * </ul>
+     *
+     * @param args JSON array or object containing agent name and prompt
+     * @return an {@link ActionResult} containing the agent's reply on success
+     */
+    @Action("callAgent")
+    public ActionResult callAgent(String args) {
+        if (args == null || args.isBlank()) {
+            return new ActionResult(false,
+                    "Arguments required: [\"agentName\", \"promptText\"] or {\"agent\":\"...\",\"prompt\":\"...\"}");
+        }
+
+        String unwrapped = unwrapJsonArray(args.trim());
+        String agentName;
+        String promptText;
+        String argumentsJson;
+
+        if (unwrapped.startsWith("{")) {
+            argumentsJson = unwrapped;
+            agentName = extractJsonStringField(unwrapped, "agent");
+            promptText = extractJsonStringField(unwrapped, "prompt");
+        } else if (unwrapped.startsWith("[")) {
+            String[] parts = parseJsonStringArray(unwrapped);
+            if (parts.length < 2) {
+                return new ActionResult(false, "Expected [\"agentName\", \"promptText\"]");
+            }
+            agentName = parts[0];
+            promptText = parts[1];
+            argumentsJson = "{\"agent\": " + jsonEscape(agentName)
+                    + ", \"prompt\": " + jsonEscape(promptText) + "}";
+        } else {
+            return new ActionResult(false,
+                    "Expected JSON object or array, got: " + truncate(unwrapped, 50));
+        }
+
+        String displayPrompt = promptText != null ? promptText : unwrapped;
+        emit(">>> Calling agent '" + agentName + "': " + truncate(displayPrompt, 100));
+
+        try {
+            ensureInitialized();
+            String response = callMcpTool("call_agent", argumentsJson);
+            emit("<<< Response from '" + agentName + "': " + truncate(response, 200));
+            emit(response);
+            return new ActionResult(true, response);
+        } catch (Exception e) {
+            logger.log(Level.WARNING, "call_agent failed", e);
+            emit("!!! call_agent error: " + e.getMessage());
+            return new ActionResult(false, "call_agent failed: " + e.getMessage());
+        }
+    }
+
+    private String extractJsonStringField(String json, String key) {
+        String search = "\"" + key + "\"";
+        int idx = json.indexOf(search);
+        if (idx < 0) return null;
+        int colon = json.indexOf(':', idx + search.length());
+        if (colon < 0) return null;
+        int valueStart = json.indexOf('"', colon + 1);
+        if (valueStart < 0) return null;
+        valueStart++;
+        StringBuilder sb = new StringBuilder();
+        for (int i = valueStart; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (c == '"' && (i == 0 || json.charAt(i - 1) != '\\')) break;
+            if (c == '\\' && i + 1 < json.length()) {
+                char next = json.charAt(i + 1);
+                switch (next) {
+                    case 'n' -> { sb.append('\n'); i++; continue; }
+                    case 't' -> { sb.append('\t'); i++; continue; }
+                    case '"' -> { sb.append('"'); i++; continue; }
+                    case '\\' -> { sb.append('\\'); i++; continue; }
+                }
+            }
+            sb.append(c);
+        }
+        return sb.toString();
+    }
+
+    private String[] parseJsonStringArray(String json) {
+        List<String> result = new ArrayList<>();
+        int i = json.indexOf('[') + 1;
+        while (i < json.length()) {
+            char c = json.charAt(i);
+            if (c == ']') break;
+            if (c == '"') {
+                i++;
+                StringBuilder sb = new StringBuilder();
+                while (i < json.length()) {
+                    char ch = json.charAt(i);
+                    if (ch == '"' && (i == 0 || json.charAt(i - 1) != '\\')) { i++; break; }
+                    if (ch == '\\' && i + 1 < json.length()) {
+                        char next = json.charAt(i + 1);
+                        switch (next) {
+                            case 'n' -> { sb.append('\n'); i += 2; continue; }
+                            case 't' -> { sb.append('\t'); i += 2; continue; }
+                            case '"' -> { sb.append('"'); i += 2; continue; }
+                            case '\\' -> { sb.append('\\'); i += 2; continue; }
+                        }
+                    }
+                    sb.append(ch);
+                    i++;
+                }
+                result.add(sb.toString());
+            } else {
+                i++;
+            }
+        }
+        return result.toArray(new String[0]);
     }
 
     private void ensureInitialized() throws Exception {
@@ -249,6 +425,20 @@ public class LlmActor extends IIActorRef<LlmActor> {
             sb.append(c);
         }
         return sb.toString();
+    }
+
+    private static String unwrapJsonArray(String s) {
+        String t = s.trim();
+        if (t.startsWith("[")) {
+            try {
+                org.json.JSONArray arr = new org.json.JSONArray(t);
+                if (arr.length() == 1 && arr.get(0) instanceof String) {
+                    return ((String) arr.get(0)).trim();
+                }
+            } catch (Exception ignored) {}
+        }
+        if (t.startsWith("\"") && t.endsWith("\"")) return t.substring(1, t.length() - 1);
+        return t;
     }
 
     private static String stripQuotes(String s) {

@@ -50,6 +50,15 @@
 
     <modules>
         <module>plugin-llm</module>
+        <module>plugin-prompt-builder</module>
+        <module>plugin-secret</module>
+        <module>plugin-vault</module>
+        <module>plugin-log-db</module>
+        <module>plugin-log-output</module>
+        <module>plugin-kana-kanji</module>
+        <module>plugin-report</module>
+        <module>plugin-ssh</module>
+        <module>plugin-inventory</module>
     </modules>
 
     <properties>
@@ -73,6 +82,18 @@
                 <artifactId>turing-workflow</artifactId>
                 <version>${turing-workflow.version}</version>
                 <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>5.10.2</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.assertj</groupId>
+                <artifactId>assertj-core</artifactId>
+                <version>3.25.3</version>
+                <scope>test</scope>
             </dependency>
         </dependencies>
     </dependencyManagement>
