@@ -18,14 +18,14 @@ import java.util.List;
  *
  * <p>Output format of build():</p>
  * <pre>
- * [制約]
+ * [Constraints]
  * - warning1
  * - warning2
  *
- * [背景]
+ * [Context]
  * - context1
  *
- * [メッセージ]
+ * [Message]
  * message body
  * </pre>
  *
@@ -164,7 +164,7 @@ public class PromptBuilderActor extends IIActorRef<PromptBuilderActor> {
         StringBuilder sb = new StringBuilder();
 
         if (!warnings.isEmpty()) {
-            sb.append("[制約]\n");
+            sb.append("[Constraints]\n");
             for (String w : warnings) {
                 sb.append("- ").append(w).append("\n");
             }
@@ -172,14 +172,14 @@ public class PromptBuilderActor extends IIActorRef<PromptBuilderActor> {
         }
 
         if (!contexts.isEmpty()) {
-            sb.append("[背景]\n");
+            sb.append("[Context]\n");
             for (String c : contexts) {
                 sb.append("- ").append(c).append("\n");
             }
             sb.append("\n");
         }
 
-        sb.append("[メッセージ]\n");
+        sb.append("[Message]\n");
         sb.append(message);
 
         return new ActionResult(true, sb.toString());

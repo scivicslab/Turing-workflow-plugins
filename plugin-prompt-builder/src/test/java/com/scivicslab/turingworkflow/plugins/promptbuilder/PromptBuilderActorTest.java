@@ -32,14 +32,14 @@ class PromptBuilderActorTest {
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getResult()).isEqualTo(
-            "[制約]\n" +
+            "[Constraints]\n" +
             "- ファイルを書き換えないこと\n" +
             "- git push の前に確認すること\n" +
             "\n" +
-            "[背景]\n" +
+            "[Context]\n" +
             "- 対象リポジトリ: oogasawa/k8s-tree\n" +
             "\n" +
-            "[メッセージ]\n" +
+            "[Message]\n" +
             "README.md を追加してください。"
         );
     }
@@ -52,11 +52,11 @@ class PromptBuilderActorTest {
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getResult()).isEqualTo(
-            "[メッセージ]\n" +
+            "[Message]\n" +
             "タスク本文のみ"
         );
-        assertThat(result.getResult()).doesNotContain("[制約]");
-        assertThat(result.getResult()).doesNotContain("[背景]");
+        assertThat(result.getResult()).doesNotContain("[Constraints]");
+        assertThat(result.getResult()).doesNotContain("[Context]");
     }
 
     @Test

@@ -207,9 +207,13 @@ public class LlmActor extends IIActorRef<LlmActor> {
         String argumentsJson;
 
         if (unwrapped.startsWith("{")) {
-            argumentsJson = unwrapped;
             agentName = extractJsonStringField(unwrapped, "agent");
             promptText = extractJsonStringField(unwrapped, "prompt");
+            String caller = extractJsonStringField(unwrapped, "caller");
+            argumentsJson = "{\"agent\": " + jsonEscape(agentName)
+                    + ", \"prompt\": " + jsonEscape(promptText)
+                    + (caller != null ? ", \"caller\": " + jsonEscape(caller) : "")
+                    + "}";
         } else if (unwrapped.startsWith("[")) {
             String[] parts = parseJsonStringArray(unwrapped);
             if (parts.length < 2) {
