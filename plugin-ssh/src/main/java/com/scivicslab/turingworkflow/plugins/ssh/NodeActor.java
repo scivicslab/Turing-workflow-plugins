@@ -168,66 +168,6 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     }
 
     /**
-     * Reads a JSON workflow definition from a file path.
-     *
-     * <p>JSON args format: {@code ["path/to/workflow.json"]}</p>
-     *
-     * @param args JSON array containing the file path as the first element
-     * @return ActionResult indicating success or failure with error details
-     */
-    @Action("readJson")
-    public ActionResult readJson(String args) {
-        String arg = getFirst(args);
-        try (InputStream input = new FileInputStream(new File(arg))) {
-            this.tell(n -> {
-                try {
-                    n.readJson(input);
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
-            }).get();
-            return new ActionResult(true, "JSON loaded successfully");
-        } catch (FileNotFoundException e) {
-            logger.log(Level.SEVERE, String.format("file not found: %s", arg), e);
-            return new ActionResult(false, "File not found: " + arg);
-        } catch (IOException e) {
-            logger.log(Level.SEVERE, String.format("IOException: %s", arg), e);
-            return new ActionResult(false, "IO error: " + arg);
-        } catch (InterruptedException | ExecutionException e) {
-            return handleException(e);
-        }
-    }
-
-    /**
-     * Reads an XML workflow definition from a file path.
-     *
-     * <p>JSON args format: {@code ["path/to/workflow.xml"]}</p>
-     *
-     * @param args JSON array containing the file path as the first element
-     * @return ActionResult indicating success or failure with error details
-     */
-    @Action("readXml")
-    public ActionResult readXml(String args) {
-        String arg = getFirst(args);
-        try (InputStream input = new FileInputStream(new File(arg))) {
-            this.tell(n -> {
-                try {
-                    n.readXml(input);
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-            }).get();
-            return new ActionResult(true, "XML loaded successfully");
-        } catch (FileNotFoundException e) {
-            logger.log(Level.SEVERE, String.format("file not found: %s", arg), e);
-            return new ActionResult(false, "File not found: " + arg);
-        } catch (Exception e) {
-            logger.log(Level.SEVERE, String.format("Exception: %s", arg), e);
-            return new ActionResult(false, "Error: " + arg);
-        }
-    }
-
-    /**
      * Resets the interpreter state, clearing the loaded workflow code and current state.
      *
      * <p>JSON args format: ignored (no arguments required).</p>

@@ -6,7 +6,7 @@
 
     <groupId>com.scivicslab.turingworkflow.plugins</groupId>
     <artifactId>turing-workflow-plugins-parent</artifactId>
-    <version>1.0.0</version>
+    <version>1.5.0</version>
     <packaging>pom</packaging>
 
     <name>Turing Workflow Plugins</name>
@@ -65,8 +65,8 @@
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <pojo-actor.version>3.0.0</pojo-actor.version>
-        <turing-workflow.version>3.0.0</turing-workflow.version>
+        <pojo-actor.version>3.5.0</pojo-actor.version>
+        <turing-workflow.version>3.5.0</turing-workflow.version>
     </properties>
 
     <dependencyManagement>
@@ -127,6 +127,25 @@
                         <goals>
                             <goal>jar</goal>
                         </goals>
+                    </execution>
+                    <execution>
+                        <id>generate-plugin-manifest</id>
+                        <goals><goal>javadoc</goal></goals>
+                        <phase>prepare-package</phase>
+                        <configuration>
+                            <doclet>com.scivicslab.pojoactor.doclet.TuringPluginDoclet</doclet>
+                            <docletArtifact>
+                                <groupId>com.scivicslab</groupId>
+                                <artifactId>pojo-actor</artifactId>
+                                <version>${pojo-actor.version}</version>
+                            </docletArtifact>
+                            <useStandardDocletOptions>false</useStandardDocletOptions>
+                            <additionalOptions>
+                                <additionalOption>-turingOutputDir</additionalOption>
+                                <additionalOption>${project.build.outputDirectory}/META-INF</additionalOption>
+                            </additionalOptions>
+                            <doclint>none</doclint>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>

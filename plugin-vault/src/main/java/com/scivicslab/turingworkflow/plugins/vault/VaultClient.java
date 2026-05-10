@@ -55,13 +55,39 @@ public class VaultClient {
     }
 
     /**
-     * Reads a secret from Vault.
+     * Reads a named field from a Vault KV v2 secret.
      *
-     * @param path Secret path (e.g., "secret/data/ssh/iacuser/private_key")
-     * @return Secret value as String
+     * The path uses CLI-style notation ({@code mount/key}); {@code data/} is
+     * inserted automatically between the mount and the key.
+     * For example, {@code "keycloak-local-llm/test-users"} becomes the API path
+     * {@code /v1/keycloak-local-llm/data/test-users}.
+     *
+     * @param kvPath    KV path in CLI notation (e.g., "keycloak-local-llm/test-users")
+     * @param fieldName name of the field inside the secret's data map
+     * @return field value as String
+     * @throws VaultException if Vault communication fails, secret not found, or field missing
+     */
+    public String readField(String kvPath, String fieldName) throws VaultException {
+        int slash = kvPath.indexOf('/');
+        String apiPath = (slash < 0)
+                ? kvPath + "/data"
+                : kvPath.substring(0, slash) + "/data" + kvPath.substring(slash);
+        String body = fetch(apiPath);
+        return extractField(body, fieldName);
+    }
+
+    /**
+     * Reads a secret from Vault using the full API path (legacy; reads the {@code value} field).
+     *
+     * @param path full KV v2 API path (e.g., "secret/data/ssh/iacuser/private_key")
+     * @return value of the {@code value} field
      * @throws VaultException if Vault communication fails or secret not found
      */
     public String readSecret(String path) throws VaultException {
+        return extractField(fetch(path), "value");
+    }
+
+    private String fetch(String path) throws VaultException {
         try {
             String url = config.getAddress() + "/v1/" + path;
 
@@ -83,7 +109,7 @@ public class VaultClient {
                         + ": " + response.body());
             }
 
-            return extractSecretValue(response.body());
+            return response.body();
 
         } catch (IOException | InterruptedException e) {
             throw new VaultException("Failed to read secret from Vault: " + e.getMessage(), e);
@@ -91,25 +117,15 @@ public class VaultClient {
     }
 
     /**
-     * Extracts the secret value from Vault API response.
+     * Extracts a named field from the {@code data.data} map of a Vault KV v2 response.
      *
-     * For KV v2 engine, the response structure is:
-     * <pre>
-     * {
-     *   "data": {
-     *     "data": {
-     *       "value": "actual-secret-value"
-     *     }
-     *   }
-     * }
-     * </pre>
-     *
-     * @param jsonResponse JSON response from Vault
-     * @return Secret value
-     * @throws VaultException if response format is invalid
+     * @param jsonResponse JSON response body from Vault
+     * @param fieldName    name of the field to extract
+     * @return field value as String
+     * @throws VaultException if the response is malformed or the field is absent
      */
     @SuppressWarnings("unchecked")
-    private String extractSecretValue(String jsonResponse) throws VaultException {
+    private String extractField(String jsonResponse, String fieldName) throws VaultException {
         try {
             Yaml yaml = new Yaml();
             Map<String, Object> response = yaml.load(jsonResponse);
@@ -126,41 +142,24 @@ public class VaultClient {
             }
 
             Map<String, Object> innerData = (Map<String, Object>) innerDataObj;
-            Object value = innerData.get("value");
+            Object value = innerData.get(fieldName);
             if (value == null) {
-                throw new VaultException("Invalid Vault response: 'value' field missing");
+                throw new VaultException("Field '" + fieldName + "' not found in secret. "
+                        + "Available fields: " + innerData.keySet());
             }
 
             return value.toString();
 
+        } catch (VaultException e) {
+            throw e;
         } catch (Exception e) {
             throw new VaultException("Failed to parse Vault response: " + e.getMessage(), e);
         }
     }
 
-    /**
-     * Exception thrown when Vault operations fail, such as communication errors,
-     * authentication failures, or missing secrets.
-     */
+    /** Exception thrown when Vault HTTP operations fail. */
     public static class VaultException extends Exception {
-
-        /**
-         * Creates a new {@code VaultException} with the specified detail message.
-         *
-         * @param message a description of what went wrong
-         */
-        public VaultException(String message) {
-            super(message);
-        }
-
-        /**
-         * Creates a new {@code VaultException} with the specified detail message and cause.
-         *
-         * @param message a description of what went wrong
-         * @param cause   the underlying exception
-         */
-        public VaultException(String message, Throwable cause) {
-            super(message, cause);
-        }
+        public VaultException(String message) { super(message); }
+        public VaultException(String message, Throwable cause) { super(message, cause); }
     }
 }

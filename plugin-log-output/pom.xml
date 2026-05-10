@@ -7,7 +7,7 @@
     <parent>
         <groupId>com.scivicslab.turingworkflow.plugins</groupId>
         <artifactId>turing-workflow-plugins-parent</artifactId>
-        <version>1.0.0</version>
+        <version>1.5.0</version>
     </parent>
 
     <artifactId>plugin-log-output</artifactId>
@@ -32,6 +32,16 @@
             <groupId>com.github.ricksbrown</groupId>
             <artifactId>cowsay</artifactId>
             <version>1.1.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
