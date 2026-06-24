@@ -90,7 +90,22 @@ public class H2LogStore implements DistributedLogStore {
      * @throws SQLException if database connection fails
      */
     public H2LogStore(Path dbPath) throws SQLException {
-        String url = "jdbc:h2:" + dbPath.toAbsolutePath().toString() + ";AUTO_SERVER=TRUE";
+        this(dbPath, false);
+    }
+
+    /**
+     * Creates an H2LogStore with the specified database path, optionally enabling lossless MVStore
+     * compression. Compression trades a little CPU for a much smaller {@code .mv.db} file; it is
+     * well suited to highly repetitive content (e.g. JSON request bodies). Compression applies to
+     * newly written data; pre-existing uncompressed data shrinks only as it is rewritten/compacted.
+     *
+     * @param dbPath   path to the database file (without extension)
+     * @param compress when true, appends {@code COMPRESS=TRUE} to the JDBC URL
+     * @throws SQLException if database connection fails
+     */
+    public H2LogStore(Path dbPath, boolean compress) throws SQLException {
+        String url = "jdbc:h2:" + dbPath.toAbsolutePath().toString() + ";AUTO_SERVER=TRUE"
+                + (compress ? ";COMPRESS=TRUE" : "");
         this.writeConnection = DriverManager.getConnection(url);
         this.readConnection = DriverManager.getConnection(url);
         this.reader = new H2LogReader(readConnection);

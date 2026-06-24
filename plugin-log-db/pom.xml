@@ -11,6 +11,9 @@
     </parent>
 
     <artifactId>plugin-log-db</artifactId>
+    <!-- Module-level version override (parent stays 1.5.0): adds the compress-capable H2LogStore
+         constructor without rev'ing sibling plugins. -->
+    <version>1.6.0</version>
     <name>Turing Workflow Plugin: Log Database</name>
     <description>H2 database-backed distributed log storage for Turing-workflow</description>
 
@@ -22,6 +25,13 @@
         <dependency>
             <groupId>com.scivicslab</groupId>
             <artifactId>turing-workflow</artifactId>
+        </dependency>
+        <!-- CLI command SPI. Provided by the turing-workflow host uber-jar at runtime. -->
+        <dependency>
+            <groupId>com.scivicslab</groupId>
+            <artifactId>pluggable-cli</artifactId>
+            <version>1.1.1</version>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>com.h2database</groupId>
