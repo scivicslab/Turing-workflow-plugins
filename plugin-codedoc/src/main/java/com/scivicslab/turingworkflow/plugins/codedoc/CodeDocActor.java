@@ -182,7 +182,99 @@ public class CodeDocActor extends IIActorRef<Object> {
         }
     }
 
+    @Action("listMarkdownNoDescription")
+    public ActionResult listMarkdownNoDescription(String args) {
+        try {
+            JSONArray a = new JSONArray(args);
+            Path base = Path.of(a.getString(0)).toAbsolutePath().normalize();
+            String listName = a.getString(1);
+            IIActorRef<?> list = system.getIIActor(listName);
+            if (list == null) return new ActionResult(false, "listMarkdownNoDescription: list not found: " + listName);
+            int[] count = {0};
+            try (Stream<Path> walk = Files.walk(base)) {
+                walk.filter(Files::isRegularFile)
+                    .filter(f -> f.getFileName().toString().endsWith(".md"))
+                    .filter(f -> !isSkipped(base, f))
+                    .sorted()
+                    .forEach(f -> {
+                        try {
+                            if (!hasFrontmatterDescription(Files.readString(f))) {
+                                list.callByActionName("add", f.toString());
+                                count[0]++;
+                            }
+                        } catch (Exception ignore) { /* skip unreadable */ }
+                    });
+            }
+            return new ActionResult(true, String.valueOf(count[0]));
+        } catch (Exception e) {
+            return new ActionResult(false, "listMarkdownNoDescription: " + e.getMessage());
+        }
+    }
+
+    @Action("readFileToStr")
+    public ActionResult readFileToStr(String args) {
+        try {
+            JSONArray a = new JSONArray(args);
+            Path in = Path.of(a.getString(0));
+            String strName = a.getString(1);
+            IIActorRef<?> str = system.getIIActor(strName);
+            if (str == null) return new ActionResult(false, "readFileToStr: str actor not found: " + strName);
+            str.callByActionName("set", Files.readString(in));
+            return new ActionResult(true, in.toString());
+        } catch (Exception e) {
+            return new ActionResult(false, "readFileToStr: " + e.getMessage());
+        }
+    }
+
+    @Action("setFrontmatterDescription")
+    public ActionResult setFrontmatterDescription(String args) {
+        try {
+            JSONArray a = new JSONArray(args);
+            Path file = Path.of(a.getString(0));
+            String strName = a.getString(1);
+            IIActorRef<?> str = system.getIIActor(strName);
+            if (str == null) return new ActionResult(false, "setFrontmatterDescription: str actor not found: " + strName);
+            String desc = str.callByActionName("get", "").getResult();
+            desc = desc == null ? "" : desc.strip();
+            if (desc.isEmpty()) return new ActionResult(true, "skipped (empty description): " + file);
+            String src = Files.readString(file);
+            if (hasFrontmatterDescription(src)) {
+                return new ActionResult(true, "skipped (already has description): " + file);
+            }
+            // Build a YAML block scalar, each line indented two spaces under "description: |".
+            StringBuilder block = new StringBuilder("description: |\n");
+            for (String line : desc.split("\n", -1)) {
+                block.append("  ").append(line.stripTrailing()).append("\n");
+            }
+            String out;
+            if (src.startsWith("---")) {
+                int end = src.indexOf("\n---", 3);
+                if (end == -1) return new ActionResult(false, "setFrontmatterDescription: malformed frontmatter: " + file);
+                out = src.substring(0, end + 1) + block + src.substring(end + 1);
+            } else {
+                out = "---\n" + block + "---\n" + src;
+            }
+            Files.writeString(file, out);
+            return new ActionResult(true, "wrote description to " + file);
+        } catch (Exception e) {
+            return new ActionResult(false, "setFrontmatterDescription: " + e.getMessage());
+        }
+    }
+
     // ── deterministic helpers ────────────────────────────────────────────────
+
+    /** True if the Markdown source has a frontmatter {@code description:} with a non-empty value. */
+    static boolean hasFrontmatterDescription(String src) {
+        if (src == null || !src.startsWith("---")) return false;
+        int end = src.indexOf("\n---", 3);
+        if (end == -1) return false;
+        for (String line : src.substring(3, end).split("\n")) {
+            if (line.startsWith("description:")) {
+                return !line.substring(12).trim().isEmpty();
+            }
+        }
+        return false;
+    }
 
     static String detectType(Path root) {
         if (Files.exists(root.resolve("pom.xml"))) return "java-maven";
