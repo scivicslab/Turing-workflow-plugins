@@ -55,29 +55,49 @@ public class PromptBuilderActor extends IIActorRef<PromptBuilderActor> {
 
     @Action("addWarning")
     public ActionResult addWarning(String text) {
-        if (text == null || text.isBlank()) {
+        String unwrapped = unwrapArg(text);
+        if (unwrapped == null || unwrapped.isBlank()) {
             return new ActionResult(false, "addWarning: text must not be blank");
         }
-        warnings.add(text.trim());
-        return new ActionResult(true, "warning added: " + text.trim());
+        warnings.add(unwrapped);
+        return new ActionResult(true, "warning added: " + unwrapped);
     }
 
     @Action("addContext")
     public ActionResult addContext(String text) {
-        if (text == null || text.isBlank()) {
+        String unwrapped = unwrapArg(text);
+        if (unwrapped == null || unwrapped.isBlank()) {
             return new ActionResult(false, "addContext: text must not be blank");
         }
-        contexts.add(text.trim());
-        return new ActionResult(true, "context added: " + text.trim());
+        contexts.add(unwrapped);
+        return new ActionResult(true, "context added: " + unwrapped);
     }
 
     @Action("addMessage")
     public ActionResult addMessage(String text) {
-        if (text == null || text.isBlank()) {
+        String unwrapped = unwrapArg(text);
+        if (unwrapped == null || unwrapped.isBlank()) {
             return new ActionResult(false, "addMessage: text must not be blank");
         }
-        this.message = text.trim();
+        this.message = unwrapped;
         return new ActionResult(true, "message set");
+    }
+
+    private static String unwrapArg(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        // ["text"] → text
+        if (t.startsWith("[\"") && t.endsWith("\"]")) return t.substring(2, t.length() - 2);
+        // ["text1","text2",...] → use first element only (join with space if needed)
+        if (t.startsWith("[") && t.endsWith("]")) {
+            int first = t.indexOf('"');
+            int last = t.lastIndexOf('"');
+            if (first >= 0 && last > first) return t.substring(first + 1, last);
+        }
+        // "text" → text
+        if (t.startsWith("\"") && t.endsWith("\"") && t.length() >= 2)
+            return t.substring(1, t.length() - 1);
+        return t;
     }
 
     @Action("getWarningCount")

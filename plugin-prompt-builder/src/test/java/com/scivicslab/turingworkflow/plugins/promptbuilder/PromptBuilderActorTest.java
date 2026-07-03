@@ -87,6 +87,56 @@ class PromptBuilderActorTest {
         assertThat(result.isSuccess()).isFalse();
     }
 
+    // --- JSON-array unwrapping (Interpreter wraps plain-string args as ["value"]) ---
+
+    @Test
+    void addWarning_withJsonArrayArg_unwrapsBrackets() {
+        ActionResult result = actor.addWarning("[\"Read only. Do not edit files.\"]");
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getResult()).doesNotContain("[\"");
+        assertThat(result.getResult()).doesNotContain("\"]");
+        assertThat(result.getResult()).contains("Read only. Do not edit files.");
+    }
+
+    @Test
+    void addMessage_withJsonArrayArg_unwrapsBrackets() {
+        ActionResult result = actor.addMessage("[\"SPIFFEは有効？\"]");
+        assertThat(result.isSuccess()).isTrue();
+
+        ActionResult built = actor.build(null);
+        assertThat(built.isSuccess()).isTrue();
+        assertThat(built.getResult()).doesNotContain("[\"");
+        assertThat(built.getResult()).contains("SPIFFEは有効？");
+    }
+
+    @Test
+    void build_withJsonArrayArgs_producesCleanFormatWithoutBrackets() {
+        actor.addWarning("[\"Read, search, and investigate only. Do not edit, create, or delete any files.\"]");
+        actor.addWarning("[\"Do not rewrite or save any documents or summaries.\"]");
+        actor.addWarning("[\"Output your findings as a chat response only.\"]");
+        actor.addMessage("[\"NCBI SRA cloud mirrorについておしえて\"]");
+
+        ActionResult result = actor.build(null);
+
+        assertThat(result.isSuccess()).isTrue();
+        String prompt = result.getResult();
+        assertThat(prompt).doesNotContain("[\"");
+        assertThat(prompt).doesNotContain("\"]");
+        assertThat(prompt).startsWith("[Constraints]");
+        assertThat(prompt).contains("- Read, search, and investigate only.");
+        assertThat(prompt).contains("- Do not rewrite or save any documents or summaries.");
+        assertThat(prompt).contains("[Message]");
+        assertThat(prompt).contains("NCBI SRA cloud mirrorについておしえて");
+    }
+
+    @Test
+    void addWarning_withQuotedStringArg_unwrapsQuotes() {
+        ActionResult result = actor.addWarning("\"Read only.\"");
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getResult()).contains("Read only.");
+        assertThat(result.getResult()).doesNotContain("\"");
+    }
+
     @Test
     void addMessage_overwritesPreviousMessage() {
         actor.addMessage("最初のメッセージ");

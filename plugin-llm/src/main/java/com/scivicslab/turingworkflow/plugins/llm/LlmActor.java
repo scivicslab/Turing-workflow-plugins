@@ -9,49 +9,57 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Actor that calls an LLM service via MCP (Model Context Protocol) Streamable HTTP transport.
+ * Actor that calls an LLM service.
  *
- * <p>Default target: quarkus-chat-ui-claude at {@code localhost:8090}.
- * Can be dynamically loaded via {@code loader.loadMaven} in workflow YAML.</p>
+ * <p>Two backends are supported:</p>
+ * <ul>
+ *   <li><b>Direct REST</b> ({@code submitDirect}) — POSTs to {@code /api/chat/submit} on a
+ *       quarkus-chat-ui instance and polls for the result. No MCP session required.</li>
+ *   <li><b>OpenAI-compatible</b> ({@code callOpenAi}) — Calls any vLLM / OpenAI-compatible
+ *       {@code /v1/chat/completions} endpoint via system curl.</li>
+ * </ul>
  *
  * <p>Supported actions:</p>
  * <ul>
- *   <li>{@code setUrl} - Configure the MCP server base URL</li>
- *   <li>{@code prompt} - Send a prompt to the LLM and receive a response</li>
- *   <li>{@code status} - Query the LLM service status</li>
- *   <li>{@code listTools} - List available tools on the MCP server</li>
+ *   <li>{@code setDirectUrl}    — set the chat-ui base URL for {@code submitDirect}</li>
+ *   <li>{@code submitDirect}    — submit a prompt and poll for the result</li>
+ *   <li>{@code setOpenAiUrl}    — configure the OpenAI-compatible endpoint</li>
+ *   <li>{@code setSystemPrompt} — set a system prompt prepended to {@code callOpenAi} requests</li>
+ *   <li>{@code setEnableThinking} — enable/disable extended thinking (Qwen3 family)</li>
+ *   <li>{@code callOpenAi}      — call the OpenAI-compatible endpoint</li>
  * </ul>
- *
- * @author devteam@scivicslab.com
- * @since 1.0.0
  */
 public class LlmActor extends IIActorRef<LlmActor> {
 
     private static final Logger logger = Logger.getLogger(LlmActor.class.getName());
 
-    /** HTTP request timeout for MCP calls (5 minutes to allow for long LLM responses). */
+    /** HTTP request timeout for LLM calls (5 minutes to allow for long responses). */
     private static final Duration TIMEOUT = Duration.ofMinutes(5);
 
-    /** Base URL of the MCP server endpoint. */
-    private String mcpBaseUrl = "http://localhost:8090/mcp";
+    /** Base URL of the chat-ui REST API for direct access. */
+    private String directBaseUrl = null;
+
+    /** OpenAI-compatible API endpoint URL (e.g. vLLM at http://host:8000/v1/chat/completions). */
+    private String openAiUrl = null;
+
+    /** Model name for OpenAI-compatible API calls. */
+    private String openAiModel = null;
+
+    /** Optional system prompt prepended to every callOpenAi request. */
+    private String openAiSystemPrompt = null;
+
+    /** When false, disables extended thinking for Qwen3-family models (default: false). */
+    private boolean enableThinking = false;
 
     /** Optional listener that receives output messages (prompt results, status, errors). */
     private volatile Consumer<String> outputListener;
-
-    /** MCP session identifier, obtained during the initialize handshake. */
-    private volatile String mcpSessionId = null;
-
-    /** Monotonically increasing JSON-RPC request ID counter. */
-    private final AtomicInteger requestId = new AtomicInteger(1);
 
     /**
      * Creates a new {@code LlmActor} with the given name and actor system.
@@ -81,170 +89,279 @@ public class LlmActor extends IIActorRef<LlmActor> {
     }
 
     /**
-     * Sets the MCP server base URL. Resets any existing MCP session.
+     * Sets the base URL for direct chat-ui REST API access.
      *
-     * <p>Expected argument: the base URL string (e.g., {@code "http://localhost:8090/mcp"}).</p>
+     * <p>Expected argument: base URL string (e.g., {@code "http://localhost:28006"}).</p>
      *
-     * @param url the MCP server base URL; must not be {@code null} or blank
-     * @return an {@link ActionResult} indicating success with the configured URL,
-     *         or failure if the URL is missing
+     * @param url the chat-ui base URL
+     * @return an {@link ActionResult} indicating success or failure
      */
-    @Action("setUrl")
-    public ActionResult setUrl(String url) {
+    @Action("setDirectUrl")
+    public ActionResult setDirectUrl(String url) {
         if (url == null || url.isBlank()) {
             return new ActionResult(false, "URL is required");
         }
-        this.mcpBaseUrl = unwrapJsonArray(url.trim());
-        this.mcpSessionId = null;
-        emit("LLM endpoint set to: " + this.mcpBaseUrl);
-        return new ActionResult(true, "URL set to " + this.mcpBaseUrl);
+        this.directBaseUrl = unwrapJsonArray(url.trim()).replaceAll("/$", "");
+        emit("Direct URL set to: " + this.directBaseUrl);
+        return new ActionResult(true, "Direct URL set to " + this.directBaseUrl);
+    }
+
+    // ── OpenAI-compatible API (vLLM, etc.) ────────────────────────────────────
+
+    /**
+     * Configures the OpenAI-compatible chat completions endpoint (e.g. vLLM).
+     *
+     * <p>Argument forms:</p>
+     * <ul>
+     *   <li>JSON array: {@code ["http://host:8000/v1/chat/completions", "model-name"]}</li>
+     *   <li>Plain string: {@code "http://host:8000/v1/chat/completions"} (model must be set separately)</li>
+     * </ul>
+     *
+     * @param args URL, or JSON array [URL, model]
+     * @return ActionResult indicating success or failure
+     */
+    @Action("setOpenAiUrl")
+    public ActionResult setOpenAiUrl(String args) {
+        String trimmed = args == null ? "" : args.trim();
+        if (trimmed.startsWith("[")) {
+            try {
+                org.json.JSONArray arr = new org.json.JSONArray(trimmed);
+                this.openAiUrl   = arr.getString(0).trim();
+                this.openAiModel = arr.length() > 1 ? arr.getString(1).trim() : this.openAiModel;
+            } catch (Exception e) {
+                return new ActionResult(false, "setOpenAiUrl: invalid JSON array: " + e.getMessage());
+            }
+        } else {
+            this.openAiUrl = unwrapJsonArray(trimmed);
+        }
+        String msg = "OpenAI URL set to: " + this.openAiUrl
+                + (this.openAiModel != null ? " (model: " + this.openAiModel + ")" : "");
+        emit(msg);
+        return new ActionResult(true, msg);
     }
 
     /**
-     * Sends a prompt to the LLM via the MCP {@code tools/call} method.
+     * Sets a system-level instruction prepended to every {@code callOpenAi} request.
+     * Pass an empty string to clear the system prompt.
      *
-     * <p>Expected argument: the prompt text as a plain string. The prompt is sent
-     * to the {@code sendPrompt} tool on the MCP server with an empty model selector
-     * (server default).</p>
-     *
-     * @param promptText the prompt text to send; must not be {@code null} or blank
-     * @return an {@link ActionResult} containing the LLM response text on success,
-     *         or an error message on failure
+     * @param args the system prompt text
+     * @return ActionResult indicating success
      */
-    @Action("prompt")
-    public ActionResult prompt(String promptText) {
+    @Action("setSystemPrompt")
+    public ActionResult setSystemPrompt(String args) {
+        this.openAiSystemPrompt = (args == null || args.isBlank()) ? null : unwrapJsonArray(args.trim());
+        emit("System prompt " + (this.openAiSystemPrompt != null ? "set (" + this.openAiSystemPrompt.length() + " chars)" : "cleared"));
+        return new ActionResult(true, "system prompt set");
+    }
+
+    /**
+     * Enables or disables extended thinking for Qwen3-family models (default: disabled).
+     * When disabled, {@code chat_template_kwargs: {enable_thinking: false}} is added to the request.
+     *
+     * @param args {@code "true"} to enable, {@code "false"} (default) to disable
+     * @return ActionResult indicating success
+     */
+    @Action("setEnableThinking")
+    public ActionResult setEnableThinking(String args) {
+        this.enableThinking = Boolean.parseBoolean(unwrapJsonArray(args == null ? "" : args.trim()));
+        return new ActionResult(true, "enable_thinking set to " + this.enableThinking);
+    }
+
+    /**
+     * Sends the given text to the configured OpenAI-compatible endpoint and returns
+     * the model's reply. Blocks until the response is complete (up to 5 minutes).
+     *
+     * <p>Requires {@link #setOpenAiUrl} to be called first.</p>
+     *
+     * @param args the user prompt / content to send
+     * @return ActionResult containing the model's reply on success
+     */
+    @Action("callOpenAi")
+    public ActionResult callOpenAi(String args) {
+        if (openAiUrl == null || openAiUrl.isBlank()) {
+            return new ActionResult(false, "OpenAI URL not set. Call setOpenAiUrl first.");
+        }
+        String model = (openAiModel != null && !openAiModel.isBlank()) ? openAiModel : "default";
+        String userText = unwrapJsonArray(args == null ? "" : args.trim());
+        if (userText.isBlank()) {
+            return new ActionResult(false, "callOpenAi: prompt text is required");
+        }
+
+        emit(">>> callOpenAi [" + model + "]: " + truncate(userText, 80));
+
+        java.nio.file.Path tempFile = null;
+        try {
+            // Build messages array
+            StringBuilder messages = new StringBuilder("[");
+            if (openAiSystemPrompt != null && !openAiSystemPrompt.isBlank()) {
+                messages.append("{\"role\":\"system\",\"content\":").append(jsonEscape(openAiSystemPrompt)).append("},");
+            }
+            messages.append("{\"role\":\"user\",\"content\":").append(jsonEscape(userText)).append("}]");
+
+            // Build full request body
+            String body = "{\"model\":" + jsonEscape(model)
+                    + ",\"messages\":" + messages
+                    + ",\"temperature\":0.1"
+                    + (!enableThinking ? ",\"chat_template_kwargs\":{\"enable_thinking\":false}" : "")
+                    + "}";
+
+            // Write body to a temp file — avoids shell-escaping issues with large prompts
+            tempFile = java.nio.file.Files.createTempFile("vllm-req-", ".json");
+            java.nio.file.Files.writeString(tempFile, body, StandardCharsets.UTF_8);
+
+            // Use system curl for reliable HTTP (Java HttpClient has body-delivery issues on this host)
+            java.util.List<String> cmd = java.util.List.of(
+                    "curl", "-s", "-m", "300",
+                    "-X", "POST", openAiUrl,
+                    "-H", "Content-Type: application/json",
+                    "--data", "@" + tempFile.toString()
+            );
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            pb.redirectErrorStream(false);
+            Process process = pb.start();
+
+            String responseBody = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            String stderr       = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
+            boolean finished    = process.waitFor(320, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) { process.destroyForcibly(); throw new RuntimeException("curl timed out"); }
+            int exitCode = process.exitValue();
+            if (exitCode != 0) throw new RuntimeException("curl failed (exit " + exitCode + "): " + stderr.trim());
+
+            // Parse: choices[0].message.content
+            org.json.JSONObject json = new org.json.JSONObject(responseBody);
+            if (json.has("error")) {
+                return new ActionResult(false, "OpenAI API error: " + json.getJSONObject("error").optString("message", responseBody));
+            }
+            String content = json.getJSONArray("choices")
+                    .getJSONObject(0)
+                    .getJSONObject("message")
+                    .getString("content");
+            if (content == null || content.isBlank()) {
+                return new ActionResult(true, "");
+            }
+
+            emit("<<< callOpenAi response (" + content.length() + " chars)");
+            return new ActionResult(true, content);
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new ActionResult(false, "callOpenAi: interrupted");
+        } catch (Exception e) {
+            logger.log(Level.WARNING, "callOpenAi failed", e);
+            return new ActionResult(false, "callOpenAi failed: " + e.getMessage());
+        } finally {
+            if (tempFile != null) {
+                try { java.nio.file.Files.deleteIfExists(tempFile); } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    // ── Direct REST (chat-ui) ─────────────────────────────────────────────────
+
+    /**
+     * Submits a prompt directly to a chat-ui instance via its REST API.
+     * Blocks until the LLM response is complete.
+     *
+     * <p>Expected argument: the prompt text as a plain string.</p>
+     *
+     * <p>Flow: POST /api/chat/submit → poll GET /api/chat/status/{id} → GET /api/chat/result/{id}</p>
+     *
+     * @param promptText the prompt to send
+     * @return an {@link ActionResult} containing the LLM response on success
+     */
+    @Action("submitDirect")
+    public ActionResult submitDirect(String promptText) {
+        if (directBaseUrl == null || directBaseUrl.isBlank()) {
+            return new ActionResult(false, "Direct URL not set. Call setDirectUrl first.");
+        }
         if (promptText == null || promptText.isBlank()) {
             return new ActionResult(false, "Prompt text is required");
         }
 
-        String text = stripQuotes(promptText);
-        emit(">>> Sending prompt to LLM: " + truncate(text, 100));
+        String text = unwrapJsonArray(promptText);
+        emit(">>> submitDirect: " + truncate(text, 100));
 
         try {
-            ensureInitialized();
+            // Step 1: submit prompt
+            String submitBody = "{\"text\": " + jsonEscape(text) + ", \"model\": \"\"}";
+            HttpClient client = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .build();
 
-            String response = callMcpTool("sendPrompt",
-                    "{\"prompt\": " + jsonEscape(text) + ", \"model\": \"\"}");
+            HttpRequest submitReq = HttpRequest.newBuilder()
+                    .uri(URI.create(directBaseUrl + "/api/chat/submit"))
+                    .header("Content-Type", "application/json")
+                    .timeout(TIMEOUT)
+                    .POST(HttpRequest.BodyPublishers.ofString(submitBody))
+                    .build();
 
-            emit("<<< LLM response received (" + response.length() + " chars)");
-            emit(response);
-            return new ActionResult(true, response);
+            HttpResponse<String> submitResp = client.send(submitReq,
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 
-        } catch (Exception e) {
-            logger.log(Level.WARNING, "MCP call failed", e);
-            emit("!!! LLM error: " + e.getMessage());
-            return new ActionResult(false, "MCP call failed: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Retrieves the LLM service status via the MCP {@code tools/call} method.
-     *
-     * <p>Expected argument: ignored (may be {@code null} or empty).</p>
-     *
-     * @param args unused argument (required by the action framework signature)
-     * @return an {@link ActionResult} containing the status information on success,
-     *         or an error message on failure
-     */
-    @Action("status")
-    public ActionResult status(String args) {
-        try {
-            ensureInitialized();
-            String response = callMcpTool("getStatus", "{}");
-            emit("LLM status: " + response);
-            return new ActionResult(true, response);
-        } catch (Exception e) {
-            emit("!!! LLM error: " + e.getMessage());
-            return new ActionResult(false, "MCP call failed: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Lists available tools on the MCP server via the {@code tools/list} JSON-RPC method.
-     *
-     * <p>Expected argument: ignored (may be {@code null} or empty).</p>
-     *
-     * @param args unused argument (required by the action framework signature)
-     * @return an {@link ActionResult} containing the JSON list of available tools on success,
-     *         or an error message on failure
-     */
-    @Action("listTools")
-    public ActionResult listTools(String args) {
-        try {
-            ensureInitialized();
-            String response = sendJsonRpc("tools/list", "{}");
-            emit("Available tools: " + response);
-            return new ActionResult(true, response);
-        } catch (Exception e) {
-            emit("!!! LLM error: " + e.getMessage());
-            return new ActionResult(false, "MCP call failed: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Calls the {@code call_agent} tool on the MCP Gateway, which routes the prompt
-     * to a named agent and blocks until the reply arrives (up to 5 minutes).
-     *
-     * <p>Expected argument formats:</p>
-     * <ul>
-     *   <li>JSON array: {@code ["agentName", "prompt text"]}</li>
-     *   <li>JSON object: {@code {"agent": "agentName", "prompt": "text", "model": "sonnet"}}</li>
-     * </ul>
-     *
-     * @param args JSON array or object containing agent name and prompt
-     * @return an {@link ActionResult} containing the agent's reply on success
-     */
-    @Action("callAgent")
-    public ActionResult callAgent(String args) {
-        if (args == null || args.isBlank()) {
-            return new ActionResult(false,
-                    "Arguments required: [\"agentName\", \"promptText\"] or {\"agent\":\"...\",\"prompt\":\"...\"}");
-        }
-
-        String unwrapped = unwrapJsonArray(args.trim());
-        String agentName;
-        String promptText;
-        String argumentsJson;
-
-        if (unwrapped.startsWith("{")) {
-            agentName = extractJsonStringField(unwrapped, "agent");
-            promptText = extractJsonStringField(unwrapped, "prompt");
-            String caller = extractJsonStringField(unwrapped, "caller");
-            argumentsJson = "{\"agent\": " + jsonEscape(agentName)
-                    + ", \"prompt\": " + jsonEscape(promptText)
-                    + (caller != null ? ", \"caller\": " + jsonEscape(caller) : "")
-                    + "}";
-        } else if (unwrapped.startsWith("[")) {
-            String[] parts = parseJsonStringArray(unwrapped);
-            if (parts.length < 2) {
-                return new ActionResult(false, "Expected [\"agentName\", \"promptText\"]");
+            if (submitResp.statusCode() != 200) {
+                return new ActionResult(false,
+                        "submit failed HTTP " + submitResp.statusCode() + ": " + submitResp.body());
             }
-            agentName = parts[0];
-            promptText = parts[1];
-            argumentsJson = "{\"agent\": " + jsonEscape(agentName)
-                    + ", \"prompt\": " + jsonEscape(promptText) + "}";
-        } else {
-            return new ActionResult(false,
-                    "Expected JSON object or array, got: " + truncate(unwrapped, 50));
-        }
 
-        String displayPrompt = promptText != null ? promptText : unwrapped;
-        emit(">>> Calling agent '" + agentName + "': " + truncate(displayPrompt, 100));
+            // Extract sessionId from {"sessionId":"...","status":"submitted"}
+            String sessionId = extractJsonStringField(submitResp.body(), "sessionId");
+            if (sessionId == null || sessionId.isBlank()) {
+                return new ActionResult(false, "No sessionId in response: " + submitResp.body());
+            }
+            emit("Session ID: " + sessionId);
 
-        try {
-            ensureInitialized();
-            String response = callMcpTool("call_agent", argumentsJson);
-            emit("<<< Response from '" + agentName + "': " + truncate(response, 200));
-            emit(response);
-            return new ActionResult(true, response);
+            // Step 2: poll status until completed
+            long deadline = System.currentTimeMillis() + TIMEOUT.toMillis();
+            while (System.currentTimeMillis() < deadline) {
+                Thread.sleep(1000);
+
+                HttpRequest statusReq = HttpRequest.newBuilder()
+                        .uri(URI.create(directBaseUrl + "/api/chat/status/" + sessionId))
+                        .timeout(Duration.ofSeconds(10))
+                        .GET()
+                        .build();
+
+                HttpResponse<String> statusResp = client.send(statusReq,
+                        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+                String status = extractJsonStringField(statusResp.body(), "status");
+                if ("completed".equals(status)) {
+                    break;
+                }
+                emit("Status: " + status);
+            }
+
+            // Step 3: retrieve result
+            HttpRequest resultReq = HttpRequest.newBuilder()
+                    .uri(URI.create(directBaseUrl + "/api/chat/result/" + sessionId))
+                    .timeout(Duration.ofSeconds(10))
+                    .GET()
+                    .build();
+
+            HttpResponse<String> resultResp = client.send(resultReq,
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+            String result = extractJsonStringField(resultResp.body(), "result");
+            if (result == null) {
+                String error = extractJsonStringField(resultResp.body(), "error");
+                return new ActionResult(false, "No result: " + (error != null ? error : resultResp.body()));
+            }
+
+            emit("<<< submitDirect result (" + result.length() + " chars)");
+            return new ActionResult(true, result);
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new ActionResult(false, "Interrupted while waiting for response");
         } catch (Exception e) {
-            logger.log(Level.WARNING, "call_agent failed", e);
-            emit("!!! call_agent error: " + e.getMessage());
-            return new ActionResult(false, "call_agent failed: " + e.getMessage());
+            logger.log(Level.WARNING, "submitDirect failed", e);
+            return new ActionResult(false, "submitDirect failed: " + e.getMessage());
         }
     }
 
-    private String extractJsonStringField(String json, String key) {
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    static String extractJsonStringField(String json, String key) {
         String search = "\"" + key + "\"";
         int idx = json.indexOf(search);
         if (idx < 0) return null;
@@ -264,166 +381,14 @@ public class LlmActor extends IIActorRef<LlmActor> {
                     case 't' -> { sb.append('\t'); i++; continue; }
                     case '"' -> { sb.append('"'); i++; continue; }
                     case '\\' -> { sb.append('\\'); i++; continue; }
-                }
-            }
-            sb.append(c);
-        }
-        return sb.toString();
-    }
-
-    private String[] parseJsonStringArray(String json) {
-        List<String> result = new ArrayList<>();
-        int i = json.indexOf('[') + 1;
-        while (i < json.length()) {
-            char c = json.charAt(i);
-            if (c == ']') break;
-            if (c == '"') {
-                i++;
-                StringBuilder sb = new StringBuilder();
-                while (i < json.length()) {
-                    char ch = json.charAt(i);
-                    if (ch == '"' && (i == 0 || json.charAt(i - 1) != '\\')) { i++; break; }
-                    if (ch == '\\' && i + 1 < json.length()) {
-                        char next = json.charAt(i + 1);
-                        switch (next) {
-                            case 'n' -> { sb.append('\n'); i += 2; continue; }
-                            case 't' -> { sb.append('\t'); i += 2; continue; }
-                            case '"' -> { sb.append('"'); i += 2; continue; }
-                            case '\\' -> { sb.append('\\'); i += 2; continue; }
+                    case 'u' -> {
+                        if (i + 5 < json.length()) {
+                            try {
+                                sb.append((char) Integer.parseInt(json.substring(i + 2, i + 6), 16));
+                                i += 5; continue;
+                            } catch (NumberFormatException ignored) {}
                         }
                     }
-                    sb.append(ch);
-                    i++;
-                }
-                result.add(sb.toString());
-            } else {
-                i++;
-            }
-        }
-        return result.toArray(new String[0]);
-    }
-
-    private void ensureInitialized() throws Exception {
-        if (mcpSessionId != null) return;
-
-        String initRequest = """
-                {
-                    "jsonrpc": "2.0",
-                    "id": %d,
-                    "method": "initialize",
-                    "params": {
-                        "protocolVersion": "2025-03-26",
-                        "capabilities": {},
-                        "clientInfo": {
-                            "name": "turing-workflow-llm-plugin",
-                            "version": "1.0.0"
-                        }
-                    }
-                }
-                """.formatted(requestId.getAndIncrement());
-
-        HttpResponse<String> response = postMcp(initRequest);
-        logger.info("MCP initialize response: " + response.statusCode());
-
-        var sessionHeader = response.headers().firstValue("Mcp-Session-Id");
-        if (sessionHeader.isPresent()) {
-            mcpSessionId = sessionHeader.get();
-            logger.info("MCP session: " + mcpSessionId);
-        }
-
-        String notification = """
-                {
-                    "jsonrpc": "2.0",
-                    "method": "notifications/initialized"
-                }
-                """;
-        postMcp(notification);
-
-        emit("MCP session established with " + mcpBaseUrl);
-    }
-
-    private String callMcpTool(String toolName, String argumentsJson) throws Exception {
-        String params = """
-                {"name": "%s", "arguments": %s}
-                """.formatted(toolName, argumentsJson);
-
-        String responseBody = sendJsonRpc("tools/call", params);
-        return extractMcpResult(responseBody);
-    }
-
-    private String sendJsonRpc(String method, String params) throws Exception {
-        String jsonRpc = """
-                {
-                    "jsonrpc": "2.0",
-                    "id": %d,
-                    "method": "%s",
-                    "params": %s
-                }
-                """.formatted(requestId.getAndIncrement(), method, params);
-
-        HttpResponse<String> response = postMcp(jsonRpc);
-
-        if (response.statusCode() != 200) {
-            throw new RuntimeException("MCP server returned HTTP " + response.statusCode()
-                    + ": " + response.body());
-        }
-
-        return response.body();
-    }
-
-    private HttpResponse<String> postMcp(String body) throws Exception {
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .build();
-
-        var requestBuilder = HttpRequest.newBuilder()
-                .uri(URI.create(mcpBaseUrl))
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .timeout(TIMEOUT)
-                .POST(HttpRequest.BodyPublishers.ofString(body));
-
-        if (mcpSessionId != null) {
-            requestBuilder.header("Mcp-Session-Id", mcpSessionId);
-        }
-
-        return client.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
-    }
-
-    private String extractMcpResult(String jsonRpcResponse) {
-        int textIdx = jsonRpcResponse.indexOf("\"text\":");
-        if (textIdx < 0) {
-            int resultIdx = jsonRpcResponse.indexOf("\"result\":");
-            if (resultIdx >= 0) {
-                return jsonRpcResponse.substring(resultIdx + 9).replaceAll("[\"{}\\[\\]]", "").trim();
-            }
-            return jsonRpcResponse;
-        }
-
-        int searchFrom = textIdx;
-        String before = jsonRpcResponse.substring(Math.max(0, textIdx - 10), textIdx);
-        if (before.contains("type")) {
-            int nextText = jsonRpcResponse.indexOf("\"text\":", textIdx + 7);
-            if (nextText >= 0) {
-                searchFrom = nextText;
-            }
-        }
-
-        int valueStart = jsonRpcResponse.indexOf('"', searchFrom + 7);
-        if (valueStart < 0) return jsonRpcResponse;
-        valueStart++;
-
-        StringBuilder sb = new StringBuilder();
-        for (int i = valueStart; i < jsonRpcResponse.length(); i++) {
-            char c = jsonRpcResponse.charAt(i);
-            if (c == '"' && (i == 0 || jsonRpcResponse.charAt(i - 1) != '\\')) break;
-            if (c == '\\' && i + 1 < jsonRpcResponse.length()) {
-                char next = jsonRpcResponse.charAt(i + 1);
-                switch (next) {
-                    case 'n' -> { sb.append('\n'); i++; continue; }
-                    case 't' -> { sb.append('\t'); i++; continue; }
-                    case '"' -> { sb.append('"'); i++; continue; }
-                    case '\\' -> { sb.append('\\'); i++; continue; }
                 }
             }
             sb.append(c);
@@ -441,13 +406,6 @@ public class LlmActor extends IIActorRef<LlmActor> {
                 }
             } catch (Exception ignored) {}
         }
-        if (t.startsWith("\"") && t.endsWith("\"")) return t.substring(1, t.length() - 1);
-        return t;
-    }
-
-    private static String stripQuotes(String s) {
-        String t = s.trim();
-        if (t.startsWith("[\"") && t.endsWith("\"]")) return t.substring(2, t.length() - 2);
         if (t.startsWith("\"") && t.endsWith("\"")) return t.substring(1, t.length() - 1);
         return t;
     }

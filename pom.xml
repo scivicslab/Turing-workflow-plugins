@@ -59,6 +59,11 @@
         <module>plugin-report</module>
         <module>plugin-ssh</module>
         <module>plugin-inventory</module>
+        <module>plugin-web</module>
+        <module>plugin-chatui3</module>
+        <module>plugin-fineweb-search</module>
+        <module>plugin-openalex</module>
+        <module>plugin-ocr</module>
     </modules>
 
     <properties>
@@ -66,7 +71,7 @@
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <pojo-actor.version>3.5.0</pojo-actor.version>
-        <turing-workflow.version>3.5.0</turing-workflow.version>
+        <turing-workflow.version>3.6.1</turing-workflow.version>
     </properties>
 
     <dependencyManagement>
