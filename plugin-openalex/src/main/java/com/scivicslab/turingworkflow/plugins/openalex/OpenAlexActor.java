@@ -43,6 +43,8 @@ public class OpenAlexActor extends IIActorRef<OpenAlexActor> {
     private static final String BASE_URL = "https://api.openalex.org";
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
     private static final int DEFAULT_PER_PAGE = 10;
+    /** Default result ordering (most-cited first). */
+    private static final String DEFAULT_SORT = "cited_by_count:desc";
 
     private String email = "devteam@scivicslab.com";
 
@@ -84,25 +86,33 @@ public class OpenAlexActor extends IIActorRef<OpenAlexActor> {
     /**
      * Searches OpenAlex works with an explicit result count.
      *
-     * <p>Expected argument: JSON object {@code {"query": "...", "perPage": 5}}.
-     * Falls back to default perPage=10 if absent.</p>
+     * <p>Expected argument: JSON object {@code {"query": "...", "perPage": 5, "sort": "citations"}}.
+     * Falls back to perPage=10 and sort=citations if absent.</p>
      *
-     * @param args JSON object with {@code query} and optional {@code perPage}
+     * <p>{@code sort} accepts friendly names — {@code citations} (most cited first),
+     * {@code relevance} (best title/abstract match first), {@code newest} (most recent first) —
+     * or a raw OpenAlex sort string (e.g. {@code publication_date:desc}).</p>
+     *
+     * @param args JSON object with {@code query} and optional {@code perPage} and {@code sort}
      */
     @Action("searchWorksTopK")
     public ActionResult searchWorksTopK(String args) {
-        String trimmed = args == null ? "" : args.trim();
+        // Turing Workflow wraps a single string argument in a JSON array (["{...}"]), so unwrap it
+        // FIRST — otherwise the JSON-object branch never matches and the whole JSON is used as the query.
+        String inner = parseFirstArgument(args);
+        String trimmed = inner == null ? "" : inner.trim();
         if (trimmed.startsWith("{")) {
             try {
                 JSONObject obj = new JSONObject(trimmed);
                 String query = obj.optString("query", "");
                 int perPage = obj.optInt("perPage", DEFAULT_PER_PAGE);
-                return doSearchWorks(query, perPage);
+                String sort = obj.optString("sort", DEFAULT_SORT);
+                return doSearchWorks(query, perPage, sort);
             } catch (Exception e) {
                 return new ActionResult(false, "Invalid JSON: " + e.getMessage());
             }
         }
-        return doSearchWorks(parseFirstArgument(args), DEFAULT_PER_PAGE);
+        return doSearchWorks(inner, DEFAULT_PER_PAGE);
     }
 
     /**
@@ -213,11 +223,16 @@ public class OpenAlexActor extends IIActorRef<OpenAlexActor> {
     // ── internals ────────────────────────────────────────────────────────────
 
     private ActionResult doSearchWorks(String query, int perPage) {
+        return doSearchWorks(query, perPage, DEFAULT_SORT);
+    }
+
+    private ActionResult doSearchWorks(String query, int perPage, String sortFriendly) {
         if (query == null || query.isBlank()) return new ActionResult(false, "Query is required");
+        String sort = resolveSort(sortFriendly);
         String encoded = URLEncoder.encode(query, StandardCharsets.UTF_8);
         String url = BASE_URL + "/works?search=" + encoded
                 + "&per-page=" + perPage
-                + "&sort=cited_by_count:desc"
+                + "&sort=" + URLEncoder.encode(sort, StandardCharsets.UTF_8)
                 + "&mailto=" + email;
         try {
             String body = get(url);
@@ -228,7 +243,7 @@ public class OpenAlexActor extends IIActorRef<OpenAlexActor> {
             StringBuilder sb = new StringBuilder();
             sb.append("OpenAlex papers for \"").append(query)
               .append("\" (").append(total).append(" total, showing top ").append(results.length())
-              .append(" by citation count):\n\n");
+              .append(" by ").append(sortLabel(sort)).append("):\n\n");
             for (int i = 0; i < results.length(); i++) {
                 sb.append(i + 1).append(". ").append(formatWork(results.getJSONObject(i), false)).append("\n\n");
             }
@@ -237,6 +252,35 @@ public class OpenAlexActor extends IIActorRef<OpenAlexActor> {
             logger.log(Level.WARNING, "OpenAlex work search failed for: " + query, e);
             return new ActionResult(false, "Search failed: " + e.getMessage());
         }
+    }
+
+    /**
+     * Maps a friendly sort name to an OpenAlex {@code sort} value. Accepts {@code citations},
+     * {@code relevance}, {@code newest}/{@code date}/{@code latest}, or a raw OpenAlex sort string
+     * (containing {@code ':'}) which is passed through unchanged. Unknown values fall back to the default.
+     */
+    private static String resolveSort(String friendly) {
+        if (friendly == null || friendly.isBlank()) return DEFAULT_SORT;
+        String s = friendly.trim().toLowerCase();
+        if (s.contains(":")) return friendly.trim();   // raw OpenAlex sort string, use as-is
+        return switch (s) {
+            case "citations", "citation", "cited", "cited_by_count", "most_cited" -> "cited_by_count:desc";
+            case "relevance", "relevance_score", "match", "best_match"            -> "relevance_score:desc";
+            case "newest", "date", "latest", "recent", "publication_date"          -> "publication_date:desc";
+            case "oldest"                                                          -> "publication_date:asc";
+            default -> DEFAULT_SORT;
+        };
+    }
+
+    /** Human-readable label for the result-ordering header line. */
+    private static String sortLabel(String openAlexSort) {
+        return switch (openAlexSort) {
+            case "cited_by_count:desc"   -> "citation count";
+            case "relevance_score:desc"  -> "relevance (title/abstract match)";
+            case "publication_date:desc" -> "publication date (newest first)";
+            case "publication_date:asc"  -> "publication date (oldest first)";
+            default -> openAlexSort;
+        };
     }
 
     private String resolveWorkUrl(String id) {
@@ -310,6 +354,7 @@ public class OpenAlexActor extends IIActorRef<OpenAlexActor> {
     }
 
     private String get(String url) throws Exception {
+        logger.info("OpenAlex GET " + url);
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .timeout(TIMEOUT)
