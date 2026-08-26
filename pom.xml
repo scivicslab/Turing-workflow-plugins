@@ -64,6 +64,7 @@
         <module>plugin-fineweb-search</module>
         <module>plugin-openalex</module>
         <module>plugin-ocr</module>
+        <module>plugin-codedoc</module>
     </modules>
 
     <properties>
