@@ -11,6 +11,7 @@
     </parent>
 
     <artifactId>plugin-prompt-builder</artifactId>
+    <version>1.6.0-SNAPSHOT</version>
     <name>Turing Workflow Plugin: Prompt Builder</name>
     <description>Actor that assembles prompts step-by-step from warnings, context, and message sections.</description>
 
@@ -34,13 +35,4 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
-
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-            </plugin>
-        </plugins>
-    </build>
 </project>

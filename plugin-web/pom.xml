@@ -11,6 +11,7 @@
     </parent>
 
     <artifactId>plugin-web</artifactId>
+    <version>1.6.0-SNAPSHOT</version>
     <name>Turing Workflow Plugin: Web (search + fetch)</name>
     <description>Actors for DuckDuckGo web search and URL fetch (HTML to Markdown)</description>
 
@@ -29,13 +30,4 @@
             <version>1.18.3</version>
         </dependency>
     </dependencies>
-
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-            </plugin>
-        </plugins>
-    </build>
 </project>

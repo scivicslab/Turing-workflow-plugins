@@ -11,6 +11,7 @@
     </parent>
 
     <artifactId>plugin-kana-kanji</artifactId>
+    <version>1.6.0-SNAPSHOT</version>
     <name>Turing Workflow Plugin: Kana-Kanji Pairs Generator</name>
     <description>Actors for OCR-to-kana-kanji pair generation via vLLM</description>
 
@@ -34,13 +35,4 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
-
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-            </plugin>
-        </plugins>
-    </build>
 </project>
