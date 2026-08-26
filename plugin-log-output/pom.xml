@@ -11,6 +11,7 @@
     </parent>
 
     <artifactId>plugin-log-output</artifactId>
+    <version>1.6.0</version>
     <name>Turing Workflow Plugin: Log Output</name>
     <description>Console, file, and multiplexer log output for Turing-workflow</description>
 
@@ -44,13 +45,4 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
-
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-            </plugin>
-        </plugins>
-    </build>
 </project>

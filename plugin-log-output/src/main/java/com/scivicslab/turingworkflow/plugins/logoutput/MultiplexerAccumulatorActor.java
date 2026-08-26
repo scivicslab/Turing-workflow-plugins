@@ -75,8 +75,17 @@ public class MultiplexerAccumulatorActor extends IIActorRef<MultiplexerAccumulat
      * <p><b>Note:</b> Do NOT log inside this method — it would cause an
      * infinite loop via {@link MultiplexerLogHandler}.</p>
      *
+     * <p>Fire-and-forget: enqueues the add onto this actor's own mailbox and returns immediately,
+     * without waiting for it to run. Callers that need the delivery/target-count guarantee should
+     * use {@code ask} against the wrapped {@link MultiplexerAccumulator} directly instead of this
+     * action. Matches how callers of this action already treat log delivery as best-effort (e.g.
+     * {@code chat-ui-with-audit-trail}'s per-turn log forwarding never checks this action's
+     * {@link ActionResult}) — waiting here only serialized the caller's own thread behind this
+     * actor's mailbox for no benefit.</p>
+     *
      * @param arg JSON string containing {@code source}, {@code type}, and {@code data} fields
-     * @return an {@link ActionResult} with success status and message
+     * @return an {@link ActionResult}; {@code success=true} means the add was enqueued, not that it
+     *         has run yet
      */
     @Action("add")
     public ActionResult add(String arg) {
@@ -87,9 +96,9 @@ public class MultiplexerAccumulatorActor extends IIActorRef<MultiplexerAccumulat
             String type = json.getString("type");
             String data = json.getString("data");
 
-            this.tell(acc -> acc.add(source, type, data)).get();
+            this.tell(acc -> acc.add(source, type, data));
 
-            return new ActionResult(true, "Added");
+            return new ActionResult(true, "Enqueued");
         } catch (Exception e) {
             logger.log(Level.SEVERE, "Error in add", e);
             return new ActionResult(false, "Error: " + e.getMessage());
