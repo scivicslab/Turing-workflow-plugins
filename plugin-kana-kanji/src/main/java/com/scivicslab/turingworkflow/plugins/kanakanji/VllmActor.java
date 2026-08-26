@@ -76,6 +76,7 @@ public class VllmActor extends IIActorRef<VllmActor> {
             ルール：
             - 数式・アルファベット・数字・英語はひらがな読みなしでそのまま右側に残す
             - ひらがな・カタカナはそのままひらがなに変換する
+            - 助詞の「は」「へ」「を」は発音（わ／え／お）ではなく表記どおり「は」「へ」「を」と書く
             - 説明・コメント不要。出力行のみ
 
             入力テキスト:
@@ -286,7 +287,7 @@ public class VllmActor extends IIActorRef<VllmActor> {
                 {
                     "model": "%s",
                     "messages": [{"role": "user", "content": %s}],
-                    "max_tokens": 16384,
+                    "max_tokens": 8192,
                     "temperature": 0.0,
                     "chat_template_kwargs": {"enable_thinking": false}
                 }
