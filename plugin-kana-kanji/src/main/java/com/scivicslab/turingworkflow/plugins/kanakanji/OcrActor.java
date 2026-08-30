@@ -5,123 +5,62 @@ import com.scivicslab.pojoactor.core.ActionResult;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
-import java.util.logging.Logger;
-
 /**
- * Actor that reads OCR TSV files and provides page text one page at a time.
+ * {@link OcrPages} をアクターとして動かし、その操作をワークフローYAMLへ公開する。
  *
- * <p>OCR TSV format: hiragana TAB kanji TAB page (hiragana column is always empty).</p>
- *
- * <p>Supported actions:</p>
- * <ul>
- *   <li>{@code loadFile} - Load a single OCR TSV file</li>
- *   <li>{@code nextPage} - Advance to next page; returns fail when exhausted</li>
- *   <li>{@code getPageText} - Get current page OCR text (newline-joined fragments)</li>
- *   <li>{@code getPageInfo} - Get current page number and source filename</li>
- * </ul>
+ * <p>状態は持たない。持つのは包んだ {@code OcrPages} のほうであり、これが {@code ActorRef} の
+ * 前提である——アクターとは、素のオブジェクトと、それを動かす参照の対である。状態をこちら側に置き
+ * {@code null} を包むと、{@code isAlive()} が偽を返し、{@code tell}/{@code ask} が黙って失敗する
+ * （{@code ActorSuffixAndOwnedActorRef_260722_oo01} 「実例（2026-08-30）」）。</p>
  */
-public class OcrActor extends IIActorRef<OcrActor> {
+public class OcrActor extends IIActorRef<OcrPages> {
 
-    private static final Logger logger = Logger.getLogger(OcrActor.class.getName());
-
-    private String sourceFile = "";
-    private List<Integer> pageOrder = new ArrayList<>();
-    private Map<Integer, List<String>> pages = new TreeMap<>();
-    private int currentPageIndex = -1;
-    private int currentPageNum = -1;
-
+    /**
+     * @param name   このアクターの登録名
+     * @param system 所属するアクターシステム
+     */
     public OcrActor(String name, IIActorSystem system) {
-        super(name, null, system);
+        super(name, new OcrPages(), system);
+    }
+
+    private OcrPages pojo() {
+        return object;
     }
 
     /**
-     * Load an OCR TSV file. Groups kanji-column text by page number.
+     * @param filePath ワークフローからの引数
+     * @return 包んだオブジェクトが返した結果
      */
     @Action("loadFile")
     public ActionResult loadFile(String filePath) {
-        filePath = parseFirstArgument(filePath);
-        if (filePath.isBlank()) {
-            return new ActionResult(false, "File path is required");
-        }
-        Path path = Path.of(filePath);
-
-        pages.clear();
-        pageOrder.clear();
-        currentPageIndex = -1;
-        currentPageNum = -1;
-        sourceFile = path.getFileName().toString();
-
-        try (BufferedReader reader = Files.newBufferedReader(path)) {
-            String line;
-            boolean first = true;
-            while ((line = reader.readLine()) != null) {
-                if (first) { first = false; continue; } // skip header
-                String[] cols = line.split("\t", -1);
-                if (cols.length < 3) continue;
-                String kanji = cols[1].strip();
-                String pageStr = cols[2].strip();
-                if (kanji.isEmpty() || !pageStr.matches("\\d+")) continue;
-                int pageNum = Integer.parseInt(pageStr);
-                pages.computeIfAbsent(pageNum, k -> new ArrayList<>()).add(kanji);
-            }
-        } catch (IOException e) {
-            return new ActionResult(false, "Failed to read file: " + e.getMessage());
-        }
-
-        pageOrder = new ArrayList<>(pages.keySet());
-        logger.info("Loaded " + sourceFile + ": " + pageOrder.size() + " pages");
-        return new ActionResult(true, "Loaded " + pageOrder.size() + " pages from " + sourceFile);
+        return pojo().loadFile(filePath);
     }
 
     /**
-     * Advance to the next page. Returns failure (false) when all pages are exhausted.
-     * This causes the workflow to try the next row (e.g., transition to end state).
+     * @param args ワークフローからの引数
+     * @return 包んだオブジェクトが返した結果
      */
     @Action("nextPage")
     public ActionResult nextPage(String args) {
-        currentPageIndex++;
-        if (currentPageIndex >= pageOrder.size()) {
-            return new ActionResult(false, "No more pages");
-        }
-        currentPageNum = pageOrder.get(currentPageIndex);
-        int lineCount = pages.get(currentPageNum).size();
-        logger.info("Advancing to page " + currentPageNum + " (" + lineCount + " lines)");
-        return new ActionResult(true, "Page " + currentPageNum);
+        return pojo().nextPage(args);
     }
 
     /**
-     * Get the OCR text of the current page (fragments joined by newlines).
+     * @param args ワークフローからの引数
+     * @return 包んだオブジェクトが返した結果
      */
     @Action("getPageText")
     public ActionResult getPageText(String args) {
-        if (currentPageNum < 0) {
-            return new ActionResult(false, "No page loaded. Call nextPage first.");
-        }
-        List<String> lines = pages.get(currentPageNum);
-        if (lines == null || lines.isEmpty()) {
-            return new ActionResult(false, "Page " + currentPageNum + " has no content");
-        }
-        String text = String.join("\n", lines);
-        return new ActionResult(true, text);
+        return pojo().getPageText(args);
     }
 
     /**
-     * Get metadata about the current page: "pageNum\tsourceFile".
+     * @param args ワークフローからの引数
+     * @return 包んだオブジェクトが返した結果
      */
     @Action("getPageInfo")
     public ActionResult getPageInfo(String args) {
-        if (currentPageNum < 0) {
-            return new ActionResult(false, "No page loaded");
-        }
-        return new ActionResult(true, currentPageNum + "\t" + sourceFile);
+        return pojo().getPageInfo(args);
     }
 
 }

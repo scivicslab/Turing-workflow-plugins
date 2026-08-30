@@ -5,112 +5,35 @@ import com.scivicslab.pojoactor.core.ActionResult;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
-import org.jsoup.Jsoup;
-import org.jsoup.nodes.Document;
-import org.jsoup.nodes.Element;
-
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
-import java.util.logging.Logger;
-
 /**
- * Turing Workflow actor that fetches a URL and returns its readable content.
+ * {@link PageFetcher} をアクターとして動かし、その操作をワークフローYAMLへ公開する。
  *
- * <p>Logic ported from {@code quarkus-mcp-gateway}'s {@code FetchTool}. HTML pages are converted
- * to a Markdown-ish plain text with the main content extracted; non-HTML content is returned
- * as-is. The result is truncated to a maximum length.</p>
- *
- * <p>Actions:</p>
- * <ul>
- *   <li>{@code fetch} - fetch the URL and return extracted text (default max 5000 characters)</li>
- * </ul>
- *
- * @author devteam@scivicslab.com
- * @since 1.0.0
+ * <p>状態は持たない。持つのは包んだ {@code PageFetcher} のほうであり、これが {@code ActorRef} の
+ * 前提である——アクターとは、素のオブジェクトと、それを動かす参照の対である。状態をこちら側に置き
+ * {@code null} を包むと、{@code isAlive()} が偽を返し、{@code tell}/{@code ask} が黙って失敗する
+ * （{@code ActorSuffixAndOwnedActorRef_260722_oo01} 「実例（2026-08-30）」）。</p>
  */
-public class FetchActor extends IIActorRef<FetchActor> {
+public class FetchActor extends IIActorRef<PageFetcher> {
 
-    private static final Logger logger = Logger.getLogger(FetchActor.class.getName());
-    private static final int DEFAULT_MAX_LENGTH = 5000;
-
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .build();
-
+    /**
+     * @param name   このアクターの登録名
+     * @param system 所属するアクターシステム
+     */
     public FetchActor(String name, IIActorSystem system) {
-        super(name, null, system);
+        super(name, new PageFetcher(), system);
+    }
+
+    private PageFetcher pojo() {
+        return object;
     }
 
     /**
-     * Fetches a URL and returns its readable content as text.
-     *
-     * @param args the URL to fetch (plain string or {@code ["url"]})
-     * @return an {@link ActionResult} with the extracted text, or failure on error
+     * @param args ワークフローからの引数
+     * @return 包んだオブジェクトが返した結果
      */
     @Action("fetch")
     public ActionResult fetch(String args) {
-        String url = parseFirstArgument(args);
-        if (url == null || url.isBlank()) {
-            return new ActionResult(false, "Error: url is required");
-        }
-        url = url.trim();
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .timeout(Duration.ofSeconds(30))
-                    .header("User-Agent", "turing-workflow/1.0 (fetch actor)")
-                    .GET()
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() >= 400) {
-                return new ActionResult(false, "HTTP " + response.statusCode() + ": " + truncate(response.body(), 500));
-            }
-
-            String contentType = response.headers().firstValue("content-type").orElse("").toLowerCase();
-            String text = contentType.contains("html")
-                    ? extractText(response.body(), url)
-                    : response.body();
-
-            return new ActionResult(true, truncate(text, DEFAULT_MAX_LENGTH));
-        } catch (Exception e) {
-            logger.warning("fetch failed for " + url + ": " + e.getMessage());
-            return new ActionResult(false, "Error fetching " + url + ": " + e.getMessage());
-        }
+        return pojo().fetch(args);
     }
 
-    private static String extractText(String html, String baseUrl) {
-        Document doc = Jsoup.parse(html, baseUrl);
-        doc.select("script, style, nav, footer, header, aside, [role=navigation]").remove();
-
-        Element main = doc.selectFirst("main, article, [role=main], #content, .content, #main");
-        Element root = main != null ? main : doc.body();
-        if (root == null) return doc.text();
-
-        StringBuilder sb = new StringBuilder();
-        for (Element block : root.select("h1,h2,h3,h4,h5,h6,p,li,pre,blockquote,td,th")) {
-            String tag = block.tagName();
-            String t = block.text().trim();
-            if (t.isEmpty()) continue;
-            if (tag.startsWith("h")) {
-                sb.append("#".repeat(tag.charAt(1) - '0')).append(" ").append(t).append("\n\n");
-            } else if ("pre".equals(tag)) {
-                sb.append("```\n").append(block.wholeText().trim()).append("\n```\n\n");
-            } else if ("li".equals(tag)) {
-                sb.append("- ").append(t).append("\n");
-            } else {
-                sb.append(t).append("\n\n");
-            }
-        }
-        return sb.isEmpty() ? root.text() : sb.toString().stripTrailing();
-    }
-
-    private static String truncate(String text, int maxLength) {
-        if (text.length() <= maxLength) return text;
-        return text.substring(0, maxLength) + "\n[truncated " + text.length() + " chars total]";
-    }
 }
