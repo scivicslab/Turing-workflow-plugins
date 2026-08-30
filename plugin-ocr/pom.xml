@@ -7,10 +7,14 @@
     <parent>
         <groupId>com.scivicslab.turingworkflow.plugins</groupId>
         <artifactId>turing-workflow-plugins-parent</artifactId>
-        <version>1.5.0</version>
+        <version>1.6.0</version>
     </parent>
 
     <artifactId>plugin-ocr</artifactId>
+    <!-- Declared rather than inherited from the parent: without it this module builds as
+         the parent's 1.5.0, which is a fixed release number whose content must not change
+         (CodingStandard_260401_oo01 第11節). -->
+    <version>1.6.0</version>
     <name>Turing Workflow Plugin: OCR</name>
     <description>Actor that sends PDFs to Marker (English/math) or YomiToku (Japanese) OCR backends and returns Markdown text</description>
 
