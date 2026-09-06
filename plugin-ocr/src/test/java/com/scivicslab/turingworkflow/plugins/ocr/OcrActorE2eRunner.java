@@ -1,6 +1,6 @@
 package com.scivicslab.turingworkflow.plugins.ocr;
 
-import com.scivicslab.pojoactor.core.ActionResult;
+import com.scivicslab.pojoactor.action.ActionResult;
 
 import java.io.IOException;
 import java.nio.file.Files;

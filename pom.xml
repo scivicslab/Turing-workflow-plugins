@@ -61,8 +61,8 @@
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <pojo-actor.version>3.5.0</pojo-actor.version>
-        <turing-workflow.version>3.6.1</turing-workflow.version>
+        <pojo-actor.version>4.0.0-SNAPSHOT</pojo-actor.version>
+        <turing-workflow.version>4.0.0-SNAPSHOT</turing-workflow.version>
     </properties>
 
     <dependencyManagement>
@@ -132,8 +132,8 @@
                             <doclet>com.scivicslab.pojoactor.doclet.TuringPluginDoclet</doclet>
                             <docletArtifact>
                                 <groupId>com.scivicslab</groupId>
-                                <artifactId>pojo-actor</artifactId>
-                                <version>${pojo-actor.version}</version>
+                                <artifactId>turing-workflow</artifactId>
+                                <version>${turing-workflow.version}</version>
                             </docletArtifact>
                             <useStandardDocletOptions>false</useStandardDocletOptions>
                             <additionalOptions>

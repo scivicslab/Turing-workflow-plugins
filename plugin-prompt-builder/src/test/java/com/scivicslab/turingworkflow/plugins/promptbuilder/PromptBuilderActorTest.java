@@ -1,6 +1,6 @@
 package com.scivicslab.turingworkflow.plugins.promptbuilder;
 
-import com.scivicslab.pojoactor.core.ActionResult;
+import com.scivicslab.pojoactor.action.ActionResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 

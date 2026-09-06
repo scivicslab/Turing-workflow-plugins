@@ -17,13 +17,13 @@
 
 package com.scivicslab.turingworkflow.plugins.vault;
 
-import com.scivicslab.pojoactor.core.Action;
-import com.scivicslab.pojoactor.core.ActionResult;
+import com.scivicslab.pojoactor.action.Action;
+import com.scivicslab.pojoactor.action.ActionResult;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
-import static com.scivicslab.pojoactor.core.ActionArgs.getFirst;
-import static com.scivicslab.pojoactor.core.ActionArgs.getString;
+import static com.scivicslab.pojoactor.action.ActionArgs.getFirst;
+import static com.scivicslab.pojoactor.action.ActionArgs.getString;
 
 /**
  * Workflow actor for reading secrets from HashiCorp Vault KV v2.

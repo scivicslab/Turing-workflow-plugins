@@ -26,7 +26,7 @@ import com.scivicslab.turingworkflow.plugins.logdb.DistributedLogStore;
 import com.scivicslab.turingworkflow.plugins.logdb.LogLevel;
 import com.scivicslab.turingworkflow.plugins.logoutput.WorkflowStreamingAccumulator;
 import com.scivicslab.turingworkflow.plugins.ssh.Node;
-import com.scivicslab.pojoactor.core.ActionResult;
+import com.scivicslab.pojoactor.action.ActionResult;
 import com.scivicslab.pojoactor.core.ActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;

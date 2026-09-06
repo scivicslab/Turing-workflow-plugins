@@ -1,6 +1,6 @@
 package com.scivicslab.turingworkflow.plugins.chatui3;
 
-import com.scivicslab.pojoactor.core.ActionResult;
+import com.scivicslab.pojoactor.action.ActionResult;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;

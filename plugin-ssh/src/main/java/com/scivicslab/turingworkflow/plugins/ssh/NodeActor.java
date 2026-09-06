@@ -29,12 +29,12 @@ import java.util.logging.Logger;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import com.scivicslab.pojoactor.core.Action;
-import com.scivicslab.pojoactor.core.ActionResult;
+import com.scivicslab.pojoactor.action.Action;
+import com.scivicslab.pojoactor.action.ActionResult;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
-import static com.scivicslab.pojoactor.core.ActionArgs.getFirst;
+import static com.scivicslab.pojoactor.action.ActionArgs.getFirst;
 
 /**
  * Interpreter-interfaced actor reference for {@link NodeInterpreter} instances.

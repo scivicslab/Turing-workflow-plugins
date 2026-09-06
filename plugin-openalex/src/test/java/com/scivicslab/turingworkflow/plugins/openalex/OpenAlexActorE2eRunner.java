@@ -1,6 +1,6 @@
 package com.scivicslab.turingworkflow.plugins.openalex;
 
-import com.scivicslab.pojoactor.core.ActionResult;
+import com.scivicslab.pojoactor.action.ActionResult;
 
 /**
  * E2E runner for OpenAlexActor — Phase 1 of the paper-deep-read pipeline.

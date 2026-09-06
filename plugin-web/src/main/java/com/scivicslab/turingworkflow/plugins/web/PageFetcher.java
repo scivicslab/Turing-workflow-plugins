@@ -1,6 +1,6 @@
 package com.scivicslab.turingworkflow.plugins.web;
 
-import com.scivicslab.pojoactor.core.ActionResult;
+import com.scivicslab.pojoactor.action.ActionResult;
 
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;

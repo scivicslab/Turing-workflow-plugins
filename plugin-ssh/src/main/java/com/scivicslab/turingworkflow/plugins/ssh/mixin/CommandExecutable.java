@@ -22,8 +22,8 @@ import java.io.IOException;
 import org.json.JSONArray;
 
 import com.scivicslab.turingworkflow.plugins.ssh.Node;
-import com.scivicslab.pojoactor.core.Action;
-import com.scivicslab.pojoactor.core.ActionResult;
+import com.scivicslab.pojoactor.action.Action;
+import com.scivicslab.pojoactor.action.ActionResult;
 
 /**
  * Mixin interface providing command execution actions via @Action annotations.

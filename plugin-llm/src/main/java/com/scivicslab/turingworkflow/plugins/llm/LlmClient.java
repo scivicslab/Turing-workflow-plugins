@@ -1,6 +1,6 @@
 package com.scivicslab.turingworkflow.plugins.llm;
 
-import com.scivicslab.pojoactor.core.ActionResult;
+import com.scivicslab.pojoactor.action.ActionResult;
 
 import java.net.URI;
 import java.net.http.HttpClient;

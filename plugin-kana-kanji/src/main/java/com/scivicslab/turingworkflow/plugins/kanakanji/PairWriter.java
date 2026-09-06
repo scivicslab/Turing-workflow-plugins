@@ -1,6 +1,6 @@
 package com.scivicslab.turingworkflow.plugins.kanakanji;
 
-import com.scivicslab.pojoactor.core.ActionResult;
+import com.scivicslab.pojoactor.action.ActionResult;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
