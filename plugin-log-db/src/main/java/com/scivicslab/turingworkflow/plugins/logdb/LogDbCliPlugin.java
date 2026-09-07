@@ -60,20 +60,26 @@ public class LogDbCliPlugin implements CliPlugin {
     }
 
     /**
-     * Registers the bundled H2 JDBC driver with {@link java.sql.DriverManager}.
+     * Registers the H2 JDBC driver with {@link java.sql.DriverManager}.
      *
      * <p>When this plugin JAR is loaded through a child {@link ClassLoader} (as the host does
-     * for plugins), the bundled H2 driver is not auto-discovered by {@code DriverManager},
-     * whose service lookup runs against the system class path. Loading the driver class here,
-     * from this plugin's class loader, registers it so that {@code DriverManager.getConnection}
-     * called from this plugin's code can find it.</p>
+     * for plugins), the H2 driver is not auto-discovered by {@code DriverManager}, whose service
+     * lookup runs against the system class path. Loading the driver class here, from this
+     * plugin's class loader, registers it so that {@code DriverManager.getConnection} called
+     * from this plugin's code can find it.</p>
+     *
+     * <p>This JAR does not contain H2; the host resolves one JAR per plugins-config entry and
+     * does not follow a plugin's transitive dependencies. The host's plugins config must
+     * therefore list {@code com.h2database:h2} as its own entry, which puts H2 on the same
+     * plugin class loader. Without that entry the class below is absent and every command in
+     * this plugin fails with {@code No suitable driver found for jdbc:h2:...}.</p>
      */
     private static void ensureH2Driver() {
         try {
             Class.forName("org.h2.Driver");
         } catch (ClassNotFoundException e) {
-            // h2 is bundled in this plugin JAR; this should not happen.
-            System.err.println("Warning: H2 driver not found on the plugin class path: " + e.getMessage());
+            System.err.println("Warning: H2 driver not found on the plugin class path: " + e.getMessage()
+                    + ". Add an entry for com.h2database:h2 to the plugins config.");
         }
     }
 }
