@@ -66,11 +66,10 @@ public class SectionIterator {
      * <p>Sections shorter than {@code minChars} are merged into the preceding
      * section so the LLM is never called with trivial content.</p>
      *
-     * @param args Markdown text (the full OCR output)
      * @return "{count} sections extracted"
      */
-    public ActionResult extractSections(String args) {
-        String markdown = args == null ? "" : args.trim();
+    public ActionResult extractSections(String markdown) {
+        markdown = markdown == null ? "" : markdown.trim();
         if (markdown.isBlank()) return new ActionResult(false, "Markdown text is required");
 
         sections.clear();
@@ -114,9 +113,8 @@ public class SectionIterator {
      * <p>Returns {@code ActionResult(false, ...)} when all sections have been
      * returned, which causes the {@code paraloop} state machine to exit the loop.</p>
      *
-     * @param args unused
      */
-    public ActionResult getNext(String args) {
+    public ActionResult getNext() {
         if (cursor >= sections.size()) {
             return new ActionResult(false, "No more sections");
         }
@@ -131,50 +129,18 @@ public class SectionIterator {
      *
      * @param args minimum character count as a string
      */
-    public ActionResult setMinChars(String args) {
-        try {
-            int n = Integer.parseInt(parseFirstArgument(args).trim());
-            if (n < 0) return new ActionResult(false, "minChars must be non-negative");
-            this.minChars = n;
-            return new ActionResult(true, "minChars set to " + n);
-        } catch (NumberFormatException e) {
-            return new ActionResult(false, "Invalid number: " + args);
-        }
+    public ActionResult setMinChars(int n) {
+        if (n < 0) return new ActionResult(false, "minChars must be non-negative");
+        this.minChars = n;
+        return new ActionResult(true, "minChars set to " + n);
     }
 
     /**
      * Rewinds the iterator to the first section without re-parsing the Markdown.
      *
-     * @param args unused
      */
-    public ActionResult reset(String args) {
+    public ActionResult reset() {
         cursor = 0;
         return new ActionResult(true, "Reset to section 0/" + sections.size());
-    }
-
-    /**
-     * ワークフローからの引数はJSONの配列で届くことがある。その先頭の要素を取り出す。
-     *
-     * <p>{@code IIActorRef} が同名の {@code protected} メソッドで提供しているものと同じ処理である。
-     * このクラスはアクター参照を継承しない素のオブジェクトなので、自分で持つ。</p>
-     *
-     * @param arg 受け取った引数
-     * @return 配列なら先頭の要素、そうでなければそのまま
-     */
-    private String parseFirstArgument(String arg) {
-        if (arg == null || arg.isEmpty()) {
-            return "";
-        }
-        if (arg.startsWith("[")) {
-            try {
-                org.json.JSONArray arr = new org.json.JSONArray(arg);
-                if (arr.length() > 0) {
-                    return arr.getString(0);
-                }
-            } catch (Exception e) {
-                // Not a valid JSON array
-            }
-        }
-        return arg;
     }
 }

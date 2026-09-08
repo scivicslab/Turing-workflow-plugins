@@ -2,6 +2,8 @@ package com.scivicslab.turingworkflow.plugins.llm;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
@@ -31,54 +33,83 @@ public class LlmActor extends IIActorRef<LlmClient> {
      * @param url ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("setDirectUrl")
-    public ActionResult setDirectUrl(String url) {
-        return pojo().setDirectUrl(url);
+    /**
+     * The endpoint to send to.
+     *
+     * @param url base URL of the endpoint
+     */
+    public record UrlArgs(@NotNull String url) {}
+
+    /**
+     * The endpoint to send to and the model to ask for.
+     *
+     * @param url   base URL of the OpenAI-compatible endpoint
+     * @param model model id to request; omit to keep the current one
+     */
+    public record OpenAiUrlArgs(@NotNull String url, String model) {}
+
+    /**
+     * The text to send.
+     *
+     * @param prompt the text to send
+     */
+    public record PromptArgs(@NotNull String prompt) {}
+
+    /**
+     * Whether the model should be asked to think before answering.
+     *
+     * @param enabled true to ask for it
+     */
+    public record EnableThinkingArgs(@NotNull Boolean enabled) {}
+
+    @Action(value = "setDirectUrl", argsType = UrlArgs.class)
+    public ActionResult setDirectUrl(UrlArgs args) {
+        return pojo().setDirectUrl(args.url());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("setOpenAiUrl")
-    public ActionResult setOpenAiUrl(String args) {
-        return pojo().setOpenAiUrl(args);
+    @Action(value = "setOpenAiUrl", argsType = OpenAiUrlArgs.class)
+    public ActionResult setOpenAiUrl(OpenAiUrlArgs args) {
+        return pojo().setOpenAiUrl(args.url(), args.model());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("setSystemPrompt")
-    public ActionResult setSystemPrompt(String args) {
-        return pojo().setSystemPrompt(args);
+    @Action(value = "setSystemPrompt", argsType = PromptArgs.class)
+    public ActionResult setSystemPrompt(PromptArgs args) {
+        return pojo().setSystemPrompt(args.prompt());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("setEnableThinking")
-    public ActionResult setEnableThinking(String args) {
-        return pojo().setEnableThinking(args);
+    @Action(value = "setEnableThinking", argsType = EnableThinkingArgs.class)
+    public ActionResult setEnableThinking(EnableThinkingArgs args) {
+        return pojo().setEnableThinking(String.valueOf(args.enabled()));
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("callOpenAi")
-    public ActionResult callOpenAi(String args) {
-        return pojo().callOpenAi(args);
+    @Action(value = "callOpenAi", argsType = PromptArgs.class)
+    public ActionResult callOpenAi(PromptArgs args) {
+        return pojo().callOpenAi(args.prompt());
     }
 
     /**
      * @param promptText ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("submitDirect")
-    public ActionResult submitDirect(String promptText) {
-        return pojo().submitDirect(promptText);
+    @Action(value = "submitDirect", argsType = PromptArgs.class)
+    public ActionResult submitDirect(PromptArgs args) {
+        return pojo().submitDirect(args.prompt());
     }
 
 }

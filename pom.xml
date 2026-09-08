@@ -58,11 +58,14 @@
     </modules>
 
     <properties>
+        <!-- A module that declares no actions has no turing-workflow dependency, so the
+             generator is not on its classpath; such a module sets this to true. -->
+        <actionSchemas.skip>false</actionSchemas.skip>
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <pojo-actor.version>4.0.0</pojo-actor.version>
-        <turing-workflow.version>4.0.0</turing-workflow.version>
+        <pojo-actor.version>4.1.0</pojo-actor.version>
+        <turing-workflow.version>4.1.0</turing-workflow.version>
     </properties>
 
     <dependencyManagement>
@@ -93,6 +96,16 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
+
+    <dependencies>
+        <!-- Build-time only: ActionSchemaGenerator needs it, the artifacts do not. -->
+        <dependency>
+            <groupId>com.github.victools</groupId>
+            <artifactId>jsonschema-generator</artifactId>
+            <version>4.38.0</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
 
     <build>
         <plugins>
@@ -129,6 +142,13 @@
                         <goals><goal>javadoc</goal></goals>
                         <phase>prepare-package</phase>
                         <configuration>
+                            <!-- Its own output directory. Sharing target/apidocs with
+                                 attach-javadocs makes the two executions read each other's
+                                 staleness marker: when this one is skipped as up to date it
+                                 writes no options file, and attach-javadocs then fails with
+                                 "Unable to compute stale date". -->
+                            <outputDirectory>${project.build.directory}/plugin-manifest-javadoc</outputDirectory>
+                            <reportOutputDirectory>${project.build.directory}/plugin-manifest-javadoc</reportOutputDirectory>
                             <doclet>com.scivicslab.pojoactor.doclet.TuringPluginDoclet</doclet>
                             <docletArtifact>
                                 <groupId>com.scivicslab</groupId>
@@ -194,4 +214,47 @@
             </plugins>
         </pluginManagement>
     </build>
+
+    <profiles>
+        <!-- Generate a JSON Schema for every @Action that declares argsType.
+             Runs in a forked JVM with the module's own classpath: exec:java would put the
+             generator in the plugin's class loader, which cannot see the module's compiled
+             classes' dependencies, and unloadable classes are skipped without a message.
+             The profile turns itself on only where there is Java source, so the aggregator
+             POM — which compiles nothing — does not run the generator. -->
+        <profile>
+            <id>generate-action-schemas</id>
+            <activation>
+                <file><exists>${project.basedir}/src/main/java</exists></file>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>generate-action-schemas</id>
+                                <phase>process-classes</phase>
+                                <goals><goal>exec</goal></goals>
+                                <configuration>
+                                    <skip>${actionSchemas.skip}</skip>
+                                    <executable>java</executable>
+                                    <classpathScope>test</classpathScope>
+                                    <arguments>
+                                        <argument>-classpath</argument>
+                                        <classpath/>
+                                        <argument>com.scivicslab.pojoactor.action.schema.ActionSchemaGenerator</argument>
+                                        <argument>${project.build.outputDirectory}</argument>
+                                        <argument>${project.build.outputDirectory}/action-schemas</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

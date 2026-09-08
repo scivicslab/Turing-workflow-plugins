@@ -57,8 +57,7 @@ public class FineWebSearchClient {
      * @param args the server URL
      * @return ActionResult indicating success or failure
      */
-    public ActionResult setUrl(String args) {
-        String url = parseFirstArgument(args);
+    public ActionResult setUrl(String url) {
         if (url == null || url.isBlank()) {
             return new ActionResult(false, "URL is required");
         }
@@ -72,48 +71,30 @@ public class FineWebSearchClient {
      * <p>The result is a numbered list of ranked URLs (text is not stored in the index).
      * To obtain page content, fetch the returned URLs with {@code plugin-web}'s FetchActor.</p>
      *
-     * <p>Expected argument: query string, e.g. {@code "machine learning"}.</p>
      *
-     * @param args the search query
+     * @param query the search query
      * @return ActionResult with numbered URL list on success
      */
-    public ActionResult search(String args) {
-        return doSearch(parseFirstArgument(args), DEFAULT_TOP_K);
+    public ActionResult search(String query) {
+        return doSearch(query, DEFAULT_TOP_K);
     }
 
     /**
      * Searches FineWeb with an explicit top_k.
      *
-     * <p>Expected argument: JSON object {@code {"query": "...", "topK": 5}}.
-     * Falls back to default top_k=10 if {@code topK} is absent.</p>
-     *
-     * @param args JSON object with {@code query} and optional {@code topK}
+     * @param query the search query
+     * @param topK  how many results to return
      * @return ActionResult with numbered URL list on success
      */
-    public ActionResult searchTopK(String args) {
-        String trimmed = args == null ? "" : args.trim();
-        if (trimmed.startsWith("{")) {
-            try {
-                JSONObject obj = new JSONObject(trimmed);
-                String query = obj.optString("query", "");
-                int topK = obj.optInt("topK", DEFAULT_TOP_K);
-                return doSearch(query, topK);
-            } catch (Exception e) {
-                return new ActionResult(false, "Invalid JSON: " + e.getMessage());
-            }
-        }
-        return doSearch(parseFirstArgument(args), DEFAULT_TOP_K);
+    public ActionResult searchTopK(String query, Integer topK) {
+        return doSearch(query, topK != null ? topK : DEFAULT_TOP_K);
     }
-
     /**
      * Checks that the FineWeb search server is reachable and healthy.
      *
-     * <p>Expected argument: ignored.</p>
-     *
-     * @param args unused
      * @return ActionResult with {@code {"status":"ok"}} body on success
      */
-    public ActionResult health(String args) {
+    public ActionResult health() {
         try {
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(serverUrl + "/health"))
@@ -187,29 +168,4 @@ public class FineWebSearchClient {
         }
     }
 
-    /**
-     * ワークフローからの引数はJSONの配列で届くことがある。その先頭の要素を取り出す。
-     *
-     * <p>{@code IIActorRef} が同名の {@code protected} メソッドで提供しているものと同じ処理である。
-     * このクラスはアクター参照を継承しない素のオブジェクトなので、自分で持つ。</p>
-     *
-     * @param arg 受け取った引数
-     * @return 配列なら先頭の要素、そうでなければそのまま
-     */
-    private String parseFirstArgument(String arg) {
-        if (arg == null || arg.isEmpty()) {
-            return "";
-        }
-        if (arg.startsWith("[")) {
-            try {
-                org.json.JSONArray arr = new org.json.JSONArray(arg);
-                if (arr.length() > 0) {
-                    return arr.getString(0);
-                }
-            } catch (Exception e) {
-                // Not a valid JSON array
-            }
-        }
-        return arg;
-    }
 }

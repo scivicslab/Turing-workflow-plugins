@@ -26,7 +26,7 @@ public class ChatUi3IntegrationTest {
 
         IIActorSystem system = new IIActorSystem("chatui3-it");
         ChatUi3Actor actor = new ChatUi3Actor("chatui3", system);
-        actor.setBaseUrl(baseUrl);
+        actor.setBaseUrl(new ChatUi3Actor.BaseUrlArgs(baseUrl));
 
         System.out.println("=== plugin-chatui3 integration test ===");
         System.out.println("Target: " + baseUrl);
@@ -47,7 +47,7 @@ public class ChatUi3IntegrationTest {
 
         // Step 3: chat — response text must not be empty
         System.out.println("\n[Step 3] chat");
-        ActionResult chat = actor.chat("Reply with exactly 3 words.");
+        ActionResult chat = actor.chat(new ChatUi3Actor.MessageArgs("Reply with exactly 3 words."));
         require(chat.isSuccess(), "chat failed: " + chat.getResult());
         require(chat.getResult() != null && !chat.getResult().isBlank(),
                 "chat response is empty");
@@ -65,7 +65,7 @@ public class ChatUi3IntegrationTest {
 
         // Step 5: updateConfig — set temperature to 0.2
         System.out.println("\n[Step 5] updateConfig temperature=0.2");
-        ActionResult upd = actor.updateConfig("{\"temperature\":0.2}");
+        ActionResult upd = actor.updateConfig(new ChatUi3Actor.ConfigPatchArgs(null, null, 0.2, null));
         require(upd.isSuccess(), "updateConfig failed: " + upd.getResult());
         System.out.println("  config updated");
 

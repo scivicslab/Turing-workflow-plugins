@@ -33,6 +33,8 @@ import org.json.JSONObject;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
@@ -148,6 +150,59 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      * @param args the argument string (not used)
      * @return ActionResult indicating success or failure
      */
+    /**
+     * A path in the file system.
+     *
+     * @param path the path to read
+     */
+    public record PathArgs(@NotNull String path) {}
+
+    /**
+     * A piece of text.
+     *
+     * @param text the text
+     */
+    public record TextArgs(@NotNull String text) {}
+
+    /**
+     * Which group of nodes to act on.
+     *
+     * @param group the group's name in the inventory
+     */
+    public record GroupArgs(@NotNull String group) {}
+
+    /**
+     * A shell command to run on every node of the group.
+     *
+     * @param command the command line
+     */
+    public record CommandArgs(@NotNull String command) {}
+
+    /**
+     * How many times the interpreter may step before giving up.
+     *
+     * @param maxIterations the limit; omit for 10000
+     */
+    public record MaxIterationsArgs(Integer maxIterations) {}
+
+    /**
+     * Which workflow to run and how many steps it may take.
+     *
+     * @param workflowFile  path of the workflow file
+     * @param maxIterations the limit; omit for 10000
+     */
+    public record RunWorkflowArgs(@NotNull String workflowFile, Integer maxIterations) {}
+
+    /**
+     * Which child actors to call, which of their actions to call, and with what.
+     *
+     * @param actor     a name pattern the child actors are matched against;
+     *                  {@code *} stands for any run of characters
+     * @param method    the action called on every matched child actor
+     * @param arguments the arguments that action receives; none when absent
+     */
+    public record ApplyArgs(@NotNull String actor, @NotNull String method, List<Object> arguments) {}
+
     @Action("execCode")
     public ActionResult execCode(String args) {
         try {
@@ -164,10 +219,10 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      * @param args the argument string (optional max iterations)
      * @return ActionResult indicating success or failure
      */
-    @Action("runUntilEnd")
-    public ActionResult runUntilEnd(String args) {
+    @Action(value = "runUntilEnd", argsType = MaxIterationsArgs.class)
+    public ActionResult runUntilEnd(MaxIterationsArgs args) {
         try {
-            int maxIterations = parseMaxIterations(args, 10000);
+            int maxIterations = args.maxIterations() == null ? 10000 : args.maxIterations();
             return this.ask(n -> n.runUntilEnd(maxIterations)).get();
         } catch (InterruptedException | ExecutionException e) {
             logger.log(Level.SEVERE, "runUntilEnd failed", e);
@@ -181,13 +236,12 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      * @param args JSON array with workflow file path and optional max iterations
      * @return ActionResult indicating success or failure
      */
-    @Action("runWorkflow")
-    public ActionResult runWorkflow(String args) {
+    @Action(value = "runWorkflow", argsType = RunWorkflowArgs.class)
+    public ActionResult runWorkflow(RunWorkflowArgs args) {
         try {
-            JSONArray runArgs = new JSONArray(args);
-            String workflowFile = runArgs.getString(0);
+            String workflowFile = args.workflowFile();
             this.currentWorkflowPath = workflowFile;  // Store for WorkflowReporter
-            int runMaxIterations = runArgs.length() > 1 ? runArgs.getInt(1) : 10000;
+            int runMaxIterations = args.maxIterations() == null ? 10000 : args.maxIterations();
             logger.info(String.format("Running workflow: %s (maxIterations=%d)", workflowFile, runMaxIterations));
             ActionResult result = this.object.runWorkflow(workflowFile, runMaxIterations);
             logger.info(String.format("Workflow completed: success=%s, result=%s", result.isSuccess(), result.getResult()));
@@ -204,9 +258,9 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      * @param args JSON array with file path
      * @return ActionResult indicating success or failure
      */
-    @Action("readYaml")
-    public ActionResult readYaml(String args) {
-        String filePath = extractSingleArgument(args);
+    @Action(value = "readYaml", argsType = PathArgs.class)
+    public ActionResult readYaml(PathArgs args) {
+        String filePath = args.path();
         this.currentWorkflowPath = filePath;  // Store for WorkflowReporter
         try {
             String overlayPath = this.object.getOverlayDir();
@@ -267,9 +321,9 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      * @param args JSON array with group name
      * @return ActionResult indicating success or failure
      */
-    @Action("createNodeActors")
-    public ActionResult createNodeActorsAction(String args) {
-        String groupName = extractSingleArgument(args);
+    @Action(value = "createNodeActors", argsType = GroupArgs.class)
+    public ActionResult createNodeActorsAction(GroupArgs args) {
+        String groupName = args.group();
         createNodeActors(groupName);
         return new ActionResult(true, String.format("Created node actors for group '%s'", groupName));
     }
@@ -277,12 +331,12 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     /**
      * Applies an action to child actors matching a wildcard pattern.
      *
-     * @param args JSON object defining the action to apply
+     * @param args which child actors to call, and with what
      * @return ActionResult indicating success or failure
      */
-    @Action("apply")
-    public ActionResult applyAction(String args) {
-        return apply(args);
+    @Action(value = "apply", argsType = ApplyArgs.class)
+    public ActionResult applyAction(ApplyArgs args) {
+        return apply(args.actor(), args.method(), args.arguments());
     }
 
     /**
@@ -291,10 +345,10 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      * @param args JSON array with command
      * @return ActionResult with execution results
      */
-    @Action("executeCommandOnAllNodes")
-    public ActionResult executeCommandOnAllNodesAction(String args) {
+    @Action(value = "executeCommandOnAllNodes", argsType = CommandArgs.class)
+    public ActionResult executeCommandOnAllNodesAction(CommandArgs args) {
         try {
-            String command = extractSingleArgument(args);
+            String command = args.command();
             List<String> results = executeCommandOnAllNodes(command);
             return new ActionResult(true,
                 String.format("Executed command on %d nodes: %s", results.size(), results));
@@ -385,9 +439,9 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      * @param args the argument string
      * @return ActionResult with the argument
      */
-    @Action("doNothing")
-    public ActionResult doNothing(String args) {
-        return new ActionResult(true, args);
+    @Action(value = "doNothing", argsType = TextArgs.class)
+    public ActionResult doNothing(TextArgs args) {
+        return new ActionResult(true, args.text());
     }
 
     // ========================================================================
@@ -400,9 +454,9 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      * @param args the path to output (from JSON array)
      * @return ActionResult with the formatted JSON
      */
-    @Action("printJson")
-    public ActionResult printJson(String args) {
-        String path = getFirst(args);
+    @Action(value = "printJson", argsType = PathArgs.class)
+    public ActionResult printJson(PathArgs args) {
+        String path = args.path();
         String formatted = toStringOfJson(path);
         sendToMultiplexer(formatted);
         return new ActionResult(true, formatted);
@@ -414,9 +468,9 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      * @param args the path to output (from JSON array)
      * @return ActionResult with the formatted YAML
      */
-    @Action("printYaml")
-    public ActionResult printYaml(String args) {
-        String path = getFirst(args);
+    @Action(value = "printYaml", argsType = PathArgs.class)
+    public ActionResult printYaml(PathArgs args) {
+        String path = args.path();
         String formatted = toStringOfYaml(path);
         sendToMultiplexer(formatted);
         return new ActionResult(true, formatted);
@@ -508,13 +562,9 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      * @param actionDef JSON string defining the action to apply
      * @return ActionResult indicating success or failure
      */
-    private ActionResult apply(String actionDef) {
+    private ActionResult apply(String actorPattern, String method, List<Object> arguments) {
         try {
-            JSONObject action = new JSONObject(actionDef);
-            String actorPattern = action.getString("actor");
-            String method = action.getString("method");
-            JSONArray argsArray = action.optJSONArray("arguments");
-            String args = argsArray != null ? argsArray.toString() : "[]";
+            String args = new JSONArray(arguments == null ? List.of() : arguments).toString();
 
             // Find matching child actors
             List<IIActorRef<?>> matchedActors = findMatchingChildActors(actorPattern);
@@ -577,7 +627,7 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
             }
 
         } catch (Exception e) {
-            logger.log(Level.SEVERE, "Error in apply: " + actionDef, e);
+            logger.log(Level.SEVERE, "Error in apply: " + method + " on " + actorPattern, e);
             return new ActionResult(false, "Error: " + e.getMessage());
         }
     }

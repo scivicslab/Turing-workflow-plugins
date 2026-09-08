@@ -26,15 +26,15 @@ import java.util.concurrent.ExecutionException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
-import static com.scivicslab.pojoactor.action.ActionArgs.getFirst;
 
 /**
  * Interpreter-interfaced actor reference for {@link NodeInterpreter} instances.
@@ -108,6 +108,70 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args JSON array string (unused)
      * @return ActionResult with the execution outcome
      */
+    /**
+     * A path in the file system.
+     *
+     * @param path the path to read
+     */
+    public record PathArgs(@NotNull String path) {}
+
+    /**
+     * A piece of text.
+     *
+     * @param text the text
+     */
+    public record TextArgs(@NotNull String text) {}
+
+    /**
+     * How long to wait.
+     *
+     * @param millis milliseconds to wait
+     */
+    public record SleepArgs(@NotNull Long millis) {}
+
+    /**
+     * How many times the interpreter may step before giving up.
+     *
+     * @param maxIterations the limit; omit for 10000
+     */
+    public record MaxIterationsArgs(Integer maxIterations) {}
+
+    /**
+     * Which workflow to run.
+     *
+     * @param workflowFile path of the workflow file
+     */
+    public record WorkflowFileArgs(@NotNull String workflowFile) {}
+
+    /**
+     * Which workflow to run and how many steps it may take.
+     *
+     * @param workflowFile  path of the workflow file
+     * @param maxIterations the limit; omit for 10000
+     */
+    public record RunWorkflowArgs(@NotNull String workflowFile, Integer maxIterations) {}
+
+    /**
+     * Which overlay to apply.
+     *
+     * @param overlay the overlay to apply
+     */
+    public record OverlayArgs(@NotNull String overlay) {}
+
+    /**
+     * Which list of documents to work through.
+     *
+     * @param documentList path of the file listing the documents
+     */
+    public record DocumentListArgs(@NotNull String documentList) {}
+
+    /**
+     * A shell command to run on the node.
+     *
+     * @param command the command line
+     */
+    public record CommandArgs(@NotNull String command) {}
+
     @Action("execCode")
     public ActionResult execCode(String args) {
         try {
@@ -128,9 +192,9 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args JSON array containing the file path as the first element
      * @return ActionResult indicating success or failure with error details
      */
-    @Action("readYaml")
-    public ActionResult readYaml(String args) {
-        String arg = getFirst(args);
+    @Action(value = "readYaml", argsType = PathArgs.class)
+    public ActionResult readYaml(PathArgs args) {
+        String arg = args.path();
         try {
             String overlayPath = this.object.getOverlayDir();
             if (overlayPath != null) {
@@ -194,10 +258,10 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args JSON array optionally containing the max iterations as the first element
      * @return ActionResult with the workflow execution outcome
      */
-    @Action("runUntilEnd")
-    public ActionResult runUntilEnd(String args) {
+    @Action(value = "runUntilEnd", argsType = MaxIterationsArgs.class)
+    public ActionResult runUntilEnd(MaxIterationsArgs args) {
         try {
-            int maxIterations = parseMaxIterations(args, 10000);
+            int maxIterations = args.maxIterations() == null ? 10000 : args.maxIterations();
             return this.ask(n -> n.runUntilEnd(maxIterations)).get();
         } catch (InterruptedException | ExecutionException e) {
             return handleException(e);
@@ -212,11 +276,10 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args JSON array containing the workflow file path as the first element
      * @return ActionResult with the call outcome
      */
-    @Action("call")
-    public ActionResult call(String args) {
+    @Action(value = "call", argsType = WorkflowFileArgs.class)
+    public ActionResult call(WorkflowFileArgs args) {
         try {
-            JSONArray callArgs = new JSONArray(args);
-            String callWorkflowFile = callArgs.getString(0);
+            String callWorkflowFile = args.workflowFile();
             return this.ask(n -> n.call(callWorkflowFile)).get();
         } catch (InterruptedException | ExecutionException e) {
             return handleException(e);
@@ -232,12 +295,11 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args JSON array with workflow file path and optional max iterations
      * @return ActionResult with the workflow execution outcome
      */
-    @Action("runWorkflow")
-    public ActionResult runWorkflow(String args) {
+    @Action(value = "runWorkflow", argsType = RunWorkflowArgs.class)
+    public ActionResult runWorkflow(RunWorkflowArgs args) {
         try {
-            JSONArray runArgs = new JSONArray(args);
-            String runWorkflowFile = runArgs.getString(0);
-            int runMaxIterations = runArgs.length() > 1 ? runArgs.getInt(1) : 10000;
+            String runWorkflowFile = args.workflowFile();
+            int runMaxIterations = args.maxIterations() == null ? 10000 : args.maxIterations();
             logger.fine(String.format("Running workflow: %s (maxIterations=%d)", runWorkflowFile, runMaxIterations));
             ActionResult result = this.object.runWorkflow(runWorkflowFile, runMaxIterations);
             logger.fine(String.format("Workflow completed: success=%s, result=%s", result.isSuccess(), result.getResult()));
@@ -255,10 +317,10 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args the JSON transformation arguments
      * @return ActionResult with the apply outcome
      */
-    @Action("apply")
-    public ActionResult apply(String args) {
+    @Action(value = "apply", argsType = OverlayArgs.class)
+    public ActionResult apply(OverlayArgs args) {
         try {
-            return this.ask(n -> n.apply(args)).get();
+            return this.ask(n -> n.apply(args.overlay())).get();
         } catch (InterruptedException | ExecutionException e) {
             return handleException(e);
         }
@@ -279,10 +341,10 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args JSON array containing the command as the first element
      * @return ActionResult with success status and combined stdout/stderr
      */
-    @Action("executeCommand")
-    public ActionResult executeCommand(String args) {
+    @Action(value = "executeCommand", argsType = CommandArgs.class)
+    public ActionResult executeCommand(CommandArgs args) {
         try {
-            String command = extractCommandFromArgs(args);
+            String command = args.command();
             String nodeName = this.getName();
 
             Node.OutputCallback callback = createOutputCallback(nodeName);
@@ -313,10 +375,10 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args JSON array containing the command as the first element
      * @return ActionResult with exit code, stdout, and stderr in the result string
      */
-    @Action("executeCommandQuiet")
-    public ActionResult executeCommandQuiet(String args) {
+    @Action(value = "executeCommandQuiet", argsType = CommandArgs.class)
+    public ActionResult executeCommandQuiet(CommandArgs args) {
         try {
-            String command = extractCommandFromArgs(args);
+            String command = args.command();
             Node.CommandResult result = this.ask(n -> {
                 try {
                     return n.executeCommand(command);
@@ -344,10 +406,10 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args JSON array containing the command as the first element
      * @return ActionResult with success status and combined stdout/stderr
      */
-    @Action("executeSudoCommand")
-    public ActionResult executeSudoCommand(String args) {
+    @Action(value = "executeSudoCommand", argsType = CommandArgs.class)
+    public ActionResult executeSudoCommand(CommandArgs args) {
         try {
-            String command = extractCommandFromArgs(args);
+            String command = args.command();
             String nodeName = this.getName();
 
             Node.OutputCallback callback = createOutputCallback(nodeName);
@@ -389,10 +451,10 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args JSON array containing the command as the first element
      * @return ActionResult with exit code, stdout, and stderr in the result string
      */
-    @Action("executeSudoCommandQuiet")
-    public ActionResult executeSudoCommandQuiet(String args) {
+    @Action(value = "executeSudoCommandQuiet", argsType = CommandArgs.class)
+    public ActionResult executeSudoCommandQuiet(CommandArgs args) {
         try {
-            String command = extractCommandFromArgs(args);
+            String command = args.command();
             Node.CommandResult result = this.ask(n -> {
                 try {
                     return n.executeSudoCommand(command);
@@ -421,10 +483,10 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args JSON array containing the sleep duration in milliseconds
      * @return ActionResult indicating success or failure if interrupted
      */
-    @Action("sleep")
-    public ActionResult sleep(String args) {
+    @Action(value = "sleep", argsType = SleepArgs.class)
+    public ActionResult sleep(SleepArgs args) {
         try {
-            long millis = Long.parseLong(getFirst(args));
+            long millis = args.millis();
             Thread.sleep(millis);
             return new ActionResult(true, "Slept for " + millis + "ms");
         } catch (NumberFormatException e) {
@@ -443,9 +505,9 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args JSON array containing the text to print as the first element
      * @return ActionResult with the printed text
      */
-    @Action("print")
-    public ActionResult print(String args) {
-        String text = getFirst(args);
+    @Action(value = "print", argsType = TextArgs.class)
+    public ActionResult print(TextArgs args) {
+        String text = args.text();
         System.out.println(text);
         return new ActionResult(true, "Printed: " + text);
     }
@@ -460,9 +522,9 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args JSON array containing an optional message
      * @return ActionResult with success and the first argument as the result
      */
-    @Action("doNothing")
-    public ActionResult doNothing(String args) {
-        return new ActionResult(true, getFirst(args));
+    @Action(value = "doNothing", argsType = TextArgs.class)
+    public ActionResult doNothing(TextArgs args) {
+        return new ActionResult(true, args.text());
     }
 
     // ========================================================================
@@ -477,12 +539,12 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args JSON array containing the document list file path
      * @return ActionResult with the number of changed documents detected
      */
-    @Action("detectDocumentChanges")
-    public ActionResult detectDocumentChanges(String args) {
+    @Action(value = "detectDocumentChanges", argsType = DocumentListArgs.class)
+    public ActionResult detectDocumentChanges(DocumentListArgs args) {
         try {
             return this.ask(n -> {
                 try {
-                    String docListPath = extractCommandFromArgs(args);
+                    String docListPath = args.documentList();
                     return n.detectDocumentChanges(docListPath);
                 } catch (IOException e) {
                     return new ActionResult(false, "Error detecting changes: " + e.getMessage());
@@ -504,12 +566,12 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args JSON array containing the document list file path
      * @return ActionResult with the number of documents cloned
      */
-    @Action("cloneChangedDocuments")
-    public ActionResult cloneChangedDocuments(String args) {
+    @Action(value = "cloneChangedDocuments", argsType = DocumentListArgs.class)
+    public ActionResult cloneChangedDocuments(DocumentListArgs args) {
         try {
             return this.ask(n -> {
                 try {
-                    String docListPath = extractCommandFromArgs(args);
+                    String docListPath = args.documentList();
                     return n.cloneChangedDocuments(docListPath);
                 } catch (IOException e) {
                     return new ActionResult(false, "Error cloning documents: " + e.getMessage());
@@ -530,12 +592,12 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args JSON array containing the document list file path
      * @return ActionResult with the number of documents built
      */
-    @Action("buildChangedDocuments")
-    public ActionResult buildChangedDocuments(String args) {
+    @Action(value = "buildChangedDocuments", argsType = DocumentListArgs.class)
+    public ActionResult buildChangedDocuments(DocumentListArgs args) {
         try {
             return this.ask(n -> {
                 try {
-                    String docListPath = extractCommandFromArgs(args);
+                    String docListPath = args.documentList();
                     return n.buildChangedDocuments(docListPath);
                 } catch (IOException e) {
                     return new ActionResult(false, "Error building documents: " + e.getMessage());
@@ -557,12 +619,12 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args JSON array containing the document list file path
      * @return ActionResult with the number of documents deployed
      */
-    @Action("deployChangedDocuments")
-    public ActionResult deployChangedDocuments(String args) {
+    @Action(value = "deployChangedDocuments", argsType = DocumentListArgs.class)
+    public ActionResult deployChangedDocuments(DocumentListArgs args) {
         try {
             return this.ask(n -> {
                 try {
-                    String docListPath = extractCommandFromArgs(args);
+                    String docListPath = args.documentList();
                     return n.deployChangedDocuments(docListPath);
                 } catch (IOException e) {
                     return new ActionResult(false, "Error deploying documents: " + e.getMessage());
@@ -583,9 +645,9 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args the path to output (from JSON array)
      * @return ActionResult with the formatted JSON
      */
-    @Action("printJson")
-    public ActionResult printJson(String args) {
-        String path = getFirst(args);
+    @Action(value = "printJson", argsType = PathArgs.class)
+    public ActionResult printJson(PathArgs args) {
+        String path = args.path();
         String formatted = toStringOfJson(path);
         sendToMultiplexer(formatted);
         return new ActionResult(true, formatted);
@@ -597,9 +659,9 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @param args the path to output (from JSON array)
      * @return ActionResult with the formatted YAML
      */
-    @Action("printYaml")
-    public ActionResult printYaml(String args) {
-        String path = getFirst(args);
+    @Action(value = "printYaml", argsType = PathArgs.class)
+    public ActionResult printYaml(PathArgs args) {
+        String path = args.path();
         logger.info(String.format("printYaml called: path='%s'", path));
         String formatted = toStringOfYaml(path);
         logger.info(String.format("printYaml output length: %d", formatted.length()));
@@ -632,9 +694,6 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
         return new ActionResult(false, message);
     }
 
-    private int parseMaxIterations(String arg, int defaultValue) {
-        return ActorHelper.parseMaxIterations(arg, defaultValue);
-    }
 
     /**
      * Creates an OutputCallback that forwards output to the multiplexer accumulator.
@@ -715,7 +774,4 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     /**
      * Extracts a command string from JSON array arguments.
      */
-    private String extractCommandFromArgs(String arg) {
-        return ActorHelper.extractCommandFromArgs(arg);
-    }
 }

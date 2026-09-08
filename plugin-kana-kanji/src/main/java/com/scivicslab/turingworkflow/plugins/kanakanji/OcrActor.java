@@ -2,6 +2,8 @@ package com.scivicslab.turingworkflow.plugins.kanakanji;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
@@ -28,12 +30,15 @@ public class OcrActor extends IIActorRef<OcrPages> {
     }
 
     /**
-     * @param filePath ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Which file the pages are read from.
+     *
+     * @param path the file's path
      */
-    @Action("loadFile")
-    public ActionResult loadFile(String filePath) {
-        return pojo().loadFile(filePath);
+    public record FileArgs(@NotNull String path) {}
+
+    @Action(value = "loadFile", argsType = FileArgs.class)
+    public ActionResult loadFile(FileArgs args) {
+        return pojo().loadFile(args.path());
     }
 
     /**
@@ -42,7 +47,7 @@ public class OcrActor extends IIActorRef<OcrPages> {
      */
     @Action("nextPage")
     public ActionResult nextPage(String args) {
-        return pojo().nextPage(args);
+        return pojo().nextPage();
     }
 
     /**
@@ -51,7 +56,7 @@ public class OcrActor extends IIActorRef<OcrPages> {
      */
     @Action("getPageText")
     public ActionResult getPageText(String args) {
-        return pojo().getPageText(args);
+        return pojo().getPageText();
     }
 
     /**
@@ -60,7 +65,7 @@ public class OcrActor extends IIActorRef<OcrPages> {
      */
     @Action("getPageInfo")
     public ActionResult getPageInfo(String args) {
-        return pojo().getPageInfo(args);
+        return pojo().getPageInfo();
     }
 
 }

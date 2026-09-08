@@ -2,6 +2,8 @@ package com.scivicslab.turingworkflow.plugins.web;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
@@ -31,18 +33,25 @@ public class WebSearchActor extends IIActorRef<WebSearcher> {
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("search")
-    public ActionResult search(String args) {
-        return pojo().search(args);
+    /**
+     * What to search for.
+     *
+     * @param query the search terms
+     */
+    public record QueryArgs(@NotNull String query) {}
+
+    @Action(value = "search", argsType = QueryArgs.class)
+    public ActionResult search(QueryArgs args) {
+        return pojo().search(args.query());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("searchUrls")
-    public ActionResult searchUrls(String args) {
-        return pojo().searchUrls(args);
+    @Action(value = "searchUrls", argsType = QueryArgs.class)
+    public ActionResult searchUrls(QueryArgs args) {
+        return pojo().searchUrls(args.query());
     }
 
 }

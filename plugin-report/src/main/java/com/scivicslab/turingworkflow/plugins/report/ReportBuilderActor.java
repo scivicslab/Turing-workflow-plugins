@@ -19,6 +19,8 @@ package com.scivicslab.turingworkflow.plugins.report;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.pojoactor.core.JsonState;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
@@ -105,6 +107,15 @@ public class ReportBuilderActor extends IIActorRef<ReportBuilder> {
      * @param args unused
      * @return an {@link ActionResult} indicating success or failure with a descriptive message
      */
+    /**
+     * Which actor's {@link JsonState} to place in the report.
+     *
+     * @param actor the actor's name
+     * @param path  a JSON path narrowing the section to one part of that state;
+     *              the whole state is used when this is absent
+     */
+    public record JsonStateSectionArgs(@NotNull String actor, String path) {}
+
     @Action("addWorkflowInfo")
     public ActionResult addWorkflowInfo(String args) {
         logger.info("ReportBuilderActor.addWorkflowInfo");
@@ -149,26 +160,15 @@ public class ReportBuilderActor extends IIActorRef<ReportBuilder> {
      * <p>Retrieves the target actor's {@link JsonState} and converts it to YAML format.
      * The resulting {@link JsonStateSection} is appended to the report.</p>
      *
-     * <p><strong>Expected args format (JSON):</strong></p>
-     * <pre>{@code {"actor": "<actorName>", "path": "<optional JSON path>"}}</pre>
-     *
-     * @param args JSON string with {@code "actor"} (required) and {@code "path"} (optional) fields
+     * @param args which actor to read, and which part of its state
      * @return an {@link ActionResult} indicating success or failure with a descriptive message
      */
-    @Action("addJsonStateSection")
-    public ActionResult addJsonStateSection(String args) {
-        logger.info("ReportBuilderActor.addJsonStateSection: args=" + args);
+    @Action(value = "addJsonStateSection", argsType = JsonStateSectionArgs.class)
+    public ActionResult addJsonStateSection(JsonStateSectionArgs args) {
+        logger.info("ReportBuilderActor.addJsonStateSection: actor=" + args.actor());
 
-        String actorName;
-        String path = "";
-
-        try {
-            JSONObject json = new JSONObject(args);
-            actorName = json.getString("actor");
-            path = json.optString("path", "");
-        } catch (Exception e) {
-            return new ActionResult(false, "Invalid arguments: " + e.getMessage());
-        }
+        String actorName = args.actor();
+        String path = (args.path() != null) ? args.path() : "";
 
         if (system() == null) {
             return new ActionResult(false, "ActorSystem not available");

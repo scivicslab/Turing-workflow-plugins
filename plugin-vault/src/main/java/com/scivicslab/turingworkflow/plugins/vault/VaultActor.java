@@ -19,6 +19,8 @@ package com.scivicslab.turingworkflow.plugins.vault;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
@@ -52,10 +54,26 @@ public class VaultActor extends IIActorRef<VaultActor.State> {
     }
 
     /** Switch to kubectl mode: subsequent get calls use kubectl exec into the named pod. */
-    @Action("setKubectl")
-    public ActionResult setKubectl(String args) {
-        String namespace = getFirst(args);
-        String pod       = getString(args, 1);
+    /**
+     * Where the Vault pod runs.
+     *
+     * @param namespace the Kubernetes namespace
+     * @param pod       the pod's name
+     */
+    public record KubectlArgs(@NotNull String namespace, @NotNull String pod) {}
+
+    /**
+     * Which secret to read and which of its fields.
+     *
+     * @param path  the secret's path in Vault
+     * @param field the field within that secret
+     */
+    public record SecretArgs(@NotNull String path, @NotNull String field) {}
+
+    @Action(value = "setKubectl", argsType = KubectlArgs.class)
+    public ActionResult setKubectl(KubectlArgs args) {
+        String namespace = args.namespace();
+        String pod       = args.pod();
         if (namespace == null || namespace.isBlank())
             return new ActionResult(false, "setKubectl: namespace must not be blank");
         if (pod == null || pod.isBlank())
@@ -72,10 +90,10 @@ public class VaultActor extends IIActorRef<VaultActor.State> {
      *
      * <p>On success, {@code ${result}} holds the field value.</p>
      */
-    @Action("get")
-    public ActionResult get(String args) {
-        String path      = getFirst(args);
-        String fieldName = getString(args, 1);
+    @Action(value = "get", argsType = SecretArgs.class)
+    public ActionResult get(SecretArgs args) {
+        String path      = args.path();
+        String fieldName = args.field();
         if (path == null || path.isBlank())
             return new ActionResult(false, "get: path must not be blank");
         if (fieldName == null || fieldName.isBlank())

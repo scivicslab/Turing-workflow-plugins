@@ -39,8 +39,7 @@ public class PairWriter {
      * Writes header row on creation.
      */
     public ActionResult openOutput(String filePath) {
-        filePath = parseFirstArgument(filePath);
-        if (filePath.isBlank()) {
+        if (filePath == null || filePath.isBlank()) {
             return new ActionResult(false, "Output file path is required");
         }
         Path path = Path.of(filePath);
@@ -63,7 +62,7 @@ public class PairWriter {
      * Argument format: "pageNum\tsourceFile"
      */
     public ActionResult setPageInfo(String pageInfo) {
-        String info = parseFirstArgument(pageInfo);
+        String info = pageInfo == null ? "" : pageInfo;
         if (info.isBlank()) {
             return new ActionResult(false, "Page info is required");
         }
@@ -86,7 +85,7 @@ public class PairWriter {
      * Returns success with the count of valid lines if all lines pass.
      */
     public ActionResult checkHiragana(String response) {
-        String text = parseFirstArgument(response);
+        String text = response == null ? "" : response;
         if (text.isBlank()) {
             return new ActionResult(false, "Empty response");
         }
@@ -133,7 +132,7 @@ public class PairWriter {
         if (writer == null) {
             return new ActionResult(false, "Output not open. Call openOutput first.");
         }
-        String text = parseFirstArgument(response);
+        String text = response == null ? "" : response.trim();
         if (text.isBlank()) {
             return new ActionResult(false, "Empty response");
         }
@@ -164,7 +163,7 @@ public class PairWriter {
     /**
      * Close the output file.
      */
-    public ActionResult closeOutput(String args) {
+    public ActionResult closeOutput() {
         if (writer == null) {
             return new ActionResult(true, "Output already closed");
         }
@@ -196,30 +195,4 @@ public class PairWriter {
         return false;
     }
 
-
-    /**
-     * ワークフローからの引数はJSONの配列で届くことがある。その先頭の要素を取り出す。
-     *
-     * <p>{@code IIActorRef} が同名の {@code protected} メソッドで提供しているものと同じ処理である。
-     * このクラスはアクター参照を継承しない素のオブジェクトなので、自分で持つ。</p>
-     *
-     * @param arg 受け取った引数
-     * @return 配列なら先頭の要素、そうでなければそのまま
-     */
-    private String parseFirstArgument(String arg) {
-        if (arg == null || arg.isEmpty()) {
-            return "";
-        }
-        if (arg.startsWith("[")) {
-            try {
-                org.json.JSONArray arr = new org.json.JSONArray(arg);
-                if (arr.length() > 0) {
-                    return arr.getString(0);
-                }
-            } catch (Exception e) {
-                // Not a valid JSON array
-            }
-        }
-        return arg;
-    }
 }

@@ -2,6 +2,8 @@ package com.scivicslab.turingworkflow.plugins.kanakanji;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
@@ -31,36 +33,57 @@ public class VllmActor extends IIActorRef<VllmClient> {
      * @param url ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("setUrl")
-    public ActionResult setUrl(String url) {
-        return pojo().setUrl(url);
+    /**
+     * Where the vLLM server listens.
+     *
+     * @param url the server's address
+     */
+    public record UrlArgs(@NotNull String url) {}
+
+    /**
+     * Which model answers.
+     *
+     * @param model the model's identifier
+     */
+    public record ModelArgs(@NotNull String model) {}
+
+    /**
+     * The text the model works on.
+     *
+     * @param text the text to segment or to read aloud in hiragana
+     */
+    public record TextArgs(@NotNull String text) {}
+
+    @Action(value = "setUrl", argsType = UrlArgs.class)
+    public ActionResult setUrl(UrlArgs args) {
+        return pojo().setUrl(args.url());
     }
 
     /**
      * @param modelName ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("setModel")
-    public ActionResult setModel(String modelName) {
-        return pojo().setModel(modelName);
+    @Action(value = "setModel", argsType = ModelArgs.class)
+    public ActionResult setModel(ModelArgs args) {
+        return pojo().setModel(args.model());
     }
 
     /**
      * @param ocrText ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("segment")
-    public ActionResult segment(String ocrText) {
-        return pojo().segment(ocrText);
+    @Action(value = "segment", argsType = TextArgs.class)
+    public ActionResult segment(TextArgs args) {
+        return pojo().segment(args.text());
     }
 
     /**
      * @param segmentedText ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("toHiragana")
-    public ActionResult toHiragana(String segmentedText) {
-        return pojo().toHiragana(segmentedText);
+    @Action(value = "toHiragana", argsType = TextArgs.class)
+    public ActionResult toHiragana(TextArgs args) {
+        return pojo().toHiragana(args.text());
     }
 
 }

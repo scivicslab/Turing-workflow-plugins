@@ -87,20 +87,18 @@ public class VllmClient {
     private String lastResponse = "";
 
     public ActionResult setUrl(String url) {
-        String parsed = parseFirstArgument(url);
-        if (parsed.isBlank()) {
+        if (url == null || url.isBlank()) {
             return new ActionResult(false, "URL is required");
         }
-        this.vllmUrl = parsed;
+        this.vllmUrl = url;
         return new ActionResult(true, "URL set to " + this.vllmUrl);
     }
 
     public ActionResult setModel(String modelName) {
-        String parsed = parseFirstArgument(modelName);
-        if (parsed.isBlank()) {
+        if (modelName == null || modelName.isBlank()) {
             return new ActionResult(false, "Model name is required");
         }
-        this.model = parsed;
+        this.model = modelName;
         return new ActionResult(true, "Model set to " + this.model);
     }
 
@@ -109,7 +107,7 @@ public class VllmClient {
      * Returns the segmented kanji text (one sentence per line, bunsetsu separated by |).
      */
     public ActionResult segment(String ocrText) {
-        String text = parseFirstArgument(ocrText);
+        String text = ocrText == null ? "" : ocrText;
         if (text.isBlank()) {
             return new ActionResult(false, "OCR text is required");
         }
@@ -136,7 +134,7 @@ public class VllmClient {
      * @return tab-separated hiragana-kanji pairs, one per line
      */
     public ActionResult toHiragana(String segmentedText) {
-        String text = parseFirstArgument(segmentedText);
+        String text = segmentedText == null ? "" : segmentedText;
         if (text.isBlank()) {
             return new ActionResult(false, "Segmented text is required");
         }
@@ -347,30 +345,4 @@ public class VllmClient {
                 + "\"";
     }
 
-
-    /**
-     * ワークフローからの引数はJSONの配列で届くことがある。その先頭の要素を取り出す。
-     *
-     * <p>{@code IIActorRef} が同名の {@code protected} メソッドで提供しているものと同じ処理である。
-     * このクラスはアクター参照を継承しない素のオブジェクトなので、自分で持つ。</p>
-     *
-     * @param arg 受け取った引数
-     * @return 配列なら先頭の要素、そうでなければそのまま
-     */
-    private String parseFirstArgument(String arg) {
-        if (arg == null || arg.isEmpty()) {
-            return "";
-        }
-        if (arg.startsWith("[")) {
-            try {
-                org.json.JSONArray arr = new org.json.JSONArray(arg);
-                if (arr.length() > 0) {
-                    return arr.getString(0);
-                }
-            } catch (Exception e) {
-                // Not a valid JSON array
-            }
-        }
-        return arg;
-    }
 }

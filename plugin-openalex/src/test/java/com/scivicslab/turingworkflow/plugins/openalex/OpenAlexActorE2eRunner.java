@@ -39,7 +39,7 @@ public class OpenAlexActorE2eRunner {
         System.out.println("[E2E] run_getWork_byDoi_returnsTitleAndAbstract");
         OpenAlexActor actor = new OpenAlexActor("test-openalex", null);
 
-        ActionResult result = actor.getWork(TEST_DOI);
+        ActionResult result = actor.getWork(new OpenAlexActor.WorkArgs(TEST_DOI));
 
         System.out.println("[E2E] getWork result:\n" + result.getResult());
         assertTrue(result.isSuccess(), "getWork must succeed for known DOI");
@@ -51,7 +51,7 @@ public class OpenAlexActorE2eRunner {
         System.out.println("[E2E] run_getWork_byDoi_includesJournalAndCitationCount");
         OpenAlexActor actor = new OpenAlexActor("test-openalex", null);
 
-        ActionResult result = actor.getWork(TEST_DOI);
+        ActionResult result = actor.getWork(new OpenAlexActor.WorkArgs(TEST_DOI));
 
         assertTrue(result.isSuccess(), "getWork must succeed");
         assertContains(result.getResult(), "cited ", "result must contain citation count");
@@ -63,7 +63,7 @@ public class OpenAlexActorE2eRunner {
         System.out.println("[E2E] run_getPdfUrl_openAccessPaper_returnsHttpUrl");
         OpenAlexActor actor = new OpenAlexActor("test-openalex", null);
 
-        ActionResult result = actor.getPdfUrl(TEST_DOI);
+        ActionResult result = actor.getPdfUrl(new OpenAlexActor.WorkArgs(TEST_DOI));
 
         System.out.println("[E2E] PDF URL: " + result.getResult());
         assertTrue(result.isSuccess(), "getPdfUrl must succeed for open-access arXiv paper");
@@ -75,7 +75,7 @@ public class OpenAlexActorE2eRunner {
         System.out.println("[E2E] run_searchWorks_byKeyword_returnsResults");
         OpenAlexActor actor = new OpenAlexActor("test-openalex", null);
 
-        ActionResult result = actor.searchWorks("transformer self-attention neural network");
+        ActionResult result = actor.searchWorks(new OpenAlexActor.QueryArgs("transformer self-attention neural network"));
 
         System.out.println("[E2E] searchWorks result (first 300 chars):\n"
                 + result.getResult().substring(0, Math.min(300, result.getResult().length())));
@@ -88,7 +88,7 @@ public class OpenAlexActorE2eRunner {
         System.out.println("[E2E] run_searchWorks_byKeyword_resultsAreSortedByCitationCount");
         OpenAlexActor actor = new OpenAlexActor("test-openalex", null);
 
-        ActionResult result = actor.searchWorksTopK("{\"query\": \"deep learning\", \"perPage\": 3}");
+        ActionResult result = actor.searchWorksTopK(new OpenAlexActor.TopWorksArgs("deep learning", 3, null));
 
         assertTrue(result.isSuccess(), "searchWorksTopK must succeed");
         String text = result.getResult();

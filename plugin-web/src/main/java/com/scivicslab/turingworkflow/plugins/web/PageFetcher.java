@@ -47,8 +47,7 @@ public class PageFetcher {
      * @param args the URL to fetch (plain string or {@code ["url"]})
      * @return an {@link ActionResult} with the extracted text, or failure on error
      */
-    public ActionResult fetch(String args) {
-        String url = parseFirstArgument(args);
+    public ActionResult fetch(String url) {
         if (url == null || url.isBlank()) {
             return new ActionResult(false, "Error: url is required");
         }
@@ -109,29 +108,4 @@ public class PageFetcher {
         return text.substring(0, maxLength) + "\n[truncated " + text.length() + " chars total]";
     }
 
-    /**
-     * ワークフローからの引数はJSONの配列で届くことがある。その先頭の要素を取り出す。
-     *
-     * <p>{@code IIActorRef} が同名の {@code protected} メソッドで提供しているものと同じ処理である。
-     * このクラスはアクター参照を継承しない素のオブジェクトなので、自分で持つ。</p>
-     *
-     * @param arg 受け取った引数
-     * @return 配列なら先頭の要素、そうでなければそのまま
-     */
-    private String parseFirstArgument(String arg) {
-        if (arg == null || arg.isEmpty()) {
-            return "";
-        }
-        if (arg.startsWith("[")) {
-            try {
-                org.json.JSONArray arr = new org.json.JSONArray(arg);
-                if (arr.length() > 0) {
-                    return arr.getString(0);
-                }
-            } catch (Exception e) {
-                // Not a valid JSON array
-            }
-        }
-        return arg;
-    }
 }

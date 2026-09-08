@@ -19,11 +19,11 @@ package com.scivicslab.turingworkflow.plugins.ssh.mixin;
 
 import java.io.IOException;
 
-import org.json.JSONArray;
-
 import com.scivicslab.turingworkflow.plugins.ssh.Node;
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 
 /**
  * Mixin interface providing command execution actions via @Action annotations.
@@ -102,6 +102,13 @@ public interface CommandExecutable {
     CommandExecutor getCommandExecutor();
 
     /**
+     * The command line to run on the node.
+     *
+     * @param command the command line
+     */
+    record CommandArgs(@NotNull String command) {}
+
+    /**
      * Returns an optional output callback for command execution.
      *
      * <p>When not null, command output is streamed to this callback in real-time.
@@ -127,13 +134,13 @@ public interface CommandExecutable {
      * conflicts with existing methods on implementing classes that have different
      * return types.</p>
      *
-     * @param args JSON array containing the command as the first element
+     * @param args the command line to run
      * @return ActionResult with success status and command output
      */
-    @Action("executeCommand")
-    default ActionResult doExecuteCommand(String args) {
+    @Action(value = "executeCommand", argsType = CommandArgs.class)
+    default ActionResult doExecuteCommand(CommandArgs args) {
         try {
-            String command = extractCommand(args);
+            String command = args.command();
             Node.OutputCallback callback = getOutputCallback();
             Node.CommandResult result = getCommandExecutor().execute(command, callback);
             return toActionResult(result);
@@ -158,13 +165,13 @@ public interface CommandExecutable {
      * conflicts with existing methods on implementing classes that have different
      * return types.</p>
      *
-     * @param args JSON array containing the command as the first element
+     * @param args the command line to run
      * @return ActionResult with success status and command output
      */
-    @Action("executeSudoCommand")
-    default ActionResult doExecuteSudoCommand(String args) {
+    @Action(value = "executeSudoCommand", argsType = CommandArgs.class)
+    default ActionResult doExecuteSudoCommand(CommandArgs args) {
         try {
-            String command = extractCommand(args);
+            String command = args.command();
             Node.OutputCallback callback = getOutputCallback();
             Node.CommandResult result = getCommandExecutor().executeSudo(command, callback);
             return toActionResult(result);
@@ -174,25 +181,6 @@ public interface CommandExecutable {
                 return new ActionResult(false, "%" + hostname + ": [FAIL] SUDO_PASSWORD not set");
             }
             return new ActionResult(false, "Error: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Extracts the command string from JSON array arguments.
-     *
-     * @param args JSON array string (e.g., '["ls -la"]')
-     * @return the extracted command string
-     */
-    private static String extractCommand(String args) {
-        try {
-            JSONArray jsonArray = new JSONArray(args);
-            if (jsonArray.length() == 0) {
-                throw new IllegalArgumentException("Command arguments cannot be empty");
-            }
-            return jsonArray.getString(0);
-        } catch (Exception e) {
-            throw new IllegalArgumentException(
-                "Invalid command argument format. Expected JSON array with command string: " + args, e);
         }
     }
 

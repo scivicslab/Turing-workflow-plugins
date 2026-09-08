@@ -32,7 +32,7 @@ class PairsActorTest {
     void checkHiragana_validPairs_succeeds() {
         // hiragana TAB kanji format
         String response = "てんき\t天気\nかぜ\t風\nはな\t花";
-        ActionResult result = actor.checkHiragana(response);
+        ActionResult result = actor.checkHiragana(new PairsActor.ResponseArgs(response));
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getResult()).isEqualTo("3");
     }
@@ -41,7 +41,7 @@ class PairsActorTest {
     void checkHiragana_noHiraganaInAllJapaneseLines_fails() {
         // kanji without hiragana readings — LLM failed
         String response = "WEATHER\t天気\nWIND\t風";
-        ActionResult result = actor.checkHiragana(response);
+        ActionResult result = actor.checkHiragana(new PairsActor.ResponseArgs(response));
         assertThat(result.isSuccess()).isFalse();
         assertThat(result.getResult()).contains("hiragana");
     }
@@ -50,19 +50,19 @@ class PairsActorTest {
     void checkHiragana_asciiOnlyContent_succeeds() {
         // No Japanese characters in kanji column — no reading required
         String response = "ASCII\tHello World\nNUMBER\t12345";
-        ActionResult result = actor.checkHiragana(response);
+        ActionResult result = actor.checkHiragana(new PairsActor.ResponseArgs(response));
         assertThat(result.isSuccess()).isTrue();
     }
 
     @Test
     void checkHiragana_emptyInput_fails() {
-        ActionResult result = actor.checkHiragana("");
+        ActionResult result = actor.checkHiragana(new PairsActor.ResponseArgs(""));
         assertThat(result.isSuccess()).isFalse();
     }
 
     @Test
     void checkHiragana_noTabLines_fails() {
-        ActionResult result = actor.checkHiragana("no tab here\nalso no tab");
+        ActionResult result = actor.checkHiragana(new PairsActor.ResponseArgs("no tab here\nalso no tab"));
         assertThat(result.isSuccess()).isFalse();
         assertThat(result.getResult()).contains("No tab-separated lines");
     }
@@ -71,7 +71,7 @@ class PairsActorTest {
     void checkHiragana_mixedJapaneseAndAscii_passesWithPartialHiragana() {
         // One Japanese line has hiragana, one ASCII line doesn't need it
         String response = "てんき\t天気\nASCII\tHello";
-        ActionResult result = actor.checkHiragana(response);
+        ActionResult result = actor.checkHiragana(new PairsActor.ResponseArgs(response));
         assertThat(result.isSuccess()).isTrue();
     }
 
@@ -79,21 +79,21 @@ class PairsActorTest {
 
     @Test
     void setPageInfo_tabSeparated_extractsPageAndSource() {
-        ActionResult result = actor.setPageInfo("42\tpage042.tsv");
+        ActionResult result = actor.setPageInfo(new PairsActor.PageInfoArgs("42\tpage042.tsv"));
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getResult()).contains("page=42").contains("source=page042.tsv");
     }
 
     @Test
     void setPageInfo_noTab_setsPageOnly() {
-        ActionResult result = actor.setPageInfo("99");
+        ActionResult result = actor.setPageInfo(new PairsActor.PageInfoArgs("99"));
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getResult()).contains("page=99");
     }
 
     @Test
     void setPageInfo_empty_fails() {
-        ActionResult result = actor.setPageInfo("");
+        ActionResult result = actor.setPageInfo(new PairsActor.PageInfoArgs(""));
         assertThat(result.isSuccess()).isFalse();
     }
 
@@ -101,7 +101,7 @@ class PairsActorTest {
 
     @Test
     void writePairs_withoutOpenOutput_fails() {
-        ActionResult result = actor.writePairs("てんき\t天気");
+        ActionResult result = actor.writePairs(new PairsActor.ResponseArgs("てんき\t天気"));
         assertThat(result.isSuccess()).isFalse();
         assertThat(result.getResult()).contains("openOutput");
     }
@@ -110,15 +110,15 @@ class PairsActorTest {
     void openOutput_writePairs_closeOutput_roundtrip(@TempDir Path tempDir) throws IOException {
         Path outputFile = tempDir.resolve("output.tsv");
 
-        ActionResult open = actor.openOutput(outputFile.toString());
+        ActionResult open = actor.openOutput(new PairsActor.FileArgs(outputFile.toString()));
         assertThat(open.isSuccess()).isTrue();
 
-        actor.setPageInfo("1\ttest.tsv");
-        ActionResult write = actor.writePairs("てんき\t天気\nかぜ\t風");
+        actor.setPageInfo(new PairsActor.PageInfoArgs("1\ttest.tsv"));
+        ActionResult write = actor.writePairs(new PairsActor.ResponseArgs("てんき\t天気\nかぜ\t風"));
         assertThat(write.isSuccess()).isTrue();
         assertThat(write.getResult()).isEqualTo("2");
 
-        ActionResult close = actor.closeOutput("");
+        ActionResult close = actor.closeOutput(null);
         assertThat(close.isSuccess()).isTrue();
         assertThat(close.getResult()).contains("2");
 
@@ -132,19 +132,19 @@ class PairsActorTest {
     @Test
     void writePairs_skipsLinesWithoutTab(@TempDir Path tempDir) throws IOException {
         Path outputFile = tempDir.resolve("output.tsv");
-        actor.openOutput(outputFile.toString());
-        actor.setPageInfo("1\ttest.tsv");
+        actor.openOutput(new PairsActor.FileArgs(outputFile.toString()));
+        actor.setPageInfo(new PairsActor.PageInfoArgs("1\ttest.tsv"));
 
-        ActionResult write = actor.writePairs("no tab here\nてんき\t天気\nalso no tab");
+        ActionResult write = actor.writePairs(new PairsActor.ResponseArgs("no tab here\nてんき\t天気\nalso no tab"));
         assertThat(write.isSuccess()).isTrue();
         assertThat(write.getResult()).isEqualTo("1"); // only the tab line is written
 
-        actor.closeOutput("");
+        actor.closeOutput(null);
     }
 
     @Test
     void closeOutput_alreadyClosed_succeeds() {
-        ActionResult result = actor.closeOutput("");
+        ActionResult result = actor.closeOutput(null);
         assertThat(result.isSuccess()).isTrue();
     }
 }

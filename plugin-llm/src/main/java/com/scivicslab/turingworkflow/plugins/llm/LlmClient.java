@@ -116,6 +116,24 @@ public class LlmClient {
      * @param args URL, or JSON array [URL, model]
      * @return ActionResult indicating success or failure
      */
+    /**
+     * Sets the endpoint and, when given, the model to ask for.
+     *
+     * @param url   base URL of the OpenAI-compatible endpoint
+     * @param model model id to request, or {@code null} to keep the current one
+     * @return what was set
+     */
+    public ActionResult setOpenAiUrl(String url, String model) {
+        this.openAiUrl = url == null ? null : url.trim();
+        if (model != null && !model.isBlank()) {
+            this.openAiModel = model.trim();
+        }
+        String msg = "OpenAI URL set to: " + this.openAiUrl
+                + (this.openAiModel != null ? " (model: " + this.openAiModel + ")" : "");
+        emit(msg);
+        return new ActionResult(true, msg);
+    }
+
     public ActionResult setOpenAiUrl(String args) {
         String trimmed = args == null ? "" : args.trim();
         if (trimmed.startsWith("[")) {

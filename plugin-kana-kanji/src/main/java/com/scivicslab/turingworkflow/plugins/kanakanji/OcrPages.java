@@ -42,8 +42,7 @@ public class OcrPages {
      * Load an OCR TSV file. Groups kanji-column text by page number.
      */
     public ActionResult loadFile(String filePath) {
-        filePath = parseFirstArgument(filePath);
-        if (filePath.isBlank()) {
+        if (filePath == null || filePath.isBlank()) {
             return new ActionResult(false, "File path is required");
         }
         Path path = Path.of(filePath);
@@ -80,7 +79,7 @@ public class OcrPages {
      * Advance to the next page. Returns failure (false) when all pages are exhausted.
      * This causes the workflow to try the next row (e.g., transition to end state).
      */
-    public ActionResult nextPage(String args) {
+    public ActionResult nextPage() {
         currentPageIndex++;
         if (currentPageIndex >= pageOrder.size()) {
             return new ActionResult(false, "No more pages");
@@ -94,7 +93,7 @@ public class OcrPages {
     /**
      * Get the OCR text of the current page (fragments joined by newlines).
      */
-    public ActionResult getPageText(String args) {
+    public ActionResult getPageText() {
         if (currentPageNum < 0) {
             return new ActionResult(false, "No page loaded. Call nextPage first.");
         }
@@ -109,37 +108,11 @@ public class OcrPages {
     /**
      * Get metadata about the current page: "pageNum\tsourceFile".
      */
-    public ActionResult getPageInfo(String args) {
+    public ActionResult getPageInfo() {
         if (currentPageNum < 0) {
             return new ActionResult(false, "No page loaded");
         }
         return new ActionResult(true, currentPageNum + "\t" + sourceFile);
     }
 
-
-    /**
-     * ワークフローからの引数はJSONの配列で届くことがある。その先頭の要素を取り出す。
-     *
-     * <p>{@code IIActorRef} が同名の {@code protected} メソッドで提供しているものと同じ処理である。
-     * このクラスはアクター参照を継承しない素のオブジェクトなので、自分で持つ。</p>
-     *
-     * @param arg 受け取った引数
-     * @return 配列なら先頭の要素、そうでなければそのまま
-     */
-    private String parseFirstArgument(String arg) {
-        if (arg == null || arg.isEmpty()) {
-            return "";
-        }
-        if (arg.startsWith("[")) {
-            try {
-                org.json.JSONArray arr = new org.json.JSONArray(arg);
-                if (arr.length() > 0) {
-                    return arr.getString(0);
-                }
-            } catch (Exception e) {
-                // Not a valid JSON array
-            }
-        }
-        return arg;
-    }
 }

@@ -10,6 +10,11 @@
         <version>4.0.0</version>
     </parent>
 
+    <properties>
+        <!-- This module declares no actions, so there are no argument schemas to generate. -->
+        <actionSchemas.skip>true</actionSchemas.skip>
+    </properties>
+
     <artifactId>plugin-secret</artifactId>
     <version>4.0.0</version>
     <name>Turing Workflow Plugin: Secret Encryption</name>

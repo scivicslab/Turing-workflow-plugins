@@ -2,6 +2,8 @@ package com.scivicslab.turingworkflow.plugins.web;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
@@ -31,9 +33,16 @@ public class FetchActor extends IIActorRef<PageFetcher> {
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("fetch")
-    public ActionResult fetch(String args) {
-        return pojo().fetch(args);
+    /**
+     * Which page to fetch.
+     *
+     * @param url the page's address
+     */
+    public record UrlArgs(@NotNull String url) {}
+
+    @Action(value = "fetch", argsType = UrlArgs.class)
+    public ActionResult fetch(UrlArgs args) {
+        return pojo().fetch(args.url());
     }
 
 }

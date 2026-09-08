@@ -2,6 +2,8 @@ package com.scivicslab.turingworkflow.plugins.ocr;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
@@ -31,72 +33,102 @@ public class OcrActor extends IIActorRef<OcrClient> {
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("setMarkerUrl")
-    public ActionResult setMarkerUrl(String args) {
-        return pojo().setMarkerUrl(args);
+    /**
+     * An address: either an OCR server's, or a PDF's.
+     *
+     * @param url the address
+     */
+    public record UrlArgs(@NotNull String url) {}
+
+    /**
+     * Which PDF to read, and which OCR server reads it.
+     *
+     * @param url     the PDF's address
+     * @param backend {@code marker} or {@code yomitoku}; Marker when absent
+     */
+    public record OcrArgs(@NotNull String url, String backend) {}
+
+    /**
+     * Where to write text, and what text to write.
+     *
+     * @param path    the file to write; nothing is written when absent
+     * @param content the text written there
+     */
+    public record WriteArgs(String path, @NotNull String content) {}
+
+    /**
+     * Which page of the downloaded PDF to read.
+     *
+     * @param page the zero-based page number
+     */
+    public record PageArgs(@NotNull Integer page) {}
+
+    @Action(value = "setMarkerUrl", argsType = UrlArgs.class)
+    public ActionResult setMarkerUrl(UrlArgs args) {
+        return pojo().setMarkerUrl(args.url());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("setYomitokuUrl")
-    public ActionResult setYomitokuUrl(String args) {
-        return pojo().setYomitokuUrl(args);
+    @Action(value = "setYomitokuUrl", argsType = UrlArgs.class)
+    public ActionResult setYomitokuUrl(UrlArgs args) {
+        return pojo().setYomitokuUrl(args.url());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("markerOcr")
-    public ActionResult markerOcr(String args) {
-        return pojo().markerOcr(args);
+    @Action(value = "markerOcr", argsType = UrlArgs.class)
+    public ActionResult markerOcr(UrlArgs args) {
+        return pojo().markerOcr(args.url());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("yomitokuOcr")
-    public ActionResult yomitokuOcr(String args) {
-        return pojo().yomitokuOcr(args);
+    @Action(value = "yomitokuOcr", argsType = UrlArgs.class)
+    public ActionResult yomitokuOcr(UrlArgs args) {
+        return pojo().yomitokuOcr(args.url());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("ocr")
-    public ActionResult ocr(String args) {
-        return pojo().ocr(args);
+    @Action(value = "ocr", argsType = OcrArgs.class)
+    public ActionResult ocr(OcrArgs args) {
+        return pojo().ocr(args.url(), args.backend());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("writeFile")
-    public ActionResult writeFile(String args) {
-        return pojo().writeFile(args);
+    @Action(value = "writeFile", argsType = WriteArgs.class)
+    public ActionResult writeFile(WriteArgs args) {
+        return pojo().writeFile(args.path(), args.content());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("downloadPdf")
-    public ActionResult downloadPdf(String args) {
-        return pojo().downloadPdf(args);
+    @Action(value = "downloadPdf", argsType = UrlArgs.class)
+    public ActionResult downloadPdf(UrlArgs args) {
+        return pojo().downloadPdf(args.url());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("markerOcrPage")
-    public ActionResult markerOcrPage(String args) {
-        return pojo().markerOcrPage(args);
+    @Action(value = "markerOcrPage", argsType = PageArgs.class)
+    public ActionResult markerOcrPage(PageArgs args) {
+        return pojo().markerOcrPage(args.page());
     }
 
 }

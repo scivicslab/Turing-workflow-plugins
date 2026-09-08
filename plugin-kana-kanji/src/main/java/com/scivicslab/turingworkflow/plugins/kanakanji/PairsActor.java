@@ -2,6 +2,8 @@ package com.scivicslab.turingworkflow.plugins.kanakanji;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
@@ -31,36 +33,57 @@ public class PairsActor extends IIActorRef<PairWriter> {
      * @param filePath ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("openOutput")
-    public ActionResult openOutput(String filePath) {
-        return pojo().openOutput(filePath);
+    /**
+     * Which file the pairs are written to.
+     *
+     * @param path the output file's path
+     */
+    public record FileArgs(@NotNull String path) {}
+
+    /**
+     * Which page the pairs that follow come from.
+     *
+     * @param pageInfo the page's description
+     */
+    public record PageInfoArgs(@NotNull String pageInfo) {}
+
+    /**
+     * The text the model returned.
+     *
+     * @param response the model's answer
+     */
+    public record ResponseArgs(@NotNull String response) {}
+
+    @Action(value = "openOutput", argsType = FileArgs.class)
+    public ActionResult openOutput(FileArgs args) {
+        return pojo().openOutput(args.path());
     }
 
     /**
      * @param pageInfo ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("setPageInfo")
-    public ActionResult setPageInfo(String pageInfo) {
-        return pojo().setPageInfo(pageInfo);
+    @Action(value = "setPageInfo", argsType = PageInfoArgs.class)
+    public ActionResult setPageInfo(PageInfoArgs args) {
+        return pojo().setPageInfo(args.pageInfo());
     }
 
     /**
      * @param response ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("checkHiragana")
-    public ActionResult checkHiragana(String response) {
-        return pojo().checkHiragana(response);
+    @Action(value = "checkHiragana", argsType = ResponseArgs.class)
+    public ActionResult checkHiragana(ResponseArgs args) {
+        return pojo().checkHiragana(args.response());
     }
 
     /**
      * @param response ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("writePairs")
-    public ActionResult writePairs(String response) {
-        return pojo().writePairs(response);
+    @Action(value = "writePairs", argsType = ResponseArgs.class)
+    public ActionResult writePairs(ResponseArgs args) {
+        return pojo().writePairs(args.response());
     }
 
     /**
@@ -69,7 +92,7 @@ public class PairsActor extends IIActorRef<PairWriter> {
      */
     @Action("closeOutput")
     public ActionResult closeOutput(String args) {
-        return pojo().closeOutput(args);
+        return pojo().closeOutput();
     }
 
 }

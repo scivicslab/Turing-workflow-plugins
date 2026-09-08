@@ -2,6 +2,8 @@ package com.scivicslab.turingworkflow.plugins.promptbuilder;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
@@ -33,33 +35,47 @@ public class PromptBuilderActor extends IIActorRef<PromptBuffer> {
         return object;
     }
 
+    /**
+     * A piece of text to add to the buffer.
+     *
+     * @param text the text to add
+     */
+    public record TextArgs(@NotNull String text) {}
+
+    /**
+     * A position in one of the buffer's lists.
+     *
+     * @param index zero-based position
+     */
+    public record IndexArgs(@NotNull Integer index) {}
+
     @Action("clear")
     public ActionResult clear(String ignored) {
         buffer().clear();
         return new ActionResult(true, "buffer cleared");
     }
 
-    @Action("addWarning")
-    public ActionResult addWarning(String text) {
-        String unwrapped = unwrapArg(text);
+    @Action(value = "addWarning", argsType = TextArgs.class)
+    public ActionResult addWarning(TextArgs args) {
+        String unwrapped = args.text();
         if (!buffer().addWarning(unwrapped)) {
             return new ActionResult(false, "addWarning: text must not be blank");
         }
         return new ActionResult(true, "warning added: " + unwrapped);
     }
 
-    @Action("addContext")
-    public ActionResult addContext(String text) {
-        String unwrapped = unwrapArg(text);
+    @Action(value = "addContext", argsType = TextArgs.class)
+    public ActionResult addContext(TextArgs args) {
+        String unwrapped = args.text();
         if (!buffer().addContext(unwrapped)) {
             return new ActionResult(false, "addContext: text must not be blank");
         }
         return new ActionResult(true, "context added: " + unwrapped);
     }
 
-    @Action("addMessage")
-    public ActionResult addMessage(String text) {
-        if (!buffer().setMessage(unwrapArg(text))) {
+    @Action(value = "addMessage", argsType = TextArgs.class)
+    public ActionResult addMessage(TextArgs args) {
+        if (!buffer().setMessage(args.text())) {
             return new ActionResult(false, "addMessage: text must not be blank");
         }
         return new ActionResult(true, "message set");
@@ -70,10 +86,10 @@ public class PromptBuilderActor extends IIActorRef<PromptBuffer> {
         return new ActionResult(true, String.valueOf(buffer().warningCount()));
     }
 
-    @Action("getWarning")
-    public ActionResult getWarning(String indexStr) {
+    @Action(value = "getWarning", argsType = IndexArgs.class)
+    public ActionResult getWarning(IndexArgs args) {
         try {
-            int index = parseIndex(indexStr);
+            int index = args.index();
             String warning = buffer().warningAt(index);
             if (warning == null) {
                 return new ActionResult(false, "getWarning: index " + index
@@ -81,7 +97,7 @@ public class PromptBuilderActor extends IIActorRef<PromptBuffer> {
             }
             return new ActionResult(true, warning);
         } catch (NumberFormatException e) {
-            return new ActionResult(false, "getWarning: invalid index: " + indexStr);
+            return new ActionResult(false, "getWarning: invalid index: " + args.index());
         }
     }
 
@@ -90,10 +106,10 @@ public class PromptBuilderActor extends IIActorRef<PromptBuffer> {
         return new ActionResult(true, String.valueOf(buffer().contextCount()));
     }
 
-    @Action("getContext")
-    public ActionResult getContext(String indexStr) {
+    @Action(value = "getContext", argsType = IndexArgs.class)
+    public ActionResult getContext(IndexArgs args) {
         try {
-            int index = parseIndex(indexStr);
+            int index = args.index();
             String context = buffer().contextAt(index);
             if (context == null) {
                 return new ActionResult(false, "getContext: index " + index
@@ -101,7 +117,7 @@ public class PromptBuilderActor extends IIActorRef<PromptBuffer> {
             }
             return new ActionResult(true, context);
         } catch (NumberFormatException e) {
-            return new ActionResult(false, "getContext: invalid index: " + indexStr);
+            return new ActionResult(false, "getContext: invalid index: " + args.index());
         }
     }
 
@@ -143,24 +159,4 @@ public class PromptBuilderActor extends IIActorRef<PromptBuffer> {
                 : new ActionResult(true, prompt);
     }
 
-    /** Workflow arguments arrive as a JSON array or a quoted string; this yields the text itself. */
-    private static String unwrapArg(String s) {
-        if (s == null) return null;
-        String t = s.trim();
-        if (t.startsWith("[\"") && t.endsWith("\"]")) return t.substring(2, t.length() - 2);
-        if (t.startsWith("[") && t.endsWith("]")) {
-            int first = t.indexOf('"');
-            int last = t.lastIndexOf('"');
-            if (first >= 0 && last > first) return t.substring(first + 1, last);
-        }
-        if (t.startsWith("\"") && t.endsWith("\"") && t.length() >= 2) {
-            return t.substring(1, t.length() - 1);
-        }
-        return t;
-    }
-
-    private int parseIndex(String indexStr) {
-        String cleaned = indexStr.trim().replaceAll("[\\[\\]\"\\s]", "");
-        return Integer.parseInt(cleaned);
-    }
 }

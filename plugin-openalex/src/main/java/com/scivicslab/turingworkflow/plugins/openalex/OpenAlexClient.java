@@ -56,12 +56,11 @@ public class OpenAlexClient {
      * Sets the contact email used in the OpenAlex polite pool header and mailto param.
      * Providing an email enables higher rate limits (10 req/s → ~100 req/s).
      *
-     * @param args contact email address
+     * @param query contact email address
      */
-    public ActionResult setEmail(String args) {
-        String e = parseFirstArgument(args);
-        if (e == null || e.isBlank()) return new ActionResult(false, "Email is required");
-        this.email = e.trim();
+    public ActionResult setEmail(String address) {
+        if (address == null || address.isBlank()) return new ActionResult(false, "Email is required");
+        this.email = address.trim();
         return new ActionResult(true, "Email set to " + this.email);
     }
 
@@ -71,43 +70,26 @@ public class OpenAlexClient {
      * <p>Result includes title, year, journal, citation count, DOI, abstract snippet,
      * and open-access URL for each paper.</p>
      *
-     * @param args keyword query string
+     * @param query the keyword to search for
      */
-    public ActionResult searchWorks(String args) {
-        return doSearchWorks(parseFirstArgument(args), DEFAULT_PER_PAGE);
+    public ActionResult searchWorks(String query) {
+        return doSearchWorks(query, DEFAULT_PER_PAGE);
     }
 
     /**
      * Searches OpenAlex works with an explicit result count.
      *
-     * <p>Expected argument: JSON object {@code {"query": "...", "perPage": 5, "sort": "citations"}}.
-     * Falls back to perPage=10 and sort=citations if absent.</p>
-     *
      * <p>{@code sort} accepts friendly names — {@code citations} (most cited first),
      * {@code relevance} (best title/abstract match first), {@code newest} (most recent first) —
      * or a raw OpenAlex sort string (e.g. {@code publication_date:desc}).</p>
      *
-     * @param args JSON object with {@code query} and optional {@code perPage} and {@code sort}
+     * @param query JSON object with {@code query} and optional {@code perPage} and {@code sort}
      */
-    public ActionResult searchWorksTopK(String args) {
-        // Turing Workflow wraps a single string argument in a JSON array (["{...}"]), so unwrap it
-        // FIRST — otherwise the JSON-object branch never matches and the whole JSON is used as the query.
-        String inner = parseFirstArgument(args);
-        String trimmed = inner == null ? "" : inner.trim();
-        if (trimmed.startsWith("{")) {
-            try {
-                JSONObject obj = new JSONObject(trimmed);
-                String query = obj.optString("query", "");
-                int perPage = obj.optInt("perPage", DEFAULT_PER_PAGE);
-                String sort = obj.optString("sort", DEFAULT_SORT);
-                return doSearchWorks(query, perPage, sort);
-            } catch (Exception e) {
-                return new ActionResult(false, "Invalid JSON: " + e.getMessage());
-            }
-        }
-        return doSearchWorks(inner, DEFAULT_PER_PAGE);
+    public ActionResult searchWorksTopK(String query, Integer perPage, String sort) {
+        return doSearchWorks(query,
+                perPage != null ? perPage : DEFAULT_PER_PAGE,
+                sort != null && !sort.isBlank() ? sort : DEFAULT_SORT);
     }
-
     /**
      * Retrieves a single paper by OpenAlex ID or DOI.
      *
@@ -118,10 +100,9 @@ public class OpenAlexClient {
      *   <li>DOI URL:     {@code https://doi.org/10.1038/s41586-021-03819-2}</li>
      * </ul>
      *
-     * @param args OpenAlex ID or DOI
+     * @param query OpenAlex ID or DOI
      */
-    public ActionResult getWork(String args) {
-        String id = parseFirstArgument(args);
+    public ActionResult getWork(String id) {
         if (id == null || id.isBlank()) return new ActionResult(false, "Work ID or DOI is required");
         String url = resolveWorkUrl(id.trim());
         try {
@@ -141,10 +122,9 @@ public class OpenAlexClient {
      * {@code primary_location.landing_page_url}, then the first entry in
      * {@code open_access.oa_url}. Returns failure if no open-access URL is found.</p>
      *
-     * @param args OpenAlex ID or DOI (same formats as {@code getWork})
+     * @param query OpenAlex ID or DOI (same formats as {@code getWork})
      */
-    public ActionResult getPdfUrl(String args) {
-        String id = parseFirstArgument(args);
+    public ActionResult getPdfUrl(String id) {
         if (id == null || id.isBlank()) return new ActionResult(false, "Work ID or DOI is required");
         String url = resolveWorkUrl(id.trim());
         try {
@@ -181,10 +161,9 @@ public class OpenAlexClient {
     /**
      * Searches OpenAlex authors by name, returns up to 5 results.
      *
-     * @param args author name query string
+     * @param query author name query string
      */
-    public ActionResult searchAuthors(String args) {
-        String query = parseFirstArgument(args);
+    public ActionResult searchAuthors(String query) {
         if (query == null || query.isBlank()) return new ActionResult(false, "Query is required");
         String encoded = URLEncoder.encode(query, StandardCharsets.UTF_8);
         String url = BASE_URL + "/authors?search=" + encoded + "&per-page=5&mailto=" + email;
@@ -358,29 +337,4 @@ public class OpenAlexClient {
         return resp.body();
     }
 
-    /**
-     * ワークフローからの引数はJSONの配列で届くことがある。その先頭の要素を取り出す。
-     *
-     * <p>{@code IIActorRef} が同名の {@code protected} メソッドで提供しているものと同じ処理である。
-     * このクラスはアクター参照を継承しない素のオブジェクトなので、自分で持つ。</p>
-     *
-     * @param arg 受け取った引数
-     * @return 配列なら先頭の要素、そうでなければそのまま
-     */
-    private String parseFirstArgument(String arg) {
-        if (arg == null || arg.isEmpty()) {
-            return "";
-        }
-        if (arg.startsWith("[")) {
-            try {
-                org.json.JSONArray arr = new org.json.JSONArray(arg);
-                if (arr.length() > 0) {
-                    return arr.getString(0);
-                }
-            } catch (Exception e) {
-                // Not a valid JSON array
-            }
-        }
-        return arg;
-    }
 }

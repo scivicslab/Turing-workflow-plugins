@@ -69,10 +69,9 @@ public class OcrClient {
     /**
      * Sets the Marker OCR server base URL.
      *
-     * @param args URL string, e.g. {@code "http://192.168.5.13:8001"}
+     * @param url URL string, e.g. {@code "http://192.168.5.13:8001"}
      */
-    public ActionResult setMarkerUrl(String args) {
-        String url = parseFirstArgument(args);
+    public ActionResult setMarkerUrl(String url) {
         if (url == null || url.isBlank()) return new ActionResult(false, "URL is required");
         this.markerUrl = url.replaceAll("/$", "");
         return new ActionResult(true, "Marker URL set to " + this.markerUrl);
@@ -81,10 +80,9 @@ public class OcrClient {
     /**
      * Sets the YomiToku OCR server base URL.
      *
-     * @param args URL string, e.g. {@code "http://192.168.5.17:8013"}
+     * @param url URL string, e.g. {@code "http://192.168.5.17:8013"}
      */
-    public ActionResult setYomitokuUrl(String args) {
-        String url = parseFirstArgument(args);
+    public ActionResult setYomitokuUrl(String url) {
         if (url == null || url.isBlank()) return new ActionResult(false, "URL is required");
         this.yomitokuUrl = url.replaceAll("/$", "");
         return new ActionResult(true, "YomiToku URL set to " + this.yomitokuUrl);
@@ -99,10 +97,9 @@ public class OcrClient {
      *
      * <p>Expected argument: PDF URL string.</p>
      *
-     * @param args PDF URL
+     * @param url PDF URL
      */
-    public ActionResult markerOcr(String args) {
-        String url = parseFirstArgument(args);
+    public ActionResult markerOcr(String url) {
         if (url == null || url.isBlank()) return new ActionResult(false, "PDF URL is required");
         try {
             logger.info("Downloading PDF: " + url);
@@ -124,10 +121,9 @@ public class OcrClient {
      *
      * <p>Expected argument: PDF URL string.</p>
      *
-     * @param args PDF URL
+     * @param url PDF URL
      */
-    public ActionResult yomitokuOcr(String args) {
-        String url = parseFirstArgument(args);
+    public ActionResult yomitokuOcr(String url) {
         if (url == null || url.isBlank()) return new ActionResult(false, "PDF URL is required");
         try {
             logger.info("Downloading PDF: " + url);
@@ -146,44 +142,22 @@ public class OcrClient {
      * <p>Expected argument: JSON object {@code {"url": "...", "backend": "marker|yomitoku"}}.
      * Defaults to {@code "marker"} if {@code backend} is absent.</p>
      *
-     * @param args JSON object with {@code url} and optional {@code backend}
+     * @param url JSON object with {@code url} and optional {@code backend}
      */
-    public ActionResult ocr(String args) {
-        String trimmed = args == null ? "" : args.trim();
-        if (trimmed.startsWith("{")) {
-            try {
-                JSONObject obj = new JSONObject(trimmed);
-                String url     = obj.optString("url", "");
-                String backend = obj.optString("backend", "marker");
-                if (url.isBlank()) return new ActionResult(false, "url is required");
-                return "yomitoku".equalsIgnoreCase(backend)
-                        ? yomitokuOcr(url)
-                        : markerOcr(url);
-            } catch (Exception e) {
-                return new ActionResult(false, "Invalid JSON: " + e.getMessage());
-            }
-        }
-        // Plain URL → default to Marker
-        return markerOcr(parseFirstArgument(args));
+    public ActionResult ocr(String url, String backend) {
+        if (url == null || url.isBlank()) return new ActionResult(false, "url is required");
+        return "yomitoku".equalsIgnoreCase(backend)
+                ? yomitokuOcr(url)
+                : markerOcr(url);
     }
-
     /**
      * Writes text to a file. Accepts a JSON array {@code ["path", "content"]}. Returns success without
      * writing when path is blank, so callers can use this step unconditionally (no-op in standalone mode).
      *
-     * @param args JSON array: first element is the output file path, second is the content to write
+     * @param url JSON array: first element is the output file path, second is the content to write
      */
-    public ActionResult writeFile(String args) {
-        String path;
-        String content;
-        try {
-            org.json.JSONArray arr = new org.json.JSONArray(args == null ? "[]" : args.trim());
-            path    = arr.length() > 0 ? arr.getString(0) : "";
-            content = arr.length() > 1 ? arr.getString(1) : "";
-        } catch (Exception e) {
-            return new ActionResult(false, "writeFile: invalid args (expected [path, content]): " + e.getMessage());
-        }
-        if (path.isBlank()) {
+    public ActionResult writeFile(String path, String content) {
+        if (path == null || path.isBlank()) {
             return new ActionResult(true, "writeFile: no output path; skipped");
         }
         try {
@@ -202,11 +176,10 @@ public class OcrClient {
      * <p>Call this once before a loop of {@link #markerOcrPage(String)} calls.
      * The cached bytes persist for the lifetime of this actor instance.</p>
      *
-     * @param args PDF URL (HTTPS supported; redirects are followed automatically)
+     * @param url PDF URL (HTTPS supported; redirects are followed automatically)
      * @return confirmation string with the byte count
      */
-    public ActionResult downloadPdf(String args) {
-        String url = parseFirstArgument(args);
+    public ActionResult downloadPdf(String url) {
         if (url == null || url.isBlank()) return new ActionResult(false, "PDF URL is required");
         try {
             logger.info("Downloading PDF for page-by-page OCR: " + url);
@@ -231,19 +204,12 @@ public class OcrClient {
      *
      * <p>Call {@link #downloadPdf(String)} before using this action.</p>
      *
-     * @param args 0-based page index as a string
+     * @param url 0-based page index as a string
      * @return Markdown text of the requested page
      */
-    public ActionResult markerOcrPage(String args) {
+    public ActionResult markerOcrPage(int pageIndex) {
         if (cachedPdf == null) {
             return new ActionResult(false, "No PDF cached; call downloadPdf first");
-        }
-        String pageStr = parseFirstArgument(args);
-        int pageIndex;
-        try {
-            pageIndex = Integer.parseInt(pageStr == null ? "0" : pageStr.trim());
-        } catch (NumberFormatException e) {
-            return new ActionResult(false, "Invalid page index: " + pageStr);
         }
         try {
             String boundary = "----TuringMarkerPage" + pageIndex;
@@ -434,31 +400,5 @@ public class OcrClient {
             throw new Exception("Downloaded content does not look like a PDF (url=" + url + ")");
         }
         return bytes;
-    }
-
-    /**
-     * ワークフローからの引数はJSONの配列で届くことがある。その先頭の要素を取り出す。
-     *
-     * <p>{@code IIActorRef} が同名の {@code protected} メソッドで提供しているものと同じ処理である。
-     * このクラスはアクター参照を継承しない素のオブジェクトなので、自分で持つ。</p>
-     *
-     * @param arg 受け取った引数
-     * @return 配列なら先頭の要素、そうでなければそのまま
-     */
-    private String parseFirstArgument(String arg) {
-        if (arg == null || arg.isEmpty()) {
-            return "";
-        }
-        if (arg.startsWith("[")) {
-            try {
-                org.json.JSONArray arr = new org.json.JSONArray(arg);
-                if (arr.length() > 0) {
-                    return arr.getString(0);
-                }
-            } catch (Exception e) {
-                // Not a valid JSON array
-            }
-        }
-        return arg;
     }
 }

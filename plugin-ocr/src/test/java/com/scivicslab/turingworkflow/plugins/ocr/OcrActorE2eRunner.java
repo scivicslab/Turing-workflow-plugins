@@ -77,7 +77,7 @@ public class OcrActorE2eRunner {
     static void run_sectionIterator_extractsHeadingBoundaries() {
         System.out.println("[E2E] run_sectionIterator_extractsHeadingBoundaries");
         SectionIteratorActor actor = new SectionIteratorActor("test-sections", null);
-        actor.setMinChars("10");  // disable merging to test heading split in isolation
+        actor.setMinChars(new SectionIteratorActor.MinCharsArgs(10));  // disable merging to test heading split in isolation
 
         String markdown =
                 "## Introduction\n\nThis paper proposes a new model.\n\n"
@@ -86,7 +86,7 @@ public class OcrActorE2eRunner {
                 + "## Results\n\nWe achieve state-of-the-art performance.\n\n"
                 + "## Conclusion\n\nFuture work remains.";
 
-        ActionResult result = actor.extractSections(markdown);
+        ActionResult result = actor.extractSections(new SectionIteratorActor.MarkdownArgs(markdown));
 
         System.out.println("[E2E] extractSections: " + result.getResult());
         assertTrue(result.isSuccess(), "extractSections must succeed");
@@ -100,18 +100,18 @@ public class OcrActorE2eRunner {
         System.out.println("[E2E] run_sectionIterator_getNext_iteratesAllSections");
         SectionIteratorActor actor = new SectionIteratorActor("test-sections", null);
 
-        actor.setMinChars("10");
+        actor.setMinChars(new SectionIteratorActor.MinCharsArgs(10));
 
         String markdown =
                 "## Section One\n\nContent of section one.\n\n"
                 + "## Section Two\n\nContent of section two.\n\n"
                 + "## Section Three\n\nContent of section three.\n";
 
-        actor.extractSections(markdown);
+        actor.extractSections(new SectionIteratorActor.MarkdownArgs(markdown));
 
         int iterations = 0;
         while (true) {
-            ActionResult next = actor.getNext("");
+            ActionResult next = actor.getNext(null);
             if (!next.isSuccess()) break;
             iterations++;
             assertNotBlank(next.getResult(), "getNext must return non-blank section content");
@@ -127,7 +127,7 @@ public class OcrActorE2eRunner {
         System.out.println("[E2E] run_sectionIterator_mergesShortSections");
         SectionIteratorActor actor = new SectionIteratorActor("test-sections", null);
 
-        actor.setMinChars("100");
+        actor.setMinChars(new SectionIteratorActor.MinCharsArgs(100));
 
         String markdown =
                 "## Long Section\n\nThis section has enough content to stand on its own. "
@@ -135,7 +135,7 @@ public class OcrActorE2eRunner {
                 + "## Short\n\nTiny.\n\n"
                 + "## Another Long Section\n\nThis section also has enough content to stand alone and must not be merged with the previous section, because it clearly exceeds the minimum character threshold.\n";
 
-        ActionResult result = actor.extractSections(markdown);
+        ActionResult result = actor.extractSections(new SectionIteratorActor.MarkdownArgs(markdown));
 
         int count = extractSectionCount(result.getResult());
         System.out.println("[E2E] mergesShortSections: " + result.getResult());
@@ -153,10 +153,10 @@ public class OcrActorE2eRunner {
         System.out.println("[E2E]   Marker: " + MARKER_URL + " — expected duration 1-5 min");
 
         OcrActor actor = new OcrActor("test-ocr", null);
-        actor.setMarkerUrl(MARKER_URL);
+        actor.setMarkerUrl(new OcrActor.UrlArgs(MARKER_URL));
 
         long start = System.currentTimeMillis();
-        ActionResult result = actor.markerOcr(TEST_PDF_URL);
+        ActionResult result = actor.markerOcr(new OcrActor.UrlArgs(TEST_PDF_URL));
         long elapsed = (System.currentTimeMillis() - start) / 1000;
 
         System.out.println("[E2E]   OCR completed in " + elapsed + "s");
@@ -175,8 +175,8 @@ public class OcrActorE2eRunner {
 
         // Verify the output also splits cleanly into sections
         SectionIteratorActor sectionActor = new SectionIteratorActor("test-sections", null);
-        sectionActor.setMinChars("200");
-        ActionResult sectionsResult = sectionActor.extractSections(result.getResult());
+        sectionActor.setMinChars(new SectionIteratorActor.MinCharsArgs(200));
+        ActionResult sectionsResult = sectionActor.extractSections(new SectionIteratorActor.MarkdownArgs(result.getResult()));
         assertTrue(sectionsResult.isSuccess(), "extractSections must succeed on Marker output");
         int sectionCount = extractSectionCount(sectionsResult.getResult());
         System.out.println("[E2E]   Extracted " + sectionCount + " sections from OCR output");

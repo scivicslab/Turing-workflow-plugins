@@ -105,10 +105,9 @@ public class ChatUi3Client {
      * Action wrapper for {@link #stopSse()}: lets a Turing Workflow (or an external
      * supervisor) command this actor to abort a stuck {@code chat()} via a message.
      *
-     * @param args ignored
      * @return success result
      */
-    public ActionResult stopChat(String args) {
+    public ActionResult stopChat() {
         stopSse();
         return new ActionResult(true, "SSE stream stopped");
     }
@@ -118,10 +117,10 @@ public class ChatUi3Client {
     /**
      * Sets the quarkus-chat-ui3 base URL.
      *
-     * @param args base URL string, e.g. "http://192.168.5.14:18090"
+     * @param url the base address, e.g. "http://192.168.5.14:18090"
      */
-    public ActionResult setBaseUrl(String args) {
-        this.baseUrl = args.trim();
+    public ActionResult setBaseUrl(String url) {
+        this.baseUrl = url.trim();
         LOG.info("ChatUi3 base URL set to: " + this.baseUrl);
         return new ActionResult(true, this.baseUrl);
     }
@@ -139,11 +138,10 @@ public class ChatUi3Client {
      * </ol>
      * </p>
      *
-     * @param args message text, or JSON {"message":"..."}
+     * @param message the text sent to the model
      * @return ActionResult with the LLM response text
      */
-    public ActionResult chat(String args) {
-        String message = extractMessage(args);
+    public ActionResult chat(String message) {
 
         try {
             // Step 1: Open SSE connection.
@@ -222,10 +220,9 @@ public class ChatUi3Client {
     /**
      * Returns all I/O records for the current session (GET /api/trace).
      *
-     * @param args ignored
      * @return ActionResult with JSON array of IoPair objects
      */
-    public ActionResult getTrace(String args) {
+    public ActionResult getTrace() {
         return get("/api/trace");
     }
 
@@ -234,20 +231,31 @@ public class ChatUi3Client {
     /**
      * Updates configuration fields (POST /api/config, partial update).
      *
-     * @param args JSON patch, e.g. {"temperature":0.2} or {"modelId":"...", "maxTokens":8192}
+     * @param vllmBaseUrl where the vLLM server listens; left alone when null
+     * @param modelId     which model answers; left alone when null
+     * @param temperature how much the sampling varies; left alone when null
+     * @param maxTokens   the longest answer the model may produce; left alone when null
      * @return ActionResult indicating success
      */
-    public ActionResult updateConfig(String args) {
-        return post("/api/config", args.trim());
+    public ActionResult updateConfig(String vllmBaseUrl, String modelId,
+                                    Double temperature, Integer maxTokens) {
+        JSONObject patch = new JSONObject();
+        if (vllmBaseUrl != null) patch.put("vllmBaseUrl", vllmBaseUrl);
+        if (modelId     != null) patch.put("modelId",     modelId);
+        if (temperature != null) patch.put("temperature", temperature.doubleValue());
+        if (maxTokens   != null) patch.put("maxTokens",   maxTokens.intValue());
+        if (patch.isEmpty()) {
+            return new ActionResult(false, "updateConfig: no configuration field given");
+        }
+        return post("/api/config", patch.toString());
     }
 
     /**
      * Returns the current configuration (GET /api/config).
      *
-     * @param args ignored
      * @return ActionResult with JSON config object
      */
-    public ActionResult getConfig(String args) {
+    public ActionResult getConfig() {
         return get("/api/config");
     }
 
@@ -256,10 +264,9 @@ public class ChatUi3Client {
     /**
      * Resets the conversation history and trace (DELETE /api/history).
      *
-     * @param args ignored
      * @return ActionResult indicating success
      */
-    public ActionResult clearHistory(String args) {
+    public ActionResult clearHistory() {
         return delete("/api/history");
     }
 
@@ -268,29 +275,13 @@ public class ChatUi3Client {
     /**
      * Returns the list of models available on the vLLM server (GET /api/models).
      *
-     * @param args ignored
      * @return ActionResult with JSON object containing model IDs
      */
-    public ActionResult getModels(String args) {
+    public ActionResult getModels() {
         return get("/api/models");
     }
 
     // ── private helpers ───────────────────────────────────────────────────────
-
-    private String extractMessage(String args) {
-        if (args == null) return "";
-        // Turing Workflow passes action arguments as a JSON array (e.g. ["Hello"]).
-        // parseFirstArgument unwraps ["..."] to the first element, or returns the
-        // string unchanged when it is not a JSON array (direct Java call).
-        String unwrapped = parseFirstArgument(args.trim()).trim();
-        if (unwrapped.startsWith("{")) {
-            try {
-                JSONObject obj = new JSONObject(unwrapped);
-                if (obj.has("message")) return obj.getString("message");
-            } catch (Exception ignored) {}
-        }
-        return unwrapped;
-    }
 
     private ActionResult get(String path) {
         try {
@@ -339,28 +330,5 @@ public class ChatUi3Client {
         } catch (Exception e) {
             return new ActionResult(false, e.getMessage());
         }
-    }
-
-    /**
-     * ワークフローからの引数はJSONの配列で届くことがある。その先頭の要素を取り出す。
-     *
-     * @param arg 受け取った引数
-     * @return 配列なら先頭の要素、そうでなければそのまま
-     */
-    private String parseFirstArgument(String arg) {
-        if (arg == null || arg.isEmpty()) {
-            return "";
-        }
-        if (arg.startsWith("[")) {
-            try {
-                org.json.JSONArray arr = new org.json.JSONArray(arg);
-                if (arr.length() > 0) {
-                    return arr.getString(0);
-                }
-            } catch (Exception e) {
-                // Not a valid JSON array
-            }
-        }
-        return arg;
     }
 }

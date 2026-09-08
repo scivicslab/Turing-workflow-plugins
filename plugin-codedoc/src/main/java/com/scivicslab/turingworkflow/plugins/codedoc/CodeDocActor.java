@@ -12,6 +12,8 @@ package com.scivicslab.turingworkflow.plugins.codedoc;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 import org.json.JSONArray;
@@ -69,13 +71,88 @@ public class CodeDocActor extends IIActorRef<Object> {
         this.system = system;
     }
 
-    @Action("chunkFile")
-    public ActionResult chunkFile(String args) {
+    // ------------------------------------------------------------------
+    // Argument shapes
+    //
+    // Every action used to take a positional JSON array. Two of them take two actor names in a
+    // row, where swapping the pair passes deserialisation and writes to the wrong place. Under a
+    // record the same mistake is a key that does not match a component.
+    // ------------------------------------------------------------------
+
+    /**
+     * Which file to split, where to put the pieces, and how large a piece may be.
+     *
+     * @param file     path of the file to read
+     * @param listActor name of the list actor the pieces are added to
+     * @param maxChars  largest piece in characters; omit to use the default
+     */
+    public record ChunkFileArgs(@NotNull String file, @NotNull String listActor, Integer maxChars) {}
+
+    /**
+     * Which file to write, which list supplies the pieces, and what separates them.
+     *
+     * @param file      path of the file to write
+     * @param listActor name of the list actor the pieces come from
+     * @param separator text placed between pieces; omit to use a blank line
+     */
+    public record WriteFileFromListArgs(@NotNull String file, @NotNull String listActor, String separator) {}
+
+    /**
+     * Which list supplies the pieces, which text slot receives them, and what separates them.
+     *
+     * @param listActor name of the list actor the pieces come from
+     * @param strActor  name of the text actor the joined result is stored in
+     * @param separator text placed between pieces; omit to use a blank line
+     */
+    public record JoinListToStrArgs(@NotNull String listActor, @NotNull String strActor, String separator) {}
+
+    /**
+     * Which file to read and which text slot receives it.
+     *
+     * @param file     path of the file to read
+     * @param strActor name of the text actor the contents are stored in
+     */
+    public record ReadFileToStrArgs(@NotNull String file, @NotNull String strActor) {}
+
+    /**
+     * Which file's frontmatter to set and which text slot holds the description.
+     *
+     * @param file     path of the Markdown file to edit
+     * @param strActor name of the text actor holding the description
+     */
+    public record SetFrontmatterDescriptionArgs(@NotNull String file, @NotNull String strActor) {}
+
+    /**
+     * Which directory to search and where to put the paths found.
+     *
+     * @param directory directory to search under
+     * @param listActor name of the list actor the paths are added to
+     */
+    public record ListMarkdownNoDescriptionArgs(@NotNull String directory, @NotNull String listActor) {}
+
+    /**
+     * Which project to scan, where to put the findings, and how much of each file to read.
+     *
+     * @param directory project root to scan
+     * @param listActor name of the list actor the findings are added to
+     * @param maxChars  how many characters of each file to read; omit to use the default
+     */
+    public record ScanProjectArgs(@NotNull String directory, @NotNull String listActor, Integer maxChars) {}
+
+    /**
+     * Which text slot supplies the contents and which file receives them.
+     *
+     * @param file     path of the file to write
+     * @param strActor name of the text actor supplying the contents
+     */
+    public record WriteStrToFileArgs(@NotNull String file, @NotNull String strActor) {}
+
+    @Action(value = "chunkFile", argsType = ChunkFileArgs.class)
+    public ActionResult chunkFile(ChunkFileArgs args) {
         try {
-            JSONArray a = new JSONArray(args);
-            Path in = Path.of(a.getString(0));
-            String listName = a.getString(1);
-            int max = a.length() >= 3 ? a.getInt(2) : DEFAULT_CHUNK_CHARS;
+            Path in = Path.of(args.file());
+            String listName = args.listActor();
+            int max = args.maxChars() == null ? DEFAULT_CHUNK_CHARS : args.maxChars();
             List<String> chunks = chunk(Files.readString(in), max);
             IIActorRef<?> list = system.getIIActor(listName);
             if (list == null) return new ActionResult(false, "chunkFile: list not found: " + listName);
@@ -86,13 +163,12 @@ public class CodeDocActor extends IIActorRef<Object> {
         }
     }
 
-    @Action("writeFileFromList")
-    public ActionResult writeFileFromList(String args) {
+    @Action(value = "writeFileFromList", argsType = WriteFileFromListArgs.class)
+    public ActionResult writeFileFromList(WriteFileFromListArgs args) {
         try {
-            JSONArray a = new JSONArray(args);
-            Path out = Path.of(a.getString(0));
-            String listName = a.getString(1);
-            String sep = a.length() >= 3 ? a.getString(2) : "\n\n";
+            Path out = Path.of(args.file());
+            String listName = args.listActor();
+            String sep = args.separator() == null ? "\n\n" : args.separator();
             IIActorRef<?> list = system.getIIActor(listName);
             if (list == null) return new ActionResult(false, "writeFileFromList: list not found: " + listName);
             int n = Integer.parseInt(list.callByActionName("size", "").getResult().trim());
@@ -109,13 +185,12 @@ public class CodeDocActor extends IIActorRef<Object> {
         }
     }
 
-    @Action("joinListToStr")
-    public ActionResult joinListToStr(String args) {
+    @Action(value = "joinListToStr", argsType = JoinListToStrArgs.class)
+    public ActionResult joinListToStr(JoinListToStrArgs args) {
         try {
-            JSONArray a = new JSONArray(args);
-            String listName = a.getString(0);
-            String strName = a.getString(1);
-            String sep = a.length() >= 3 ? a.getString(2) : "\n\n";
+            String listName = args.listActor();
+            String strName = args.strActor();
+            String sep = args.separator() == null ? "\n\n" : args.separator();
             IIActorRef<?> list = system.getIIActor(listName);
             if (list == null) return new ActionResult(false, "joinListToStr: list not found: " + listName);
             IIActorRef<?> str = system.getIIActor(strName);
@@ -133,12 +208,11 @@ public class CodeDocActor extends IIActorRef<Object> {
         }
     }
 
-    @Action("writeStrToFile")
-    public ActionResult writeStrToFile(String args) {
+    @Action(value = "writeStrToFile", argsType = WriteStrToFileArgs.class)
+    public ActionResult writeStrToFile(WriteStrToFileArgs args) {
         try {
-            JSONArray a = new JSONArray(args);
-            Path out = Path.of(a.getString(0));
-            String strName = a.getString(1);
+            Path out = Path.of(args.file());
+            String strName = args.strActor();
             IIActorRef<?> str = system.getIIActor(strName);
             if (str == null) return new ActionResult(false, "writeStrToFile: str actor not found: " + strName);
             String content = str.callByActionName("get", "").getResult();
@@ -150,13 +224,12 @@ public class CodeDocActor extends IIActorRef<Object> {
         }
     }
 
-    @Action("scanProject")
-    public ActionResult scanProject(String args) {
+    @Action(value = "scanProject", argsType = ScanProjectArgs.class)
+    public ActionResult scanProject(ScanProjectArgs args) {
         try {
-            JSONArray a = new JSONArray(args);
-            Path base = Path.of(a.getString(0)).toAbsolutePath().normalize();
-            String listName = a.getString(1);
-            int maxChars = a.length() >= 3 ? a.getInt(2) : DEFAULT_FILE_CHARS;
+            Path base = Path.of(args.directory()).toAbsolutePath().normalize();
+            String listName = args.listActor();
+            int maxChars = args.maxChars() == null ? DEFAULT_FILE_CHARS : args.maxChars();
             String type = detectType(base);
             IIActorRef<?> list = system.getIIActor(listName);
             if (list == null) return new ActionResult(false, "scanProject: list not found: " + listName);
@@ -182,12 +255,11 @@ public class CodeDocActor extends IIActorRef<Object> {
         }
     }
 
-    @Action("listMarkdownNoDescription")
-    public ActionResult listMarkdownNoDescription(String args) {
+    @Action(value = "listMarkdownNoDescription", argsType = ListMarkdownNoDescriptionArgs.class)
+    public ActionResult listMarkdownNoDescription(ListMarkdownNoDescriptionArgs args) {
         try {
-            JSONArray a = new JSONArray(args);
-            Path base = Path.of(a.getString(0)).toAbsolutePath().normalize();
-            String listName = a.getString(1);
+            Path base = Path.of(args.directory()).toAbsolutePath().normalize();
+            String listName = args.listActor();
             IIActorRef<?> list = system.getIIActor(listName);
             if (list == null) return new ActionResult(false, "listMarkdownNoDescription: list not found: " + listName);
             int[] count = {0};
@@ -211,12 +283,11 @@ public class CodeDocActor extends IIActorRef<Object> {
         }
     }
 
-    @Action("readFileToStr")
-    public ActionResult readFileToStr(String args) {
+    @Action(value = "readFileToStr", argsType = ReadFileToStrArgs.class)
+    public ActionResult readFileToStr(ReadFileToStrArgs args) {
         try {
-            JSONArray a = new JSONArray(args);
-            Path in = Path.of(a.getString(0));
-            String strName = a.getString(1);
+            Path in = Path.of(args.file());
+            String strName = args.strActor();
             IIActorRef<?> str = system.getIIActor(strName);
             if (str == null) return new ActionResult(false, "readFileToStr: str actor not found: " + strName);
             str.callByActionName("set", Files.readString(in));
@@ -226,12 +297,11 @@ public class CodeDocActor extends IIActorRef<Object> {
         }
     }
 
-    @Action("setFrontmatterDescription")
-    public ActionResult setFrontmatterDescription(String args) {
+    @Action(value = "setFrontmatterDescription", argsType = SetFrontmatterDescriptionArgs.class)
+    public ActionResult setFrontmatterDescription(SetFrontmatterDescriptionArgs args) {
         try {
-            JSONArray a = new JSONArray(args);
-            Path file = Path.of(a.getString(0));
-            String strName = a.getString(1);
+            Path file = Path.of(args.file());
+            String strName = args.strActor();
             IIActorRef<?> str = system.getIIActor(strName);
             if (str == null) return new ActionResult(false, "setFrontmatterDescription: str actor not found: " + strName);
             String desc = str.callByActionName("get", "").getResult();

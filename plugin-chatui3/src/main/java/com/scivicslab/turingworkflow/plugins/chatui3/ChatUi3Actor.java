@@ -2,6 +2,8 @@ package com.scivicslab.turingworkflow.plugins.chatui3;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
@@ -46,27 +48,53 @@ public class ChatUi3Actor extends IIActorRef<ChatUi3Client> {
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
+    /**
+     * Where quarkus-chat-ui3 listens.
+     *
+     * @param baseUrl the server's address
+     */
+    public record BaseUrlArgs(@NotNull String baseUrl) {}
+
+    /**
+     * What to say to the model.
+     *
+     * @param message the text sent to the model
+     */
+    public record MessageArgs(@NotNull String message) {}
+
+    /**
+     * The configuration fields to change. Every field is optional; the ones left out
+     * keep the value quarkus-chat-ui3 already holds.
+     *
+     * @param vllmBaseUrl where the vLLM server listens
+     * @param modelId     which model answers
+     * @param temperature how much the sampling varies
+     * @param maxTokens   the longest answer the model may produce
+     */
+    public record ConfigPatchArgs(String vllmBaseUrl, String modelId,
+                                  Double temperature, Integer maxTokens) {}
+
     @Action("stopChat")
     public ActionResult stopChat(String args) {
-        return client().stopChat(args);
+        return client().stopChat();
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("setBaseUrl")
-    public ActionResult setBaseUrl(String args) {
-        return client().setBaseUrl(args);
+    @Action(value = "setBaseUrl", argsType = BaseUrlArgs.class)
+    public ActionResult setBaseUrl(BaseUrlArgs args) {
+        return client().setBaseUrl(args.baseUrl());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("chat")
-    public ActionResult chat(String args) {
-        return client().chat(args);
+    @Action(value = "chat", argsType = MessageArgs.class)
+    public ActionResult chat(MessageArgs args) {
+        return client().chat(args.message());
     }
 
     /**
@@ -75,16 +103,17 @@ public class ChatUi3Actor extends IIActorRef<ChatUi3Client> {
      */
     @Action("getTrace")
     public ActionResult getTrace(String args) {
-        return client().getTrace(args);
+        return client().getTrace();
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("updateConfig")
-    public ActionResult updateConfig(String args) {
-        return client().updateConfig(args);
+    @Action(value = "updateConfig", argsType = ConfigPatchArgs.class)
+    public ActionResult updateConfig(ConfigPatchArgs args) {
+        return client().updateConfig(args.vllmBaseUrl(), args.modelId(),
+                args.temperature(), args.maxTokens());
     }
 
     /**
@@ -93,7 +122,7 @@ public class ChatUi3Actor extends IIActorRef<ChatUi3Client> {
      */
     @Action("getConfig")
     public ActionResult getConfig(String args) {
-        return client().getConfig(args);
+        return client().getConfig();
     }
 
     /**
@@ -102,7 +131,7 @@ public class ChatUi3Actor extends IIActorRef<ChatUi3Client> {
      */
     @Action("clearHistory")
     public ActionResult clearHistory(String args) {
-        return client().clearHistory(args);
+        return client().clearHistory();
     }
 
     /**
@@ -111,7 +140,7 @@ public class ChatUi3Actor extends IIActorRef<ChatUi3Client> {
      */
     @Action("getModels")
     public ActionResult getModels(String args) {
-        return client().getModels(args);
+        return client().getModels();
     }
 
 }

@@ -41,7 +41,7 @@ class OcrActorTest {
                 "\t晴れ\t1\n" +
                 "\t風\t2\n");
 
-        ActionResult result = actor.loadFile(tsv.toString());
+        ActionResult result = actor.loadFile(new OcrActor.FileArgs(tsv.toString()));
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getResult()).contains("2 pages");
@@ -49,21 +49,21 @@ class OcrActorTest {
 
     @Test
     void loadFile_nonExistentFile_fails(@TempDir Path tempDir) {
-        ActionResult result = actor.loadFile(tempDir.resolve("missing.tsv").toString());
+        ActionResult result = actor.loadFile(new OcrActor.FileArgs(tempDir.resolve("missing.tsv").toString()));
         assertThat(result.isSuccess()).isFalse();
         assertThat(result.getResult()).contains("Failed to read");
     }
 
     @Test
     void loadFile_emptyPath_fails() {
-        ActionResult result = actor.loadFile("");
+        ActionResult result = actor.loadFile(new OcrActor.FileArgs(""));
         assertThat(result.isSuccess()).isFalse();
         assertThat(result.getResult()).contains("required");
     }
 
     @Test
     void nextPage_withoutLoadFile_fails() {
-        ActionResult result = actor.nextPage("");
+        ActionResult result = actor.nextPage(null);
         assertThat(result.isSuccess()).isFalse();
     }
 
@@ -73,17 +73,17 @@ class OcrActorTest {
                 "h\tk\tp\n" +
                 "\t天気\t1\n" +
                 "\t風\t2\n");
-        actor.loadFile(tsv.toString());
+        actor.loadFile(new OcrActor.FileArgs(tsv.toString()));
 
-        ActionResult page1 = actor.nextPage("");
+        ActionResult page1 = actor.nextPage(null);
         assertThat(page1.isSuccess()).isTrue();
         assertThat(page1.getResult()).contains("Page 1");
 
-        ActionResult page2 = actor.nextPage("");
+        ActionResult page2 = actor.nextPage(null);
         assertThat(page2.isSuccess()).isTrue();
         assertThat(page2.getResult()).contains("Page 2");
 
-        ActionResult exhausted = actor.nextPage("");
+        ActionResult exhausted = actor.nextPage(null);
         assertThat(exhausted.isSuccess()).isFalse();
         assertThat(exhausted.getResult()).contains("No more pages");
     }
@@ -94,10 +94,10 @@ class OcrActorTest {
                 "h\tk\tp\n" +
                 "\t天気晴朗\t1\n" +
                 "\t波高し\t1\n");
-        actor.loadFile(tsv.toString());
-        actor.nextPage("");
+        actor.loadFile(new OcrActor.FileArgs(tsv.toString()));
+        actor.nextPage(null);
 
-        ActionResult result = actor.getPageText("");
+        ActionResult result = actor.getPageText(null);
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getResult()).isEqualTo("天気晴朗\n波高し");
@@ -106,9 +106,9 @@ class OcrActorTest {
     @Test
     void getPageText_withoutNextPage_fails(@TempDir Path tempDir) throws IOException {
         Path tsv = createTsv(tempDir, "ocr.tsv", "h\tk\tp\n\t天気\t1\n");
-        actor.loadFile(tsv.toString());
+        actor.loadFile(new OcrActor.FileArgs(tsv.toString()));
 
-        ActionResult result = actor.getPageText("");
+        ActionResult result = actor.getPageText(null);
         assertThat(result.isSuccess()).isFalse();
         assertThat(result.getResult()).contains("nextPage");
     }
@@ -116,10 +116,10 @@ class OcrActorTest {
     @Test
     void getPageInfo_returnsPageAndSourceFile(@TempDir Path tempDir) throws IOException {
         Path tsv = createTsv(tempDir, "source.tsv", "h\tk\tp\n\t天気\t3\n");
-        actor.loadFile(tsv.toString());
-        actor.nextPage("");
+        actor.loadFile(new OcrActor.FileArgs(tsv.toString()));
+        actor.nextPage(null);
 
-        ActionResult result = actor.getPageInfo("");
+        ActionResult result = actor.getPageInfo(null);
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getResult()).contains("3").contains("source.tsv");
@@ -128,9 +128,9 @@ class OcrActorTest {
     @Test
     void getPageInfo_withoutNextPage_fails(@TempDir Path tempDir) throws IOException {
         Path tsv = createTsv(tempDir, "ocr.tsv", "h\tk\tp\n\t天気\t1\n");
-        actor.loadFile(tsv.toString());
+        actor.loadFile(new OcrActor.FileArgs(tsv.toString()));
 
-        ActionResult result = actor.getPageInfo("");
+        ActionResult result = actor.getPageInfo(null);
         assertThat(result.isSuccess()).isFalse();
     }
 
@@ -141,13 +141,13 @@ class OcrActorTest {
                 "\t天気\t1\n" +
                 "\t風\tabc\n" +  // non-numeric page — skipped
                 "\t雨\t2\n");
-        actor.loadFile(tsv.toString());
+        actor.loadFile(new OcrActor.FileArgs(tsv.toString()));
 
-        ActionResult p1 = actor.nextPage("");
+        ActionResult p1 = actor.nextPage(null);
         assertThat(p1.isSuccess()).isTrue();
-        ActionResult p2 = actor.nextPage("");
+        ActionResult p2 = actor.nextPage(null);
         assertThat(p2.isSuccess()).isTrue();
-        assertThat(actor.nextPage("").isSuccess()).isFalse(); // only 2 pages
+        assertThat(actor.nextPage(null).isSuccess()).isFalse(); // only 2 pages
     }
 
     @Test
@@ -156,10 +156,10 @@ class OcrActorTest {
                 "h\tk\tp\n" +
                 "\t\t1\n" +      // empty kanji — skipped
                 "\t天気\t1\n");
-        actor.loadFile(tsv.toString());
-        actor.nextPage("");
+        actor.loadFile(new OcrActor.FileArgs(tsv.toString()));
+        actor.nextPage(null);
 
-        ActionResult result = actor.getPageText("");
+        ActionResult result = actor.getPageText(null);
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getResult()).isEqualTo("天気"); // only non-empty line
     }

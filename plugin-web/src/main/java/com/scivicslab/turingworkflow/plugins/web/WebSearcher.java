@@ -48,11 +48,10 @@ public class WebSearcher {
     /**
      * Searches the web and returns numbered results (title, URL, snippet).
      *
-     * @param args the search query (plain string or {@code ["query"]})
+     * @param query what to search for
      * @return an {@link ActionResult} with the formatted results, or failure on error
      */
-    public ActionResult search(String args) {
-        String query = parseFirstArgument(args);
+    public ActionResult search(String query) {
         if (query == null || query.isBlank()) {
             return new ActionResult(false, "Error: search query is required");
         }
@@ -68,11 +67,10 @@ public class WebSearcher {
     /**
      * Searches the web and returns only the result URLs, one per line.
      *
-     * @param args the search query (plain string or {@code ["query"]})
+     * @param query what to search for
      * @return an {@link ActionResult} with newline-separated URLs, or failure on error
      */
-    public ActionResult searchUrls(String args) {
-        String query = parseFirstArgument(args);
+    public ActionResult searchUrls(String query) {
         if (query == null || query.isBlank()) {
             return new ActionResult(false, "Error: search query is required");
         }
@@ -168,29 +166,4 @@ public class WebSearcher {
         return val.startsWith("http") ? val : "";
     }
 
-    /**
-     * ワークフローからの引数はJSONの配列で届くことがある。その先頭の要素を取り出す。
-     *
-     * <p>{@code IIActorRef} が同名の {@code protected} メソッドで提供しているものと同じ処理である。
-     * このクラスはアクター参照を継承しない素のオブジェクトなので、自分で持つ。</p>
-     *
-     * @param arg 受け取った引数
-     * @return 配列なら先頭の要素、そうでなければそのまま
-     */
-    private String parseFirstArgument(String arg) {
-        if (arg == null || arg.isEmpty()) {
-            return "";
-        }
-        if (arg.startsWith("[")) {
-            try {
-                org.json.JSONArray arr = new org.json.JSONArray(arg);
-                if (arr.length() > 0) {
-                    return arr.getString(0);
-                }
-            } catch (Exception e) {
-                // Not a valid JSON array
-            }
-        }
-        return arg;
-    }
 }

@@ -20,6 +20,8 @@ package com.scivicslab.turingworkflow.plugins.report.sections.basic;
 import com.scivicslab.turingworkflow.plugins.logdb.DistributedLogStore;
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
@@ -135,6 +137,20 @@ public class TransitionHistorySectionActor extends IIActorRef<TransitionHistoryS
      * @param args unused
      * @return an {@link ActionResult} with the generated section content
      */
+    /**
+     * Whose transitions this section shows.
+     *
+     * @param actor the actor's name
+     */
+    public record TargetActorArgs(@NotNull String actor) {}
+
+    /**
+     * Whether the transitions of the child actors are shown too.
+     *
+     * @param includeChildren true to show the children's transitions as well
+     */
+    public record IncludeChildrenArgs(@NotNull Boolean includeChildren) {}
+
     @Action("generate")
     public ActionResult generate(String args) {
         String content = object.generate();
@@ -161,10 +177,10 @@ public class TransitionHistorySectionActor extends IIActorRef<TransitionHistoryS
      * @param args the target actor name
      * @return action result
      */
-    @Action("setTargetActor")
-    public ActionResult setTargetActor(String args) {
-        if (args != null && !args.isEmpty()) {
-            object.setTargetActorName(args.trim());
+    @Action(value = "setTargetActor", argsType = TargetActorArgs.class)
+    public ActionResult setTargetActor(TargetActorArgs args) {
+        if (!args.actor().isEmpty()) {
+            object.setTargetActorName(args.actor().trim());
         }
         return new ActionResult(true, "Target actor set");
     }
@@ -172,12 +188,12 @@ public class TransitionHistorySectionActor extends IIActorRef<TransitionHistoryS
     /**
      * Sets whether to include children.
      *
-     * @param args "true" or "false"
+     * @param args whether the children are included
      * @return action result
      */
-    @Action("setIncludeChildren")
-    public ActionResult setIncludeChildren(String args) {
-        boolean include = "true".equalsIgnoreCase(args);
+    @Action(value = "setIncludeChildren", argsType = IncludeChildrenArgs.class)
+    public ActionResult setIncludeChildren(IncludeChildrenArgs args) {
+        boolean include = args.includeChildren();
         object.setIncludeChildren(include);
         return new ActionResult(true, "Include children: " + include);
     }

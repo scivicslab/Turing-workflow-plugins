@@ -2,6 +2,8 @@ package com.scivicslab.turingworkflow.plugins.openalex;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
@@ -31,54 +33,86 @@ public class OpenAlexActor extends IIActorRef<OpenAlexClient> {
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("setEmail")
-    public ActionResult setEmail(String args) {
-        return pojo().setEmail(args);
+    /**
+     * The address OpenAlex asks callers to send along with each request.
+     *
+     * @param email the caller's mail address
+     */
+    public record EmailArgs(@NotNull String email) {}
+
+    /**
+     * What to search OpenAlex for.
+     *
+     * @param query the search terms
+     */
+    public record QueryArgs(@NotNull String query) {}
+
+    /**
+     * What to search for, how many papers to return, and in what order.
+     *
+     * @param query   the search terms
+     * @param perPage how many papers to return; ten when absent
+     * @param sort    the ordering: {@code citations}, {@code relevance}, {@code newest},
+     *                or an OpenAlex sort string such as {@code publication_date:desc};
+     *                most cited first when absent
+     */
+    public record TopWorksArgs(@NotNull String query, Integer perPage, String sort) {}
+
+    /**
+     * Which paper to look up.
+     *
+     * @param id the paper's OpenAlex identifier or its DOI
+     */
+    public record WorkArgs(@NotNull String id) {}
+
+    @Action(value = "setEmail", argsType = EmailArgs.class)
+    public ActionResult setEmail(EmailArgs args) {
+        return pojo().setEmail(args.email());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("searchWorks")
-    public ActionResult searchWorks(String args) {
-        return pojo().searchWorks(args);
+    @Action(value = "searchWorks", argsType = QueryArgs.class)
+    public ActionResult searchWorks(QueryArgs args) {
+        return pojo().searchWorks(args.query());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("searchWorksTopK")
-    public ActionResult searchWorksTopK(String args) {
-        return pojo().searchWorksTopK(args);
+    @Action(value = "searchWorksTopK", argsType = TopWorksArgs.class)
+    public ActionResult searchWorksTopK(TopWorksArgs args) {
+        return pojo().searchWorksTopK(args.query(), args.perPage(), args.sort());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("getWork")
-    public ActionResult getWork(String args) {
-        return pojo().getWork(args);
+    @Action(value = "getWork", argsType = WorkArgs.class)
+    public ActionResult getWork(WorkArgs args) {
+        return pojo().getWork(args.id());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("getPdfUrl")
-    public ActionResult getPdfUrl(String args) {
-        return pojo().getPdfUrl(args);
+    @Action(value = "getPdfUrl", argsType = WorkArgs.class)
+    public ActionResult getPdfUrl(WorkArgs args) {
+        return pojo().getPdfUrl(args.id());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("searchAuthors")
-    public ActionResult searchAuthors(String args) {
-        return pojo().searchAuthors(args);
+    @Action(value = "searchAuthors", argsType = QueryArgs.class)
+    public ActionResult searchAuthors(QueryArgs args) {
+        return pojo().searchAuthors(args.query());
     }
 
 }

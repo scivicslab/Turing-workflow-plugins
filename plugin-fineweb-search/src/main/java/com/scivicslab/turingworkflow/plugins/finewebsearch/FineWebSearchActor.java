@@ -2,6 +2,8 @@ package com.scivicslab.turingworkflow.plugins.finewebsearch;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
@@ -31,27 +33,49 @@ public class FineWebSearchActor extends IIActorRef<FineWebSearchClient> {
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("setUrl")
-    public ActionResult setUrl(String args) {
-        return pojo().setUrl(args);
+    /**
+     * Where the FineWeb search server listens.
+     *
+     * @param url the server's address
+     */
+    public record UrlArgs(@NotNull String url) {}
+
+    /**
+     * What to search the FineWeb index for.
+     *
+     * @param query the search query
+     */
+    public record QueryArgs(@NotNull String query) {}
+
+    /**
+     * What to search for, and how many results to return.
+     *
+     * @param query the search query
+     * @param topK  how many results to return; ten when absent
+     */
+    public record TopKArgs(@NotNull String query, Integer topK) {}
+
+    @Action(value = "setUrl", argsType = UrlArgs.class)
+    public ActionResult setUrl(UrlArgs args) {
+        return pojo().setUrl(args.url());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("search")
-    public ActionResult search(String args) {
-        return pojo().search(args);
+    @Action(value = "search", argsType = QueryArgs.class)
+    public ActionResult search(QueryArgs args) {
+        return pojo().search(args.query());
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("searchTopK")
-    public ActionResult searchTopK(String args) {
-        return pojo().searchTopK(args);
+    @Action(value = "searchTopK", argsType = TopKArgs.class)
+    public ActionResult searchTopK(TopKArgs args) {
+        return pojo().searchTopK(args.query(), args.topK());
     }
 
     /**
@@ -60,7 +84,7 @@ public class FineWebSearchActor extends IIActorRef<FineWebSearchClient> {
      */
     @Action("health")
     public ActionResult health(String args) {
-        return pojo().health(args);
+        return pojo().health();
     }
 
 }

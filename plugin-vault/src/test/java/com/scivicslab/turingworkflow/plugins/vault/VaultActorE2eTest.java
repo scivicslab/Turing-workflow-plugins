@@ -78,7 +78,7 @@ class VaultActorE2eTest {
     void get_httpMode_readsFieldFromVault() throws Exception {
         assumeTrue(httpAvailable, "VAULT_ADDR/VAULT_TOKEN not set; skipping HTTP mode test");
         VaultActor actor = new VaultActor("vault-test", null);
-        ActionResult result = actor.get("[\"" + HTTP_TEST_PATH + "\",\"" + HTTP_TEST_FIELD + "\"]");
+        ActionResult result = actor.get(new VaultActor.SecretArgs(HTTP_TEST_PATH, HTTP_TEST_FIELD));
         System.out.println("[E2E] HTTP result: " + result.getResult());
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getResult()).isEqualTo(HTTP_TEST_VALUE);
@@ -88,9 +88,9 @@ class VaultActorE2eTest {
     void get_kubectlMode_readsFieldFromVault() throws Exception {
         assumeTrue(kubectlAvailable, "E2E_VAULT_K8S_NAMESPACE not set; skipping kubectl mode test");
         VaultActor actor = new VaultActor("vault-test", null);
-        ActionResult setResult = actor.setKubectl("[\"" + K8S_NAMESPACE + "\",\"" + K8S_POD + "\"]");
+        ActionResult setResult = actor.setKubectl(new VaultActor.KubectlArgs(K8S_NAMESPACE, K8S_POD));
         assertThat(setResult.isSuccess()).isTrue();
-        ActionResult result = actor.get("[\"" + KUBECTL_TEST_PATH + "\",\"" + KUBECTL_TEST_FIELD + "\"]");
+        ActionResult result = actor.get(new VaultActor.SecretArgs(KUBECTL_TEST_PATH, KUBECTL_TEST_FIELD));
         System.out.println("[E2E] kubectl result: " + result.getResult());
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getResult()).isEqualTo(KUBECTL_TEST_VALUE);
@@ -100,7 +100,7 @@ class VaultActorE2eTest {
     void get_missingPath_returnsFailure() throws Exception {
         assumeTrue(httpAvailable, "VAULT_ADDR/VAULT_TOKEN not set; skipping");
         VaultActor actor = new VaultActor("vault-test", null);
-        ActionResult result = actor.get("[\"secret/nonexistent-e2e-path-xyz\",\"field\"]");
+        ActionResult result = actor.get(new VaultActor.SecretArgs("secret/nonexistent-e2e-path-xyz", "field"));
         System.out.println("[E2E] missing path result: " + result.getResult());
         assertThat(result.isSuccess()).isFalse();
     }

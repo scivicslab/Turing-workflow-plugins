@@ -19,6 +19,8 @@ package com.scivicslab.turingworkflow.plugins.report.sections.basic;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.pojoactor.core.JsonState;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
@@ -121,6 +123,20 @@ public class JsonStateSectionActor extends IIActorRef<JsonStateSection> {
      * @param args unused
      * @return an {@link ActionResult} with the generated section content
      */
+    /**
+     * Whose state this section shows.
+     *
+     * @param actor the actor's name
+     */
+    public record TargetActorArgs(@NotNull String actor) {}
+
+    /**
+     * Which part of that state the section shows.
+     *
+     * @param path a JSON path; the whole state is shown when this is absent
+     */
+    public record JsonPathArgs(String path) {}
+
     @Action("generate")
     public ActionResult generate(String args) {
         // Refresh content before generating
@@ -149,10 +165,10 @@ public class JsonStateSectionActor extends IIActorRef<JsonStateSection> {
      * @param args the target actor name
      * @return action result
      */
-    @Action("setTargetActor")
-    public ActionResult setTargetActor(String args) {
-        if (args != null && !args.isEmpty()) {
-            this.targetActorName = args.trim();
+    @Action(value = "setTargetActor", argsType = TargetActorArgs.class)
+    public ActionResult setTargetActor(TargetActorArgs args) {
+        if (!args.actor().isEmpty()) {
+            this.targetActorName = args.actor().trim();
             object.setActorName(this.targetActorName);
         }
         return new ActionResult(true, "Target actor set: " + targetActorName);
@@ -164,9 +180,10 @@ public class JsonStateSectionActor extends IIActorRef<JsonStateSection> {
      * @param args the JSON path
      * @return action result
      */
-    @Action("setJsonPath")
-    public ActionResult setJsonPath(String args) {
-        this.jsonPath = (args != null && !args.isEmpty()) ? args.trim() : null;
+    @Action(value = "setJsonPath", argsType = JsonPathArgs.class)
+    public ActionResult setJsonPath(JsonPathArgs args) {
+        String path = args.path();
+        this.jsonPath = (path != null && !path.isEmpty()) ? path.trim() : null;
         object.setJsonPath(this.jsonPath);
         return new ActionResult(true, "JSON path set: " + jsonPath);
     }

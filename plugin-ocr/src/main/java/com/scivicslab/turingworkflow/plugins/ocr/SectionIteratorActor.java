@@ -2,6 +2,8 @@ package com.scivicslab.turingworkflow.plugins.ocr;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
@@ -31,9 +33,23 @@ public class SectionIteratorActor extends IIActorRef<SectionIterator> {
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("extractSections")
-    public ActionResult extractSections(String args) {
-        return pojo().extractSections(args);
+    /**
+     * The markdown to split into sections.
+     *
+     * @param markdown the text produced by OCR
+     */
+    public record MarkdownArgs(@NotNull String markdown) {}
+
+    /**
+     * How short a section may be before it is dropped.
+     *
+     * @param minChars the smallest section kept, in characters
+     */
+    public record MinCharsArgs(@NotNull Integer minChars) {}
+
+    @Action(value = "extractSections", argsType = MarkdownArgs.class)
+    public ActionResult extractSections(MarkdownArgs args) {
+        return pojo().extractSections(args.markdown());
     }
 
     /**
@@ -42,16 +58,16 @@ public class SectionIteratorActor extends IIActorRef<SectionIterator> {
      */
     @Action("getNext")
     public ActionResult getNext(String args) {
-        return pojo().getNext(args);
+        return pojo().getNext();
     }
 
     /**
      * @param args ワークフローからの引数
      * @return 包んだオブジェクトが返した結果
      */
-    @Action("setMinChars")
-    public ActionResult setMinChars(String args) {
-        return pojo().setMinChars(args);
+    @Action(value = "setMinChars", argsType = MinCharsArgs.class)
+    public ActionResult setMinChars(MinCharsArgs args) {
+        return pojo().setMinChars(args.minChars());
     }
 
     /**
@@ -60,7 +76,7 @@ public class SectionIteratorActor extends IIActorRef<SectionIterator> {
      */
     @Action("reset")
     public ActionResult reset(String args) {
-        return pojo().reset(args);
+        return pojo().reset();
     }
 
 }

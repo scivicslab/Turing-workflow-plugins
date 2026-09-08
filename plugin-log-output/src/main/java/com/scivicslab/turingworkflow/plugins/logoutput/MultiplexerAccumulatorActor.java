@@ -25,6 +25,8 @@ import org.json.JSONObject;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
@@ -87,14 +89,22 @@ public class MultiplexerAccumulatorActor extends IIActorRef<MultiplexerAccumulat
      * @return an {@link ActionResult}; {@code success=true} means the add was enqueued, not that it
      *         has run yet
      */
-    @Action("add")
-    public ActionResult add(String arg) {
+    /**
+     * One entry to distribute to every accumulator.
+     *
+     * @param source who produced the entry
+     * @param type   what kind of entry it is
+     * @param data   the entry itself
+     */
+    public record AddArgs(@NotNull String source, @NotNull String type, @NotNull String data) {}
+
+    @Action(value = "add", argsType = AddArgs.class)
+    public ActionResult add(AddArgs args) {
         // Note: Do NOT log here - it causes infinite loop via MultiplexerLogHandler
         try {
-            JSONObject json = new JSONObject(arg);
-            String source = json.getString("source");
-            String type = json.getString("type");
-            String data = json.getString("data");
+            String source = args.source();
+            String type = args.type();
+            String data = args.data();
 
             this.tell(acc -> acc.add(source, type, data));
 

@@ -25,6 +25,8 @@ import org.json.JSONObject;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+
+import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
@@ -99,14 +101,71 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
      * @return {@link ActionResult} with success=true and message "Logged", or
      *         success=false with the error message on failure
      */
-    @Action("log")
-    public ActionResult log(String arg) {
+    /**
+     * One log line to store.
+     *
+     * @param sessionId 
+     * @param nodeId 
+     * @param level 
+     * @param message 
+     */
+    public record LogArgs(@NotNull Long sessionId, @NotNull String nodeId, @NotNull String level, @NotNull String message) {}
+
+    /**
+     * One action outcome to store.
+     *
+     * @param sessionId 
+     * @param nodeId 
+     * @param label 
+     * @param actionName 
+     * @param exitCode 
+     * @param durationMs 
+     * @param output 
+     */
+    public record LogActionArgs(@NotNull Long sessionId, @NotNull String nodeId, @NotNull String label, @NotNull String actionName, @NotNull Integer exitCode, @NotNull Long durationMs, @NotNull String output) {}
+
+    /**
+     * What identifies a run that is starting.
+     *
+     * @param workflowName 
+     * @param overlayName 
+     * @param inventoryName 
+     * @param nodeCount 
+     */
+    public record StartSessionArgs(@NotNull String workflowName, String overlayName, String inventoryName, @NotNull Integer nodeCount) {}
+
+    /**
+     * Which run finished, and how.
+     *
+     * @param sessionId 
+     * @param status 
+     */
+    public record EndSessionArgs(@NotNull Long sessionId, @NotNull String status) {}
+
+    /**
+     * Which node of which run succeeded.
+     *
+     * @param sessionId 
+     * @param nodeId 
+     */
+    public record MarkNodeSuccessArgs(@NotNull Long sessionId, @NotNull String nodeId) {}
+
+    /**
+     * Which node of which run failed, and why.
+     *
+     * @param sessionId 
+     * @param nodeId 
+     * @param reason 
+     */
+    public record MarkNodeFailedArgs(@NotNull Long sessionId, @NotNull String nodeId, @NotNull String reason) {}
+
+    @Action(value = "log", argsType = LogArgs.class)
+    public ActionResult log(LogArgs args) {
         try {
-            JSONObject json = new JSONObject(arg);
-            long sessionId = json.getLong("sessionId");
-            String nodeId = json.getString("nodeId");
-            String levelStr = json.getString("level");
-            String message = json.getString("message");
+            long sessionId = args.sessionId();
+            String nodeId = args.nodeId();
+            String levelStr = args.level();
+            String message = args.message();
 
             LogLevel level = LogLevel.valueOf(levelStr);
 
@@ -140,17 +199,16 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
      * @return {@link ActionResult} with success=true and message "Action logged", or
      *         success=false with the error message on failure
      */
-    @Action("logAction")
-    public ActionResult logAction(String arg) {
+    @Action(value = "logAction", argsType = LogActionArgs.class)
+    public ActionResult logAction(LogActionArgs args) {
         try {
-            JSONObject json = new JSONObject(arg);
-            long sessionId = json.getLong("sessionId");
-            String nodeId = json.getString("nodeId");
-            String label = json.getString("label");
-            String action = json.getString("actionName");
-            int exitCode = json.getInt("exitCode");
-            long durationMs = json.getLong("durationMs");
-            String output = json.getString("output");
+            long sessionId = args.sessionId();
+            String nodeId = args.nodeId();
+            String label = args.label();
+            String action = args.actionName();
+            int exitCode = args.exitCode();
+            long durationMs = args.durationMs();
+            String output = args.output();
 
             this.tell(store -> store.logAction(sessionId, nodeId, label, action, exitCode, durationMs, output),
                       dbExecutor).get();
@@ -180,14 +238,13 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
      * @return {@link ActionResult} with success=true and the session ID as the message,
      *         or success=false with the error message on failure
      */
-    @Action("startSession")
-    public ActionResult startSession(String arg) {
+    @Action(value = "startSession", argsType = StartSessionArgs.class)
+    public ActionResult startSession(StartSessionArgs args) {
         try {
-            JSONObject json = new JSONObject(arg);
-            String workflowName = json.getString("workflowName");
-            String overlayName = json.optString("overlayName", null);
-            String inventoryName = json.optString("inventoryName", null);
-            int nodeCount = json.getInt("nodeCount");
+            String workflowName = args.workflowName();
+            String overlayName = args.overlayName();
+            String inventoryName = args.inventoryName();
+            int nodeCount = args.nodeCount();
 
             long sessionId = this.ask(store ->
                 store.startSession(workflowName, overlayName, inventoryName, nodeCount),
@@ -215,12 +272,11 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
      * @return {@link ActionResult} with success=true and message "Session ended", or
      *         success=false with the error message on failure
      */
-    @Action("endSession")
-    public ActionResult endSession(String arg) {
+    @Action(value = "endSession", argsType = EndSessionArgs.class)
+    public ActionResult endSession(EndSessionArgs args) {
         try {
-            JSONObject json = new JSONObject(arg);
-            long sessionId = json.getLong("sessionId");
-            String statusStr = json.getString("status");
+            long sessionId = args.sessionId();
+            String statusStr = args.status();
 
             SessionStatus status = SessionStatus.valueOf(statusStr);
 
@@ -248,12 +304,11 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
      * @return {@link ActionResult} with success=true and message "Node marked as success", or
      *         success=false with the error message on failure
      */
-    @Action("markNodeSuccess")
-    public ActionResult markNodeSuccess(String arg) {
+    @Action(value = "markNodeSuccess", argsType = MarkNodeSuccessArgs.class)
+    public ActionResult markNodeSuccess(MarkNodeSuccessArgs args) {
         try {
-            JSONObject json = new JSONObject(arg);
-            long sessionId = json.getLong("sessionId");
-            String nodeId = json.getString("nodeId");
+            long sessionId = args.sessionId();
+            String nodeId = args.nodeId();
 
             this.tell(store -> store.markNodeSuccess(sessionId, nodeId), dbExecutor).get();
 
@@ -280,13 +335,12 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
      * @return {@link ActionResult} with success=true and message "Node marked as failed", or
      *         success=false with the error message on failure
      */
-    @Action("markNodeFailed")
-    public ActionResult markNodeFailed(String arg) {
+    @Action(value = "markNodeFailed", argsType = MarkNodeFailedArgs.class)
+    public ActionResult markNodeFailed(MarkNodeFailedArgs args) {
         try {
-            JSONObject json = new JSONObject(arg);
-            long sessionId = json.getLong("sessionId");
-            String nodeId = json.getString("nodeId");
-            String reason = json.getString("reason");
+            long sessionId = args.sessionId();
+            String nodeId = args.nodeId();
+            String reason = args.reason();
 
             this.tell(store -> store.markNodeFailed(sessionId, nodeId, reason), dbExecutor).get();
 
