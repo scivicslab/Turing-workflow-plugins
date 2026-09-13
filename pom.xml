@@ -53,6 +53,8 @@
         <module>plugin-chatui3</module>
         <module>plugin-fineweb-search</module>
         <module>plugin-openalex</module>
+        <module>plugin-arxiv</module>
+        <module>plugin-semantic-scholar</module>
         <module>plugin-ocr</module>
         <module>plugin-codedoc</module>
     </modules>
