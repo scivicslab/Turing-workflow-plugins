@@ -62,6 +62,13 @@ public class ArxivClient {
     /** How many times a refused request is asked again before the workflow is told. */
     private static final int RETRIES = 3;
 
+    /**
+     * How long this process stops asking after the retries ran out. The refusal is per caller and
+     * lasts minutes, so asking again inside that window only deepens it — and a workflow looping
+     * over search results would do exactly that, several times a second, without this.
+     */
+    private static final long COOLDOWN_MILLIS = 15 * 60 * 1000L;
+
     /** How long an abstract is allowed to be in a list of results. */
     private static final int ABSTRACT_SNIPPET = 400;
 
@@ -74,6 +81,9 @@ public class ArxivClient {
      */
     private static final Object PACE = new Object();
     private static long lastRequestAt = 0;
+
+    /** Until when this process refuses to ask at all, set when the retries ran out. */
+    private static volatile long refusingUntil = 0;
 
     /**
      * HTTP/1.1, not the JDK's default of trying HTTP/2 first. arXiv sits behind a CDN that answers
@@ -349,22 +359,66 @@ public class ArxivClient {
      * 5, 15 and 45 seconds, and only then reports the refusal to the workflow.</p>
      */
     private String get(String url) throws Exception {
-        HttpResponse<String> resp = send(url);
+        long waitingOut = refusingUntil - System.currentTimeMillis();
+        if (waitingOut > 0) {
+            throw new Exception("arXiv refused this caller; not asking again for another "
+                    + (waitingOut / 1000) + "s");
+        }
+        boolean refused = false;
+        HttpResponse<String> resp = null;
         long wait = RETRY_AFTER_MILLIS;
-        for (int attempt = 1; busy(resp.statusCode()) && attempt <= RETRIES; attempt++) {
+        for (int attempt = 0; attempt <= RETRIES; attempt++) {
+            try {
+                resp = send(url);
+            } catch (Exception e) {
+                // A refusal followed by a request that never answers is the same trouble wearing
+                // another face; stop asking either way.
+                if (refused) startCooldown();
+                throw e;
+            }
+            if (!busy(resp.statusCode())) break;
+            refused = true;
+            if (attempt == RETRIES) break;
+            long asked = retryAfterMillis(resp);
+            if (asked > wait) wait = asked;
             logger.warning("arXiv answered " + resp.statusCode() + "; waiting " + wait
-                    + "ms and asking again (attempt " + attempt + " of " + RETRIES + ")");
+                    + "ms and asking again (attempt " + (attempt + 1) + " of " + RETRIES + ")");
             Thread.sleep(wait);
             wait *= 3;
-            resp = send(url);
         }
+        if (busy(resp.statusCode())) startCooldown();
         if (resp.statusCode() != 200) {
             throw new Exception("HTTP " + resp.statusCode() + ": " + resp.body());
         }
         return resp.body();
     }
 
+    /**
+     * Stops this process from asking for a while.
+     *
+     * <p>The refusal is against the caller and lasts minutes. Asking again inside that window only
+     * deepens it, and a workflow looping over search results would ask several times a second.
+     * Everything this client is asked for during the window fails immediately, saying how much
+     * longer it will be, and nothing leaves the machine.</p>
+     */
+    private static void startCooldown() {
+        refusingUntil = System.currentTimeMillis() + COOLDOWN_MILLIS;
+        logger.warning("arXiv is refusing this caller; no request will be sent for the next "
+                + (COOLDOWN_MILLIS / 60000) + " minutes");
+    }
+
     /** One GET, no sooner than {@link #MIN_INTERVAL_MILLIS} after the last one from this JVM. */
+    /** @return how long the answer's {@code Retry-After} asks for, or 0 when it carries none */
+    private static long retryAfterMillis(HttpResponse<String> resp) {
+        return resp.headers().firstValue("retry-after").map(value -> {
+            try {
+                return Long.parseLong(value.strip()) * 1000L;
+            } catch (NumberFormatException e) {
+                return 0L;                      // an HTTP-date; the fixed waits below cover it
+            }
+        }).orElse(0L);
+    }
+
     /** @return whether the answer says "not now": too many requests, or the service is out */
     private static boolean busy(int status) {
         return status == 429 || status == 503;
