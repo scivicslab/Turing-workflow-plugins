@@ -7,11 +7,11 @@
     <parent>
         <groupId>com.scivicslab.turingworkflow.plugins</groupId>
         <artifactId>turing-workflow-plugins-parent</artifactId>
-        <version>4.1.0</version>
+        <version>4.2.0</version>
     </parent>
 
     <artifactId>plugin-arxiv</artifactId>
-    <version>4.1.0</version>
+    <version>4.2.0</version>
     <name>Turing Workflow Plugin: arXiv</name>
     <description>Actor that queries the arXiv API (search, one paper, its PDF)</description>
 
