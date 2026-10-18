@@ -142,4 +142,74 @@ public class PromptBuffer {
         sb.append("[Message]\n").append(message);
         return sb.toString();
     }
+
+    /**
+     * The messages of a request, as a JSON array text: a {@code system} message holding the
+     * constraints and the background (left out when there are none), then the given history
+     * messages, then the message body as a {@code user} message.
+     *
+     * <p>The buffer keeps only what one assembly needs; the history that outlives an assembly
+     * belongs to whoever owns the conversation, and is handed in here already selected
+     * ({@code RequestMessagesControl_261018_oo01}). The history is spliced in as it is, so it must
+     * already be a JSON array of {@code {"role","content"}} messages.</p>
+     *
+     * @param historyJson the selected history messages as a JSON array text; {@code null}, blank
+     *                    or {@code []} for none
+     * @return the array, or {@code null} if no message has been set
+     * @throws IllegalArgumentException if {@code historyJson} is not an array text
+     */
+    public String buildMessages(String historyJson) {
+        if (message == null) return null;
+        String history = historyJson == null ? "" : historyJson.strip();
+        if (!history.isEmpty() && !(history.startsWith("[") && history.endsWith("]"))) {
+            throw new IllegalArgumentException("history must be a JSON array");
+        }
+        String inner = history.isEmpty() ? "" : history.substring(1, history.length() - 1).strip();
+
+        StringBuilder out = new StringBuilder("[");
+        String system = systemText();
+        if (system != null) out.append(messageJson("system", system)).append(',');
+        if (!inner.isEmpty()) out.append(inner).append(',');
+        out.append(messageJson("user", message)).append(']');
+        return out.toString();
+    }
+
+    /** @return the constraints and background as the text of a system message, or {@code null} if both are empty */
+    private String systemText() {
+        if (warnings.isEmpty() && contexts.isEmpty()) return null;
+        StringBuilder sb = new StringBuilder();
+        if (!warnings.isEmpty()) {
+            sb.append("[Constraints]\n");
+            for (String w : warnings) sb.append("- ").append(w).append("\n");
+        }
+        if (!contexts.isEmpty()) {
+            if (sb.length() > 0) sb.append("\n");
+            sb.append("[Context]\n");
+            for (String c : contexts) sb.append("- ").append(c).append("\n");
+        }
+        return sb.toString().stripTrailing();
+    }
+
+    private static String messageJson(String role, String content) {
+        return "{\"role\":\"" + role + "\",\"content\":\"" + escape(content) + "\"}";
+    }
+
+    private static String escape(String s) {
+        StringBuilder sb = new StringBuilder(s.length() + 16);
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                default -> {
+                    if (c < 0x20) sb.append(String.format("\\u%04x", (int) c));
+                    else sb.append(c);
+                }
+            }
+        }
+        return sb.toString();
+    }
 }

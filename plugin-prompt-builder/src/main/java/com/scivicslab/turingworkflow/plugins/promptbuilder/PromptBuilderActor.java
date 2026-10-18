@@ -151,6 +151,23 @@ public class PromptBuilderActor extends IIActorRef<PromptBuffer> {
                 : new ActionResult(true, message);
     }
 
+    /**
+     * Puts the request's {@code messages} array in {@code ${result}}: a system message with the
+     * constraints and background, the history given as the argument, and the message body as the
+     * user message. Pass {@code []} for no history.
+     */
+    @Action(value = "buildMessages", argsType = TextArgs.class)
+    public ActionResult buildMessages(TextArgs args) {
+        try {
+            String messages = buffer().buildMessages(args.text());
+            return messages == null
+                    ? new ActionResult(false, "buildMessages failed: addMessage has not been called")
+                    : new ActionResult(true, messages);
+        } catch (IllegalArgumentException e) {
+            return new ActionResult(false, "buildMessages: " + e.getMessage());
+        }
+    }
+
     @Action("build")
     public ActionResult build(String ignored) {
         String prompt = buffer().build();
