@@ -348,6 +348,10 @@ public class H2LogStore implements DistributedLogStore {
         if (errorRef.get() != null) {
             throw errorRef.get();
         }
+        // The latch above is released by the task, before the batch commits, and a caller that reads
+        // right after this returns (a second connection) cannot see an uncommitted row. Wait for the
+        // commit too, so that a session this returns is one the readers can already find.
+        flushWrites();
         return sessionIdRef.get();
     }
 
@@ -435,6 +439,8 @@ public class H2LogStore implements DistributedLogStore {
         if (errorRef.get() != null) {
             throw errorRef.get();
         }
+        // Same as startSession: the task releases its latch before the commit.
+        flushWrites();
     }
 
     /**

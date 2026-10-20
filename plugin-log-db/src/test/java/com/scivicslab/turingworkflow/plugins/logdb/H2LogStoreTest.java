@@ -89,4 +89,17 @@ class H2LogStoreTest {
         long latest = store.getLatestSessionId();
         assertThat(latest).isPositive();
     }
+
+    @Test
+    void startSession_returnsOnlyOnceTheSessionCanBeRead() {
+        // The writer thread inserts the row and commits afterwards; a caller that reads right
+        // after startSession returns must already find it.
+        int missed = 0;
+        for (int i = 0; i < 500; i++) {
+            long id = store.startSession("wf-" + i, null, null, 1);
+            boolean seen = store.listSessions(10).stream().anyMatch(s -> s.getSessionId() == id);
+            if (!seen) missed++;
+        }
+        assertThat(missed).as("sessions not readable right after startSession returned").isZero();
+    }
 }
