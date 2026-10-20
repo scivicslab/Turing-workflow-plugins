@@ -89,7 +89,7 @@ class BookTextTest {
     @Test
     @DisplayName("Marker の本: 見出し・コード・リストを分け、文の途中で割れた段落をつなぎ、記法と画像を除く")
     void aMarkerBook() {
-        List<BookText.Block> blocks = BookText.read(List.of(MARKER));
+        List<BookText.Block> blocks = BookText.read(MARKER);
 
         assertEquals(BookText.Kind.HEADING, blocks.get(0).kind());
         assertEquals("3.1. A Simple Java Program", blocks.get(0).text());
@@ -97,16 +97,16 @@ class BookTextTest {
         assertEquals(BookText.Kind.CODE, blocks.get(2).kind());
         assertTrue(blocks.get(2).text().contains("IO.println(\"We will not use 'Hello, World!'\");"));
 
-        BookText.Block caseSensitive = blocks.get(3);
         assertEquals(List.of("First and foremost, Java is case sensitive.",
-                "If you made any mistakes in capitalization (such as typing Main instead of main), the program will not run."),
-                caseSensitive.sentences());
+                "If you made any mistakes in capitalization (such as typing Main instead of main), the program"),
+                blocks.get(3).sentences(), "a paragraph cut by a blank line is left as two");
+        assertEquals(List.of("will not run."), blocks.get(4).sentences());
 
         assertEquals(List.of("The term \"method\" is Java-speak for a function.",
-                "You must have a main method in every program."), blocks.get(4).sentences());
-        assertEquals(List.of("Note: see Chapter 4 for what the keywords mean."), blocks.get(5).sentences());
+                "You must have a main method in every program."), blocks.get(5).sentences());
+        assertEquals(List.of("Note: see Chapter 4 for what the keywords mean."), blocks.get(6).sentences());
 
-        BookText.Block list = blocks.get(7);
+        BookText.Block list = blocks.get(8);
         assertEquals(BookText.Kind.LIST, list.kind());
         assertEquals(List.of("Place all code inside a class whose name equals the file name, without the extension.",
                 "Declare main in the old style."), list.sentences());
@@ -116,23 +116,32 @@ class BookTextTest {
     }
 
     @Test
-    @DisplayName("YomiToku の本: ページ番号と繰り返す柱を除き、折り返した行とファイルの境目で割れた段落をつなぐ")
-    void aYomitokuBookAcrossTwoFiles() {
-        List<BookText.Block> blocks = BookText.read(List.of(YOMITOKU_1, YOMITOKU_2));
+    @DisplayName("YomiToku の本: ページ番号と繰り返す柱を除き、段落の中で折り返した行をつなぐ")
+    void aYomitokuBook() {
+        List<BookText.Block> blocks = BookText.read(YOMITOKU_1 + YOMITOKU_2.replaceFirst("(?s)---.*?---", ""));
 
-        assertEquals(2, blocks.size(), blocks.toString());
         assertEquals(List.of("この手続きを insert(x, y, root)の形で呼び出せばよい.",
                 "手続き insert は, search と同じ方法で木を上から下に進みながら,データを挿入すべき場所を探す."),
                 blocks.get(0).sentences());
-        assertEquals(List.of("木の形によって計算量が大きく変わるのが要点である。",
-                "探索の計算量は、根から目標の頂点に至るまでに調べる頂点の数にほぼ比例する."),
+        assertEquals(List.of("木の形によって計算量が大きく変わるのが要点である。", "探索の計算量は、根から目標の頂点に至るまでに"),
                 blocks.get(1).sentences());
+    }
+
+    @Test
+    @DisplayName("小節は、その見出しから次の見出しまでの部分で、見出しが無ければ断る")
+    void aSubsectionRunsFromItsHeadingToTheNext() {
+        List<BookText.Block> sub = BookText.subsection(MARKER, "3.1. A Simple Java Program");
+        assertEquals(BookText.Kind.PARAGRAPH, sub.get(0).kind());
+        assertTrue(sub.get(0).text().startsWith("Let's look more closely"), sub.toString());
+        assertTrue(sub.stream().noneMatch(b -> b.kind() == BookText.Kind.HEADING), sub.toString());
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> BookText.subsection(MARKER, "3.9. No Such Section"));
     }
 
     @Test
     @DisplayName("引用符の内側で終わる文の後で段落を切り、囲みの無いコードの 1 行はコードにする")
     void aQuotedEndAndAnUnfencedLineOfCode() {
-        List<BookText.Block> blocks = BookText.read(List.of("""
+        List<BookText.Block> blocks = BookText.read("""
                 This is sometimes called "camel case" or, self-referentially, "CamelCase."
 
                 Note: Prior to Java 25, you had to declare the class.
@@ -142,7 +151,7 @@ class BookTextTest {
                 IO.println("We will not use 'Hello, World!'");
 
                 This is the body of the method.
-                """));
+                """);
         assertEquals(List.of("This is sometimes called \"camel case\" or, self-referentially, \"CamelCase.\""),
                 blocks.get(0).sentences());
         assertEquals(List.of("Note: Prior to Java 25, you had to declare the class."), blocks.get(1).sentences());
@@ -154,7 +163,7 @@ class BookTextTest {
     @Test
     @DisplayName("空白の無い「.」で日本語の文を切り、階乗の ! と小数の点では切らず、小見出しと図の見出しを分ける")
     void japaneseSentencesHeadingsAndCaptions() {
-        List<BookText.Block> blocks = BookText.read(List.of("""
+        List<BookText.Block> blocks = BookText.read("""
                 根から木の下端までの距離が等しい木である.このような木を完全 2 分木と称する.1.2節で述べたように,n 個のデータを挿入する n! とおりの順序を考える.
 
                 (c) 計算量
@@ -164,7 +173,7 @@ class BookTextTest {
                 図2.4.6 2分探索木の最悪の形
 
                 最善の場合は O(log n) である.
-                """));
+                """);
         assertEquals(List.of("根から木の下端までの距離が等しい木である.", "このような木を完全 2 分木と称する.",
                 "1.2節で述べたように,n 個のデータを挿入する n! とおりの順序を考える."), blocks.get(0).sentences());
         assertEquals(BookText.Kind.HEADING, blocks.get(1).kind(), blocks.toString());
@@ -176,7 +185,7 @@ class BookTextTest {
     @Test
     @DisplayName("1 行ずつ割れたコードは 1 つのコードに、ラベルだけの行の並びは 1 つのリストにつなぐ")
     void consecutiveCodeLinesAndLabelledLines() {
-        List<BookText.Block> blocks = BookText.read(List.of("""
+        List<BookText.Block> blocks = BookText.read("""
                 次の手続きで探す.
 
                 lo := 1; hi := n;
@@ -190,7 +199,7 @@ class BookTextTest {
                 (b) 1-3-2
 
                 (c) 計算量
-                """));
+                """);
         assertEquals(BookText.Kind.CODE, blocks.get(1).kind(), blocks.toString());
         assertEquals("lo := 1; hi := n;\nfound := (lo = hi+2);", blocks.get(1).text());
         assertEquals(BookText.Kind.LIST, blocks.get(3).kind(), blocks.toString());

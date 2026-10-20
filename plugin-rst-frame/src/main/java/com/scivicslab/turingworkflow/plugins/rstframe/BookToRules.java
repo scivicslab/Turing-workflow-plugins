@@ -6,14 +6,20 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Turns one run of a book's files into sections of a use's rule file, asking a writer one question
- * at a time ({@code FramesAndSamplesFromBooks_261021_oo01}).
+ * Turns one sub-section of a book into one sample: a rule file of the sub-section's sentences with
+ * their relations, under the name of the sub-section's structure
+ * ({@code FramesAndSamplesFromBooks_261021_oo01}).
  *
  * <p>A workflow drives it with three steps: take {@link #nextQuestion()}; when there is one, ask the
  * writer and hand the reply to {@link #answer(String)}; when there is none, write
- * {@link #useFile()} and {@link #codeFiles()}. Every paragraph is asked about twice: its OCR
+ * {@link #sampleFile()} and {@link #codeFiles()}. Every paragraph is asked about twice: its OCR
  * misreadings, then its sentences' relations. A relation answer that cannot be read is asked once
- * more. Headings, code, formulas and lists need no question and are written as they are met.</p>
+ * more. Code, formulas and lists need no question. Last, the writer is asked in one sentence what
+ * the sub-section does for its reader; that is the sample's {@code use} line.</p>
+ *
+ * <p>The sample file begins with three comment lines that are all a catalogue of samples and frames
+ * needs: {@code use} (when a frame made from it is for), {@code source} (the book's file and
+ * heading), and {@code shape} (each block's relations, in order, read off the rules).</p>
  *
  * <p>Two things are recorded as comments before a paragraph's rule rather than hidden: a correction
  * not taken because it changed too much, and relations the writer did not give, in which case the
@@ -21,41 +27,45 @@ import java.util.Map;
  */
 public final class BookToRules {
 
-    private enum Phase { OCR, RELATIONS, RELATIONS_AGAIN }
+    private enum Phase { OCR, RELATIONS, RELATIONS_AGAIN, USE }
 
     private final BookRules rules = new BookRules();
     private final List<BookText.Block> blocks;
     private final String source;
-    private final String prefix;
-    private String useFile;
+    private final String heading;
+    private final String name;
     private final Map<String, String> codeFiles = new LinkedHashMap<>();
 
     private int next;                       // the next block to look at
     private int blockCount;
-    private int sectionCount;
-    private String heading;                 // the open section's title, or null when none is open
     private final List<String> children = new ArrayList<>();
+    private final List<String> shape = new ArrayList<>();
     private final StringBuilder body = new StringBuilder();
 
     private BookText.Block paragraph;       // the paragraph being asked about, or null
-    private int paragraphIndex;
     private Phase phase;
     private List<String> sentences;
     private String note;                    // comment lines to put before the paragraph's rule
     private String question;
+    private String use;
     private boolean finished;
 
     /**
-     * @param files   the markdown of consecutive files of one book, in order
-     * @param sources the paths of those files, for the sections' {@code :source}
-     * @param useFile the use's rule file the sections are added to
-     * @param prefix  what this run's rule names start with, so runs added to one file do not clash
+     * @param file    one file of a book's markdown
+     * @param source  that file's path
+     * @param heading the title of the sub-section to read, as the file writes it
+     * @param name    the name of the sub-section's structure, a verb phrase such as
+     *                {@code explain-program-by-whole-example}; the sample and the frame made from it share it
+     * @throws IllegalArgumentException when the file has no such heading, or the name is not a plain name
      */
-    public BookToRules(List<String> files, List<String> sources, String useFile, String prefix) {
-        this.blocks = BookText.read(files);
-        this.source = String.join(" ", sources);
-        this.useFile = useFile;
-        this.prefix = prefix;
+    public BookToRules(String file, String source, String heading, String name) {
+        if (!name.matches("[a-z0-9]+(?:-[a-z0-9]+)*")) {
+            throw new IllegalArgumentException("a sample's name is lower-case words joined by '-': " + name);
+        }
+        this.blocks = BookText.subsection(file, heading);
+        this.source = source;
+        this.heading = heading.strip();
+        this.name = name;
     }
 
     /** @return the next question for the writer, or {@code null} when the run is done */
@@ -63,40 +73,40 @@ public final class BookToRules {
         if (question != null) return question;
         while (!finished) {
             if (next >= blocks.size()) {
-                closeSection();
+                if (use == null) {
+                    phase = Phase.USE;
+                    question = usePrompt();
+                    return question;
+                }
                 finished = true;
                 return null;
             }
-            int i = next++;
-            BookText.Block b = blocks.get(i);
+            BookText.Block b = blocks.get(next++);
             switch (b.kind()) {
-                case HEADING -> {
-                    closeSection();
-                    heading = b.text();
-                }
+                case HEADING -> { }                       // a sub-section holds none
                 case CODE, FORMULA -> {
-                    String name = newBlockName();
-                    String fileName = name + ".txt";
+                    String block = newBlockName();
+                    String fileName = name + "." + block + ".txt";
                     codeFiles.put(fileName, b.text());
-                    add(name, "(defrule " + name + " -> :file \"" + RuleFile.escape(fileName) + "\" :kind code-block)\n");
+                    add(block, "(defrule " + block + " -> :file \"" + RuleFile.escape(fileName) + "\" :kind code-block)\n",
+                            b.kind() == BookText.Kind.CODE ? "code" : "formula");
                 }
                 case LIST -> {
-                    String name = newBlockName();
+                    String block = newBlockName();
                     StringBuilder items = new StringBuilder();
                     StringBuilder leaves = new StringBuilder();
                     for (int n = 1; n <= b.sentences().size(); n++) {
-                        items.append(' ').append(name).append('/').append(n);
-                        leaves.append("(defrule ").append(name).append('/').append(n).append(" -> \"")
+                        items.append(' ').append(block).append('/').append(n);
+                        leaves.append("(defrule ").append(block).append('/').append(n).append(" -> \"")
                               .append(RuleFile.escape(b.sentences().get(n - 1))).append("\")\n");
                     }
-                    add(name, "(defrule " + name + " ->" + items + " :kind bullet)\n" + leaves);
+                    add(block, "(defrule " + block + " ->" + items + " :kind bullet)\n" + leaves, "list");
                 }
                 case PARAGRAPH -> {
                     paragraph = b;
-                    paragraphIndex = i;
                     phase = Phase.OCR;
                     note = "";
-                    question = rules.ocrPrompt(b.text(), neighbour(i - 1), neighbour(i + 1));
+                    question = rules.ocrPrompt(b.text(), neighbour(next - 2), neighbour(next));
                     return question;
                 }
             }
@@ -132,22 +142,53 @@ public final class BookToRules {
                     for (int n = 0; n < sentences.size(); n++) relations.add(n == 0 ? "nucleus" : "elaboration-additional");
                     note += ";; relations not given (" + e.getMessage() + "): the first sentence is taken as the nucleus\n";
                 }
-                String name = newBlockName();
-                add(name, note + rules.paragraphRules(name, sentences, relations));
+                String block = newBlockName();
+                add(block, note + rules.paragraphRules(block, sentences, relations), String.join("+", relations));
                 paragraph = null;
+                question = null;
+            }
+            case USE -> {
+                String line = r.lines().filter(l -> !l.isBlank()).findFirst().orElse("").strip();
+                use = line.isEmpty() ? "(not given)" : line;
                 question = null;
             }
         }
     }
 
-    /** @return the use's rule file with the sections added so far */
-    public String useFile() {
-        return useFile;
+    /** @return the sample's rule file; complete once {@link #nextQuestion()} has returned {@code null} */
+    public String sampleFile() {
+        String header = ";;; use: " + (use == null ? "(not given)" : use) + "\n"
+                + ";;; source: " + source + " / " + heading + "\n"
+                + ";;; shape: " + String.join(" → ", shape) + "\n";
+        String file = rules.newUseFile(documentId(), heading);
+        file = file.substring(file.indexOf("(in-package"));
+        if (children.isEmpty()) return header + file;
+        return header + rules.addSection(file, "s1", heading, source, children, body.toString());
     }
 
-    /** @return the code and formula blocks, by the file name their rules give, to be written beside the use's rule file */
+    /** @return the code and formula blocks, by the file name their rules give, to be written beside the sample */
     public Map<String, String> codeFiles() {
         return Map.copyOf(codeFiles);
+    }
+
+    private String usePrompt() {
+        StringBuilder sb = new StringBuilder("Below is one sub-section of a book, \"").append(heading).append("\".\n\n");
+        for (BookText.Block b : blocks) {
+            if (b.kind() == BookText.Kind.HEADING) continue;
+            sb.append(b.kind() == BookText.Kind.CODE || b.kind() == BookText.Kind.FORMULA ? "```\n" + b.text() + "\n```" : b.text())
+              .append("\n\n");
+        }
+        sb.append("In one sentence, say what this sub-section does for its reader, in words that do not depend on its "
+                + "subject, so the sentence also fits another sub-section built the same way: e.g. \"Shows a short program "
+                + "whole, then explains each concept it uses: where it is written, what it is, what it requires.\" "
+                + "Write that sentence and nothing else.");
+        return sb.toString();
+    }
+
+    private String documentId() {
+        StringBuilder id = new StringBuilder();
+        for (String part : name.split("-")) id.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
+        return id + "Sample";
     }
 
     private String neighbour(int i) {
@@ -155,21 +196,12 @@ public final class BookToRules {
     }
 
     private String newBlockName() {
-        return prefix + "-b" + (++blockCount);
+        return "b" + (++blockCount);
     }
 
-    private void add(String name, String rules) {
-        if (heading == null) heading = "(before the first heading)";
-        children.add(name);
-        body.append(rules);
-    }
-
-    private void closeSection() {
-        if (heading != null && !children.isEmpty()) {
-            useFile = rules.addSection(useFile, prefix + "-s" + (++sectionCount), heading, source, children, body.toString());
-        }
-        heading = null;
-        children.clear();
-        body.setLength(0);
+    private void add(String block, String blockRules, String blockShape) {
+        children.add(block);
+        shape.add(blockShape);
+        body.append(blockRules);
     }
 }

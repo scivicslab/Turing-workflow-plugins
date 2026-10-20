@@ -8,14 +8,15 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Reads a book's OCR'd markdown, one or more consecutive files, into headings, paragraphs of
- * sentences, code and lists ({@code FramesAndSamplesFromBooks_261021_oo01}).
+ * Reads one file of a book's OCR'd markdown into headings, paragraphs of sentences, code and lists,
+ * and takes one sub-section out of it ({@code FramesAndSamplesFromBooks_261021_oo01}).
  *
  * <p>What it takes away is what the page put there and the book did not say: the front matter,
  * images, page numbers, the running heads repeated at the top of the pages, and the markdown marks
- * of emphasis and links. What it puts back together is what the page broke: lines folded inside a
- * paragraph, and a paragraph cut by a page or by the end of a file. It does not correct a word; an
- * OCR misreading is left for the writer to correct.</p>
+ * of emphasis and links. What it puts back together is the lines folded inside a paragraph. A
+ * paragraph cut by a page is left as two; a frame is made from one sub-section, and a sub-section
+ * that runs over a file's end is not read. It does not correct a word; an OCR misreading is left
+ * for the writer to correct.</p>
  */
 public final class BookText {
 
@@ -50,16 +51,35 @@ public final class BookText {
     private static final int RUNNING_HEAD_MAX = 30;
 
     /**
-     * @param files the markdown of consecutive files of one book, in order
-     * @return the book's blocks, in order
+     * The blocks of one sub-section: those after the heading whose title is {@code heading}, up to
+     * the next heading. A frame is made from one sub-section, so that is all that is read.
+     *
+     * @param file    one file of a book's markdown
+     * @param heading the sub-section's title as the file writes it, without {@code #} or emphasis
+     * @return the sub-section's blocks, in order, without its heading
+     * @throws IllegalArgumentException when the file has no heading with that title
      */
-    public static List<Block> read(List<String> files) {
-        List<String> lines = new ArrayList<>();
-        for (String file : files) {
-            String body = FRONT_MATTER.matcher(file).replaceFirst("");
-            for (String line : body.split("\\R", -1)) lines.add(line);
-            lines.add("");
+    public static List<Block> subsection(String file, String heading) {
+        List<Block> all = read(file);
+        String wanted = heading.strip();
+        for (int i = 0; i < all.size(); i++) {
+            if (all.get(i).kind() == Kind.HEADING && all.get(i).text().equals(wanted)) {
+                int end = i + 1;
+                while (end < all.size() && all.get(end).kind() != Kind.HEADING) end++;
+                return List.copyOf(all.subList(i + 1, end));
+            }
         }
+        throw new IllegalArgumentException("no heading \"" + wanted + "\" in the file");
+    }
+
+    /**
+     * @param file one file of a book's markdown
+     * @return the file's blocks, in order
+     */
+    public static List<Block> read(String file) {
+        List<String> lines = new ArrayList<>();
+        String body = FRONT_MATTER.matcher(file).replaceFirst("");
+        for (String line : body.split("\\R", -1)) lines.add(line);
         lines = withoutPageFurniture(lines);
 
         List<Block> blocks = new ArrayList<>();
@@ -102,7 +122,7 @@ public final class BookText {
             pending.add(t);
         }
         flush(pending, blocks);
-        return joinBrokenParagraphs(blocks);
+        return mergeAdjacent(blocks);
     }
 
     /** Drops images, page numbers, and short lines that come back on several pages (running heads). */
@@ -171,8 +191,8 @@ public final class BookText {
         pending.clear();
     }
 
-    /** A paragraph that does not end a sentence is continued by the next paragraph: a page or a file cut it. */
-    private static List<Block> joinBrokenParagraphs(List<Block> blocks) {
+    /** Code lines that OCR left as separate blocks are one piece of code; labelled lines in a row are one list. */
+    private static List<Block> mergeAdjacent(List<Block> blocks) {
         List<Block> out = new ArrayList<>();
         for (Block b : blocks) {
             if (!out.isEmpty() && (b.kind() == Kind.CODE || b.kind() == Kind.LIST)
@@ -182,14 +202,6 @@ public final class BookText {
                 items.addAll(b.sentences());
                 out.set(out.size() - 1, new Block(b.kind(), prev.text() + "\n" + b.text(), List.copyOf(items)));
                 continue;
-            }
-            if (!out.isEmpty() && b.kind() == Kind.PARAGRAPH) {
-                Block prev = out.get(out.size() - 1);
-                if (prev.kind() == Kind.PARAGRAPH && !endsASentence(prev.text())) {
-                    String text = joinLines(List.of(prev.text(), b.text()));
-                    out.set(out.size() - 1, new Block(Kind.PARAGRAPH, text, sentences(text)));
-                    continue;
-                }
             }
             out.add(b);
         }
