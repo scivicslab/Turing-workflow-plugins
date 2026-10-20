@@ -208,10 +208,10 @@ public interface DistributedLogStore extends AutoCloseable {
      * Returns once every write handed to this store before the call has been committed, so that a
      * reader — which has its own connection — can see it.
      *
-     * <p>Writes ({@code log}, {@code logAction}, {@code recordNodeResult}) return before they reach
-     * the database; this is how a caller that is about to read says "wait for what I wrote". A reader
-     * that polls with a timeout instead cannot tell a slow write from a lost one. The default does
-     * nothing, for a store whose writes are already synchronous.</p>
+     * <p>For a store that queues its writes, this is how a caller that is about to read says "wait
+     * for what I wrote"; a reader that polls with a timeout instead cannot tell a slow write from a
+     * lost one. A store whose writes are synchronous ({@link H2LogStore} is) has nothing to wait
+     * for, and the default does nothing.</p>
      */
     default void flushWrites() {
     }

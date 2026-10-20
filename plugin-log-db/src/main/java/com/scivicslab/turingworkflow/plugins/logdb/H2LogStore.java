@@ -26,27 +26,27 @@ import java.sql.*;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
  * H2 Database implementation of DistributedLogStore.
  *
  * <p>Uses H2 embedded database for storing logs from distributed workflow
- * execution. Supports concurrent access from multiple threads and provides
- * efficient querying by node, level, and time.</p>
+ * execution and provides efficient querying by node, level, and time.</p>
+ *
+ * <p>A plain object: every write runs on the calling thread, in a transaction of its own, and
+ * is committed when the call returns, so a reader that has its own connection sees it from then
+ * on. It starts no thread and keeps no queue. A caller that wants its writes not to block, or
+ * wants several threads' calls in one order, wraps the store in an actor
+ * ({@code ActorRef<DistributedLogStore>}, as {@link LogStoreActor} does): the actor's mailbox
+ * is then the queue, and an {@code ask} issued after some {@code tell}s returns after them.</p>
  *
  * <p>Features:</p>
  * <ul>
  *   <li>Pure Java - no native dependencies</li>
  *   <li>Single file storage (.mv.db)</li>
- *   <li>Asynchronous batch writing for performance</li>
  *   <li>SQL-based querying</li>
  * </ul>
  *
@@ -64,21 +64,10 @@ public class H2LogStore implements DistributedLogStore {
 
     /** Dedicated connection for read operations (delegated to {@link H2LogReader}). */
     private final Connection readConnection;
-    /** Dedicated connection for write operations, used exclusively by the writer thread. */
+    /** Dedicated connection for write operations. */
     private final Connection writeConnection;
     /** Delegate reader for all query operations. */
     private final H2LogReader reader;
-    /** Queue of pending write tasks to be processed by the writer thread. */
-    private final BlockingQueue<LogTask> writeQueue;
-    /** Background thread that drains the write queue in batches. */
-    private final Thread writerThread;
-    /** Flag controlling the writer thread lifecycle. */
-    private final AtomicBoolean running;
-    /** Maximum number of tasks processed per batch commit. */
-    private static final int BATCH_SIZE = 100;
-
-    /** Sentinel task used by {@link #flushWrites()} to wait for in-flight batch completion. */
-    private final AtomicReference<CountDownLatch> flushLatch = new AtomicReference<>();
 
     /** Optional text log writer for parallel file-based logging. */
     private PrintWriter textLogWriter;
@@ -109,14 +98,7 @@ public class H2LogStore implements DistributedLogStore {
         this.writeConnection = DriverManager.getConnection(url);
         this.readConnection = DriverManager.getConnection(url);
         this.reader = new H2LogReader(readConnection);
-        this.writeQueue = new LinkedBlockingQueue<>();
-        this.running = new AtomicBoolean(true);
-
         initSchema();
-
-        this.writerThread = new Thread(this::writerLoop, "H2LogStore-Writer");
-        this.writerThread.setDaemon(true);
-        this.writerThread.start();
     }
 
     /**
@@ -129,14 +111,7 @@ public class H2LogStore implements DistributedLogStore {
         this.writeConnection = DriverManager.getConnection(url);
         this.readConnection = DriverManager.getConnection(url);
         this.reader = new H2LogReader(readConnection);
-        this.writeQueue = new LinkedBlockingQueue<>();
-        this.running = new AtomicBoolean(true);
-
         initSchema();
-
-        this.writerThread = new Thread(this::writerLoop, "H2LogStore-Writer");
-        this.writerThread.setDaemon(true);
-        this.writerThread.start();
     }
 
     /** {@inheritDoc} */
@@ -239,50 +214,33 @@ public class H2LogStore implements DistributedLogStore {
         }
     }
 
-    private void writerLoop() {
-        List<LogTask> batch = new ArrayList<>(BATCH_SIZE);
-        while (running.get() || !writeQueue.isEmpty()) {
+    /**
+     * Runs a write on the calling thread, in a transaction of its own.
+     *
+     * @throws SQLException if the database refuses it; the transaction is rolled back first
+     */
+    private void run(LogTask task) throws SQLException {
+        try {
+            task.execute(writeConnection);
+        } catch (SQLException e) {
             try {
-                LogTask task = writeQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS);
-                if (task != null) {
-                    batch.add(task);
-                    writeQueue.drainTo(batch, BATCH_SIZE - 1);
-                    processBatch(batch);
-                    batch.clear();
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
+                if (!writeConnection.getAutoCommit()) writeConnection.rollback();
+            } catch (SQLException ignored) {
+                // the original failure is the one to report
             }
-        }
-        if (!batch.isEmpty()) {
-            processBatch(batch);
+            throw e;
         }
     }
 
-    private void processBatch(List<LogTask> batch) {
+    /**
+     * A write nobody waits for an answer to (a log line, a node result): a failure is logged and
+     * does not reach the caller, who has nothing to do about it.
+     */
+    private void write(LogTask task) {
         try {
-            writeConnection.setAutoCommit(false);
-            for (LogTask task : batch) {
-                task.execute(writeConnection);
-            }
-            writeConnection.commit();
-            writeConnection.setAutoCommit(true);
+            run(task);
         } catch (SQLException e) {
-            try {
-                writeConnection.rollback();
-                writeConnection.setAutoCommit(true);
-            } catch (SQLException ex) {
-                // Ignore rollback errors
-            }
-            e.printStackTrace();
-        } finally {
-            // Count down flush sentinels after commit (or rollback)
-            for (LogTask task : batch) {
-                if (task instanceof FlushSentinel sentinel) {
-                    sentinel.latch().countDown();
-                }
-            }
+            LOG.log(Level.WARNING, "Log write failed: " + task, e);
         }
     }
 
@@ -301,58 +259,27 @@ public class H2LogStore implements DistributedLogStore {
     public long startSession(String workflowName, String overlayName, String inventoryName, int nodeCount,
                              String cwd, String gitCommit, String gitBranch,
                              String commandLine, String pluginVersion, String pluginCommit) {
-        AtomicReference<Long> sessionIdRef = new AtomicReference<>(-1L);
-        AtomicReference<RuntimeException> errorRef = new AtomicReference<>();
-        CountDownLatch latch = new CountDownLatch(1);
-
-        writeQueue.offer(new LogTask() {
-            @Override
-            public void execute(Connection conn) throws SQLException {
-                try (PreparedStatement ps = conn.prepareStatement(
-                        "INSERT INTO sessions (workflow_name, overlay_name, inventory_name, node_count, " +
-                        "cwd, git_commit, git_branch, command_line, plugin_version, plugin_commit) " +
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        Statement.RETURN_GENERATED_KEYS)) {
-                    ps.setString(1, workflowName);
-                    ps.setString(2, overlayName);
-                    ps.setString(3, inventoryName);
-                    ps.setInt(4, nodeCount);
-                    ps.setString(5, cwd);
-                    ps.setString(6, gitCommit);
-                    ps.setString(7, gitBranch);
-                    ps.setString(8, commandLine);
-                    ps.setString(9, pluginVersion);
-                    ps.setString(10, pluginCommit);
-                    ps.executeUpdate();
-                    try (ResultSet rs = ps.getGeneratedKeys()) {
-                        if (rs.next()) {
-                            sessionIdRef.set(rs.getLong(1));
-                        }
-                    }
-                } catch (SQLException e) {
-                    errorRef.set(new RuntimeException("Failed to start session", e));
-                    throw e;
-                } finally {
-                    latch.countDown();
-                }
+        String sql = "INSERT INTO sessions (workflow_name, overlay_name, inventory_name, node_count, " +
+                "cwd, git_commit, git_branch, command_line, plugin_version, plugin_commit) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        try (PreparedStatement ps = writeConnection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+            ps.setString(1, workflowName);
+            ps.setString(2, overlayName);
+            ps.setString(3, inventoryName);
+            ps.setInt(4, nodeCount);
+            ps.setString(5, cwd);
+            ps.setString(6, gitCommit);
+            ps.setString(7, gitBranch);
+            ps.setString(8, commandLine);
+            ps.setString(9, pluginVersion);
+            ps.setString(10, pluginCommit);
+            ps.executeUpdate();
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                return rs.next() ? rs.getLong(1) : -1L;
             }
-        });
-
-        try {
-            latch.await();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Interrupted while starting session", e);
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to start session", e);
         }
-
-        if (errorRef.get() != null) {
-            throw errorRef.get();
-        }
-        // The latch above is released by the task, before the batch commits, and a caller that reads
-        // right after this returns (a second connection) cannot see an uncommitted row. Wait for the
-        // commit too, so that a session this returns is one the readers can already find.
-        flushWrites();
-        return sessionIdRef.get();
     }
 
     @Override
@@ -362,7 +289,7 @@ public class H2LogStore implements DistributedLogStore {
 
     @Override
     public void log(long sessionId, String nodeId, String label, LogLevel level, String message) {
-        writeQueue.offer(new LogTask.InsertLog(sessionId, nodeId, label, null, level, message, null, null));
+        write(new LogTask.InsertLog(sessionId, nodeId, label, null, level, message, null, null));
         writeToTextLog(nodeId, label, level, message);
     }
 
@@ -370,7 +297,7 @@ public class H2LogStore implements DistributedLogStore {
     public void logAction(long sessionId, String nodeId, String label,
                           String actionName, int exitCode, long durationMs, String output) {
         LogLevel level = parseLogLevelFromLabel(label, exitCode);
-        writeQueue.offer(new LogTask.InsertLog(sessionId, nodeId, label, actionName, level, output, exitCode, durationMs));
+        write(new LogTask.InsertLog(sessionId, nodeId, label, actionName, level, output, exitCode, durationMs));
         writeToTextLog(nodeId, label, level, output);
     }
 
@@ -399,79 +326,32 @@ public class H2LogStore implements DistributedLogStore {
 
     @Override
     public void markNodeSuccess(long sessionId, String nodeId) {
-        writeQueue.offer(new LogTask.UpdateNodeResult(sessionId, nodeId, "SUCCESS", null));
+        write(new LogTask.UpdateNodeResult(sessionId, nodeId, "SUCCESS", null));
     }
 
     @Override
     public void markNodeFailed(long sessionId, String nodeId, String reason) {
-        writeQueue.offer(new LogTask.UpdateNodeResult(sessionId, nodeId, "FAILED", reason));
+        write(new LogTask.UpdateNodeResult(sessionId, nodeId, "FAILED", reason));
     }
 
     @Override
     public void endSession(long sessionId, SessionStatus status) {
-        AtomicReference<RuntimeException> errorRef = new AtomicReference<>();
-        CountDownLatch latch = new CountDownLatch(1);
-
-        writeQueue.offer(new LogTask() {
-            @Override
-            public void execute(Connection conn) throws SQLException {
-                try (PreparedStatement ps = conn.prepareStatement(
-                        "UPDATE sessions SET ended_at = CURRENT_TIMESTAMP, status = ? WHERE id = ?")) {
-                    ps.setString(1, status.name());
-                    ps.setLong(2, sessionId);
-                    ps.executeUpdate();
-                } catch (SQLException e) {
-                    errorRef.set(new RuntimeException("Failed to end session", e));
-                    throw e;
-                } finally {
-                    latch.countDown();
-                }
-            }
-        });
-
-        try {
-            latch.await();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Interrupted while ending session", e);
+        try (PreparedStatement ps = writeConnection.prepareStatement(
+                "UPDATE sessions SET ended_at = CURRENT_TIMESTAMP, status = ? WHERE id = ?")) {
+            ps.setString(1, status.name());
+            ps.setLong(2, sessionId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to end session", e);
         }
-
-        if (errorRef.get() != null) {
-            throw errorRef.get();
-        }
-        // Same as startSession: the task releases its latch before the commit.
-        flushWrites();
     }
 
     /**
-     * Waits for all queued and in-flight writes to complete (including commit).
-     * Uses a sentinel task whose latch is counted down after the batch commit.
+     * Does nothing: every write has been committed when its call returned, so there is nothing
+     * left to wait for.
      */
     @Override
     public void flushWrites() {
-        CountDownLatch latch = new CountDownLatch(1);
-        writeQueue.offer(new FlushSentinel(latch));
-        try {
-            latch.await();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-    }
-
-    /**
-     * Sentinel task used to synchronize flush operations.
-     *
-     * <p>The latch is counted down by {@code processBatch()} after the batch
-     * commit completes, not during task execution. This ensures that callers
-     * of {@link #flushWrites()} block until all preceding writes are committed.</p>
-     *
-     * @param latch the countdown latch to signal completion
-     */
-    private record FlushSentinel(CountDownLatch latch) implements LogTask {
-        @Override
-        public void execute(Connection conn) {
-            // No-op: latch is counted down after commit in processBatch
-        }
     }
 
     @Override
@@ -500,23 +380,12 @@ public class H2LogStore implements DistributedLogStore {
     }
 
     /**
-     * Shuts down the log store, stopping the writer thread and closing all connections.
-     *
-     * <p>Waits up to 5 seconds for the writer thread to finish processing
-     * remaining tasks before closing connections. Also closes the text log
-     * writer if enabled.</p>
+     * Closes the text log writer, if enabled, and both connections.
      *
      * @throws Exception if an error occurs while closing connections
      */
     @Override
     public void close() throws Exception {
-        running.set(false);
-        writerThread.interrupt();
-        try {
-            writerThread.join(5000);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
         if (textLogWriter != null) {
             textLogWriter.close();
             textLogWriter = null;
@@ -527,7 +396,7 @@ public class H2LogStore implements DistributedLogStore {
 
     /**
      * Internal interface representing a unit of work to be executed
-     * asynchronously on the write connection by the writer thread.
+     * on the write connection.
      */
     private interface LogTask {
         /**
