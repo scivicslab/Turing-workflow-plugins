@@ -57,6 +57,7 @@
         <module>plugin-semantic-scholar</module>
         <module>plugin-ocr</module>
         <module>plugin-codedoc</module>
+        <module>plugin-rst-frame</module>
     </modules>
 
     <properties>
