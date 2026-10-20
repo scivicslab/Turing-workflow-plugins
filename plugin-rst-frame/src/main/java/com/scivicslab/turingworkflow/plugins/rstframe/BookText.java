@@ -228,7 +228,7 @@ public final class BookText {
      * Splits a paragraph into sentences: after {@code 。．！？}, and after {@code .!?} followed by a
      * space where the next sentence starts or the text before is Japanese.
      */
-    static List<String> sentences(String text) {
+    public static List<String> sentences(String text) {
         List<String> out = new ArrayList<>();
         int start = 0;
         for (int i = 0; i < text.length(); i++) {
