@@ -267,7 +267,9 @@ public final class BookToRules {
                 + "Topics do not matter; what each part does for the reader does. Answer with one line:\n"
                 + "same: <the sample's name>   if it is the same structure as that sample;\n"
                 + "new: <a name>   if it is a new structure that would serve to explain other material too; the name says what "
-                + "the structure does, in lower-case words joined by '-', e.g. derive-cost-of-procedure;\n"
+                + "the structure does for the reader, in lower-case words joined by '-', and names no subject of the book "
+                + "(no language, no data structure, no feature): e.g. show-whole-then-explain-each-part, list-options-then-recommend, "
+                + "derive-cost-from-procedure;\n"
                 + "skip   if it is a new structure that would not serve again (a one-off, a list of references, an aside).\n"
                 + "Write that line and nothing else.");
         return sb.toString();
