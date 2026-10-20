@@ -108,4 +108,54 @@ class BookToRulesTest {
     void aNameIsLowerCaseWordsJoinedByHyphens() {
         assertThrows(IllegalArgumentException.class, () -> new BookToRules(BOOK, "/b.md", "3.1. A Simple Java Program", "Explain Program"));
     }
+
+    private static final String KNOWN = """
+            ;;; use: Shows a short program whole, then explains each concept it uses.
+            ;;; source: /books/core/p001.md / 3.1. A Simple Java Program
+            ;;; shape: nucleus+definition → code → nucleus
+            (in-package :rst)
+            """;
+
+    @Test
+    @DisplayName("既にある構造と同じと判定されれば、お手本は書かず、その名前に also-seen を足す")
+    void aSubsectionJudgedTheSameAddsOnlyASource() {
+        List<SampleCatalog.Entry> catalog = SampleCatalog.entries(java.util.Map.of("explain-program-by-whole-example", KNOWN));
+        BookToRules b = run(new BookToRules(BOOK, "/books/core/p201.md", "3.1. A Simple Java Program", null, catalog), q -> {
+            if (q.contains("same structure")) {
+                assertTrue(q.contains("explain-program-by-whole-example"), "the nearest sample is shown: " + q);
+                return "same: explain-program-by-whole-example";
+            }
+            return fair(q);
+        });
+        assertEquals(BookToRules.Outcome.SAME, b.outcome());
+        assertEquals("explain-program-by-whole-example", b.outcomeName());
+        assertEquals("/books/core/p201.md / 3.1. A Simple Java Program", b.alsoSeen());
+    }
+
+    @Test
+    @DisplayName("新しい構造と判定されれば、書き手が付けた名前のお手本になり、コードのファイルもその名前になる")
+    void aNewStructureTakesTheNameTheWriterGives() {
+        List<SampleCatalog.Entry> catalog = SampleCatalog.entries(java.util.Map.of("derive-cost", KNOWN));
+        BookToRules b = run(new BookToRules(BOOK, "/books/core/p001.md", "3.1. A Simple Java Program", null, catalog),
+                q -> q.contains("same structure") ? "new: explain-term-from-code" : fair(q));
+        assertEquals(BookToRules.Outcome.NEW, b.outcome());
+        assertEquals("explain-term-from-code", b.outcomeName());
+        assertTrue(b.sampleFile().contains("(defdocument ExplainTermFromCodeSample)"), b.sampleFile());
+        assertTrue(b.codeFiles().containsKey("explain-term-from-code.b2.txt"), b.codeFiles().toString());
+        assertTrue(b.sampleFile().contains(":file \"explain-term-from-code.b2.txt\""), b.sampleFile());
+    }
+
+    @Test
+    @DisplayName("繰り返し使えない構造と判定されれば何も残さず、読めない判定は 1 回聞き直し、だめなら残さない")
+    void aSkipOrAnUnreadableJudgementLeavesNothing() {
+        BookToRules skipped = run(new BookToRules(BOOK, "/b.md", "3.1. A Simple Java Program", null, List.of()),
+                q -> q.contains("same structure") ? "skip" : fair(q));
+        assertEquals(BookToRules.Outcome.SKIP, skipped.outcome());
+
+        questions.clear();
+        BookToRules unreadable = run(new BookToRules(BOOK, "/b.md", "3.1. A Simple Java Program", null, List.of()),
+                q -> q.contains("same structure") ? "Hmm, hard to say." : fair(q));
+        assertEquals(BookToRules.Outcome.SKIP, unreadable.outcome());
+        assertEquals(2, questions.stream().filter(q -> q.contains("same structure")).count());
+    }
 }

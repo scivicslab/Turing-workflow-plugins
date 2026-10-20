@@ -27,13 +27,27 @@ import java.util.Map;
  */
 public final class BookToRules {
 
-    private enum Phase { OCR, RELATIONS, RELATIONS_AGAIN, USE }
+    private enum Phase { OCR, RELATIONS, RELATIONS_AGAIN, USE, JUDGE, JUDGE_AGAIN }
+
+    /** What a run leaves: a new sample, one more source for a sample already there, or nothing. */
+    public enum Outcome { NEW, SAME, SKIP }
+
+    /** Stands for the sample's name in rules and file names until the name is known. */
+    private static final String NAME = "\u0000name\u0000";
+    /** How many samples nearest in shape the writer is shown when judging. */
+    private static final int CANDIDATES = 5;
+    private static final java.util.regex.Pattern JUDGEMENT =
+            java.util.regex.Pattern.compile("(?im)^\\s*(same|new)\\s*:\\s*([a-z0-9]+(?:-[a-z0-9]+)*)\\s*$|^\\s*(skip)\\b");
 
     private final BookRules rules = new BookRules();
     private final List<BookText.Block> blocks;
     private final String source;
     private final String heading;
-    private final String name;
+    private String name;
+    private final List<SampleCatalog.Entry> catalog;
+    private List<SampleCatalog.Entry> candidates = List.of();
+    private Outcome outcome;
+    private String outcomeNote = "";
     private final Map<String, String> codeFiles = new LinkedHashMap<>();
 
     private int next;                       // the next block to look at
@@ -59,13 +73,47 @@ public final class BookToRules {
      * @throws IllegalArgumentException when the file has no such heading, or the name is not a plain name
      */
     public BookToRules(String file, String source, String heading, String name) {
-        if (!name.matches("[a-z0-9]+(?:-[a-z0-9]+)*")) {
+        this(file, source, heading, name, List.of());
+    }
+
+    /**
+     * @param name    the sample's name, or {@code null} to have the writer name a new structure
+     * @param catalog the samples already there, against which the sub-section's structure is judged;
+     *                empty and with a name given, the sub-section becomes a new sample without a judgement
+     */
+    public BookToRules(String file, String source, String heading, String name, List<SampleCatalog.Entry> catalog) {
+        if (name != null && !isName(name)) {
             throw new IllegalArgumentException("a sample's name is lower-case words joined by '-': " + name);
         }
         this.blocks = BookText.subsection(file, heading);
         this.source = source;
         this.heading = heading.strip();
         this.name = name;
+        this.catalog = List.copyOf(catalog);
+    }
+
+    private static boolean isName(String s) {
+        return s.matches("[a-z0-9]+(?:-[a-z0-9]+)*");
+    }
+
+    /** @return what the run leaves; {@code null} until {@link #nextQuestion()} has returned {@code null} */
+    public Outcome outcome() {
+        return outcome;
+    }
+
+    /** @return the new sample's name, or the name of the sample the sub-section was found the same as; {@code null} for {@link Outcome#SKIP} */
+    public String outcomeName() {
+        return outcome == Outcome.SKIP ? null : name;
+    }
+
+    /** @return why nothing is left, for {@link Outcome#SKIP} */
+    public String outcomeNote() {
+        return outcomeNote;
+    }
+
+    /** @return the line to add to the sample found the same: the book's file and the sub-section's heading */
+    public String alsoSeen() {
+        return source + " / " + heading;
     }
 
     /** @return the next question for the writer, or {@code null} when the run is done */
@@ -78,6 +126,16 @@ public final class BookToRules {
                     question = usePrompt();
                     return question;
                 }
+                if (outcome == null) {
+                    if (catalog.isEmpty() && name != null) {
+                        outcome = Outcome.NEW;
+                    } else {
+                        candidates = SampleCatalog.nearest(catalog, shape, CANDIDATES);
+                        phase = Phase.JUDGE;
+                        question = judgePrompt();
+                        return question;
+                    }
+                }
                 finished = true;
                 return null;
             }
@@ -86,7 +144,7 @@ public final class BookToRules {
                 case HEADING -> { }                       // a sub-section holds none
                 case CODE, FORMULA -> {
                     String block = newBlockName();
-                    String fileName = name + "." + block + ".txt";
+                    String fileName = NAME + "." + block + ".txt";
                     codeFiles.put(fileName, b.text());
                     add(block, "(defrule " + block + " -> :file \"" + RuleFile.escape(fileName) + "\" :kind code-block)\n",
                             b.kind() == BookText.Kind.CODE ? "code" : "formula");
@@ -152,7 +210,67 @@ public final class BookToRules {
                 use = line.isEmpty() ? "(not given)" : line;
                 question = null;
             }
+            case JUDGE, JUDGE_AGAIN -> {
+                String why = judge(r);
+                if (why == null) {
+                    question = null;
+                } else if (phase == Phase.JUDGE) {
+                    phase = Phase.JUDGE_AGAIN;                   // the same question once more
+                } else {
+                    outcome = Outcome.SKIP;
+                    outcomeNote = "the judgement could not be read: " + why;
+                    question = null;
+                }
+            }
         }
+    }
+
+    /** @return {@code null} when the reply was a judgement this run can act on, otherwise why not */
+    private String judge(String reply) {
+        java.util.regex.Matcher m = JUDGEMENT.matcher(reply);
+        if (!m.find()) return "no line of the form 'same: <name>', 'new: <name>' or 'skip'";
+        if (m.group(3) != null) {
+            outcome = Outcome.SKIP;
+            outcomeNote = "the writer judged the structure not reusable";
+            return null;
+        }
+        String named = m.group(2);
+        boolean known = catalog.stream().anyMatch(e -> e.name().equals(named));
+        if (m.group(1).equalsIgnoreCase("same")) {
+            if (!known) return "'" + named + "' is not a sample";
+            outcome = Outcome.SAME;
+            name = named;
+            return null;
+        }
+        if (name == null) {
+            if (known) return "'" + named + "' is already a sample's name";
+            name = named;
+        }
+        outcome = Outcome.NEW;
+        return null;
+    }
+
+    private String judgePrompt() {
+        StringBuilder sb = new StringBuilder("A sub-section of a book was read. What it does for its reader:\n")
+                .append(use).append("\nIts blocks, each with its sentences' relations (nucleus first):\n")
+                .append(String.join(" → ", shape)).append("\n\n");
+        if (candidates.isEmpty()) {
+            sb.append("No sample is kept yet.\n\n");
+        } else {
+            sb.append("Samples already kept, the nearest in shape first:\n");
+            for (SampleCatalog.Entry e : candidates) {
+                sb.append("- ").append(e.name()).append(": ").append(e.use()).append(" | ").append(String.join(" → ", e.shape())).append('\n');
+            }
+            sb.append('\n');
+        }
+        sb.append("Is this sub-section built the same structure as one of the samples, so that one frame would serve both? "
+                + "Topics do not matter; what each part does for the reader does. Answer with one line:\n"
+                + "same: <the sample's name>   if it is the same structure as that sample;\n"
+                + "new: <a name>   if it is a new structure that would serve to explain other material too; the name says what "
+                + "the structure does, in lower-case words joined by '-', e.g. derive-cost-of-procedure;\n"
+                + "skip   if it is a new structure that would not serve again (a one-off, a list of references, an aside).\n"
+                + "Write that line and nothing else.");
+        return sb.toString();
     }
 
     /** @return the sample's rule file; complete once {@link #nextQuestion()} has returned {@code null} */
@@ -163,12 +281,18 @@ public final class BookToRules {
         String file = rules.newUseFile(documentId(), heading);
         file = file.substring(file.indexOf("(in-package"));
         if (children.isEmpty()) return header + file;
-        return header + rules.addSection(file, "s1", heading, source, children, body.toString());
+        return header + rules.addSection(file, "s1", heading, source, children, body.toString()).replace(NAME, nameOrDraft());
     }
 
     /** @return the code and formula blocks, by the file name their rules give, to be written beside the sample */
     public Map<String, String> codeFiles() {
-        return Map.copyOf(codeFiles);
+        Map<String, String> out = new LinkedHashMap<>();
+        codeFiles.forEach((k, v) -> out.put(k.replace(NAME, nameOrDraft()), v));
+        return Map.copyOf(out);
+    }
+
+    private String nameOrDraft() {
+        return name == null ? "draft" : name;
     }
 
     private String usePrompt() {
@@ -187,7 +311,7 @@ public final class BookToRules {
 
     private String documentId() {
         StringBuilder id = new StringBuilder();
-        for (String part : name.split("-")) id.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
+        for (String part : nameOrDraft().split("-")) id.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
         return id + "Sample";
     }
 
