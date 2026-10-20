@@ -56,6 +56,7 @@ public final class SampleToFrame implements Questioner {
                 texts.add(this.codeFiles.getOrDefault(r.attr(":file"), ""));
                 blocks.add(new Block(r.name(), "code", leaves, relations, texts));
             } else if ("bullet".equals(kind) || "number".equals(kind)) {
+                relations.add(kind);   // a list's one "relation" is its kind, kept on the blank
                 for (RuleFile.Token item : r.items()) {
                     if (item.kind() != RuleFile.Token.Kind.SYMBOL || rf.rule(item.raw()) == null) continue;
                     texts.add(rf.rule(item.raw()).items().get(0).value());
@@ -138,6 +139,11 @@ public final class SampleToFrame implements Questioner {
         question = null;
     }
 
+    /** @return the sample's name, which the frame shares */
+    public String name() {
+        return name;
+    }
+
     /** @return the frame's rule file; complete once {@link #nextQuestion()} has returned {@code null} */
     public String frameFile() {
         RuleFile rf = RuleFile.parse(sample);
@@ -154,7 +160,7 @@ public final class SampleToFrame implements Questioner {
             } else {
                 rf = rf.replace(b.name(), "(defrule " + b.name() + " -> :instruction \""
                         + RuleFile.escape(instructions.getOrDefault(b.name(), "")) + "\" :sample \""
-                        + RuleFile.escape(String.join(" / ", b.texts())) + "\")");
+                        + RuleFile.escape(String.join(" / ", b.texts())) + "\" :kind " + b.relations().get(0) + ")");
             }
         }
         String text = rf.text();

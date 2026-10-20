@@ -76,4 +76,19 @@ class SampleToFrameTest {
         String frame = f.frameFile();
         assertTrue(frame.contains("(defrule b3/2 -> :instruction \"Write the sentence that stands to the paragraph's nucleus as its definition.\""), frame);
     }
+
+    @Test
+    @DisplayName("箇条書きは :kind を持つ 1 つの空欄になり、項目の規則は残らない")
+    void aListBecomesOneBlankWithItsKind() {
+        String sample = SAMPLE.replace("(defrule s1 -> b1 b2 b3 ", "(defrule s1 -> b1 b2 b3 b4 ")
+                + "(defrule b4 -> b4/1 b4/2 :kind bullet)\n(defrule b4/1 -> \"Declare main.\")\n(defrule b4/2 -> \"Use println\")\n";
+        SampleToFrame f = run(new SampleToFrame(sample, "x", java.util.Map.of("show-whole-then-explain.b2.txt", "void main() {}")),
+                q -> q.contains("list") ? "List the constraints." : "1: Say it.\n2: Define it.");
+        String frame = f.frameFile();
+        assertTrue(frame.contains("(defrule b4 -> :instruction \"List the constraints.\" :sample \"Declare main. / Use println\" :kind bullet)"), frame);
+        assertFalse(frame.contains("(defrule b4/1"), frame);
+        FrameFiller.Blank blank = new FrameFiller().next(frame.replaceAll("\\(defrule b[123](/\\d+)? -> :instruction[^\\n]*", "(defrule b0 -> \"x\")"));
+        assertEquals("b4", blank.name());
+        assertTrue(blank.isList());
+    }
 }

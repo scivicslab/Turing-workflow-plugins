@@ -41,6 +41,11 @@ public final class FrameFiller {
         public boolean isCode() {
             return "code-block".equals(kind);
         }
+
+        /** @return whether this blank is filled with the items of a bulleted or numbered list */
+        public boolean isList() {
+            return "bullet".equals(kind) || "number".equals(kind);
+        }
     }
 
     /** A rule named {@code <parent>/<n>/<suffix>}: a leaf of the n-th copy of a sub-frame. */
@@ -110,6 +115,28 @@ public final class FrameFiller {
     }
 
     /**
+     * Writes a list blank as a list of item rules {@code <blank>/1}, {@code <blank>/2}, ..., in place
+     * of its {@code :instruction} and {@code :sample}. Its {@code :kind} stays.
+     *
+     * @throws IllegalArgumentException when there is no such rule, or there are no items
+     */
+    public String fillList(String fileText, String blankName, List<String> items) {
+        RuleFile file = RuleFile.parse(fileText);
+        RuleFile.Rule rule = file.rule(blankName);
+        if (rule == null) throw new IllegalArgumentException("no rule named " + blankName);
+        if (items.isEmpty()) throw new IllegalArgumentException("no items to fill " + blankName + " with");
+        StringBuilder children = new StringBuilder();
+        List<String> itemRules = new ArrayList<>();
+        for (int n = 1; n <= items.size(); n++) {
+            String name = blankName + "/" + n;
+            if (children.length() > 0) children.append(' ');
+            children.append(name);
+            itemRules.add(form(name, "\"" + RuleFile.escape(oneLine(items.get(n - 1))) + "\""));
+        }
+        return file.replace(blankName, form(blankName, children + restOf(rule.items()))).insertAfter(blankName, itemRules).text();
+    }
+
+    /**
      * Writes a code blank as a rule that names the file its code is kept in, in place of its
      * {@code :instruction} and {@code :sample}. Its {@code :kind code-block} stays.
      *
@@ -165,6 +192,38 @@ public final class FrameFiller {
                 + "List the items a reader needs explained, one per line, each only the item's name, at most "
                 + maxItems + " items. Write the names in " + language
                 + ". No numbering, bullet marks, quotation marks or full stops. Write nothing else.";
+    }
+
+    /**
+     * What the writer is asked for a list blank: its items, one per line.
+     *
+     * @param fileText the rule file as it stands, for the sentences already written in the blank's paragraph
+     */
+    public String itemsPrompt(String fileText, Blank blank, String subject, String language) {
+        StringBuilder sb = new StringBuilder("Below is the material that is being explained to a reader.\n\n")
+                .append(fenced(subject)).append("\n");
+        String paragraph = writtenInParagraph(fileText, blank.name());
+        if (!paragraph.isEmpty()) {
+            sb.append("\nSentences already written in this paragraph, in order:\n").append(paragraph);
+        }
+        sb.append("\nInstruction: ").append(blank.instruction()).append("\n");
+        if (!blank.sample().isBlank()) {
+            sb.append("Model list (from a different document, items separated by \" / \"; do not copy it, write this "
+                    + "material's own items in the same role): ").append(blank.sample()).append("\n");
+        }
+        sb.append("\nWrite only the list's items, one per line, in ").append(language)
+          .append(": no bullet marks, numbering, heading or sentence before or after them.");
+        return sb.toString();
+    }
+
+    /** @return the items in a reply: one per line, bullets and numbering removed */
+    public List<String> parseItems(String reply) {
+        List<String> items = new ArrayList<>();
+        for (String line : reply.split("\\R")) {
+            String item = line.strip().replaceFirst("^(?:[-*・]|\\d+[.)）])\\s*", "").strip();
+            if (!item.isEmpty()) items.add(item);
+        }
+        return items;
     }
 
     /**

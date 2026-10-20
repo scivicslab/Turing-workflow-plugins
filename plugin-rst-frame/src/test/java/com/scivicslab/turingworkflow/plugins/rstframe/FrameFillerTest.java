@@ -237,4 +237,22 @@ class FrameFillerTest {
         assertTrue(filler.fill(text, "a", "It prints squares").contains("\"It prints squares.\""));
         assertTrue(filler.fill(text, "a", "Is it run?").contains("\"Is it run?\""));
     }
+
+    @Test
+    @DisplayName("箇条書きの空欄は項目を 1 行ずつ聞き、項目の規則を並べ、:kind を残す")
+    void aListBlankBecomesItemRules() {
+        String file = REQUEST + "(defrule rules -> :instruction \"List the constraints\" :sample \"Declare main. / Use println\" :kind bullet)\n";
+        FrameFiller f = new FrameFiller();
+        FrameFiller.Blank blank = new FrameFiller.Blank("rules", "List the constraints", "Declare main. / Use println", "", "bullet");
+        assertTrue(blank.isList());
+        String q = f.itemsPrompt(file, blank, "class Squares {}", "Japanese");
+        assertTrue(q.contains("Model list") && q.contains("one per line"), q);
+
+        List<String> items = f.parseItems("- クラス名はファイル名と同じにする\n\n2. main を宣言する\n");
+        assertEquals(List.of("クラス名はファイル名と同じにする", "main を宣言する"), items);
+        String filled = f.fillList(file, "rules", items);
+        assertTrue(filled.contains("(defrule rules -> rules/1 rules/2 :kind bullet)"), filled);
+        assertTrue(filled.contains("(defrule rules/2 -> \"main を宣言する\")"), filled);
+        assertThrows(IllegalArgumentException.class, () -> f.fillList(file, "rules", List.of()));
+    }
 }
