@@ -17,7 +17,7 @@ import java.util.regex.Pattern;
  * The paragraphs' relations stay as they are, so the frame has the sample's structure. Lists of
  * same-shaped paragraphs are not yet turned into sub-frames.</p>
  */
-public final class SampleToFrame {
+public final class SampleToFrame implements Questioner {
 
     private record Block(String name, String kind, List<String> leaves, List<String> relations, List<String> texts) {}
 

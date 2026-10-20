@@ -25,7 +25,7 @@ import java.util.Map;
  * not taken because it changed too much, and relations the writer did not give, in which case the
  * first sentence is the nucleus and the others elaborate it.</p>
  */
-public final class BookToRules {
+public final class BookToRules implements Questioner {
 
     private enum Phase { OCR, RELATIONS, RELATIONS_AGAIN, USE, JUDGE, JUDGE_AGAIN }
 
