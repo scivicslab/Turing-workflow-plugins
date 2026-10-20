@@ -205,6 +205,18 @@ public interface DistributedLogStore extends AutoCloseable {
     List<LogEntry> getLogsByLevel(long sessionId, LogLevel minLevel);
 
     /**
+     * Returns once every write handed to this store before the call has been committed, so that a
+     * reader — which has its own connection — can see it.
+     *
+     * <p>Writes ({@code log}, {@code logAction}, {@code recordNodeResult}) return before they reach
+     * the database; this is how a caller that is about to read says "wait for what I wrote". A reader
+     * that polls with a timeout instead cannot tell a slow write from a lost one. The default does
+     * nothing, for a store whose writes are already synchronous.</p>
+     */
+    default void flushWrites() {
+    }
+
+    /**
      * Retrieves error logs for a session.
      *
      * @param sessionId session ID

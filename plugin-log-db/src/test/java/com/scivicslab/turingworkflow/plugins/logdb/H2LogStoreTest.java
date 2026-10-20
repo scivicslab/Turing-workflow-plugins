@@ -102,4 +102,17 @@ class H2LogStoreTest {
         }
         assertThat(missed).as("sessions not readable right after startSession returned").isZero();
     }
+
+    @Test
+    void flushWrites_makesEveryEarlierWriteReadable() {
+        // Without the flush this read races the writer thread; with it there is nothing to wait for.
+        int unreadable = 0;
+        for (int i = 0; i < 300; i++) {
+            long id = store.startSession("wf-flush-" + i, null, null, 1);
+            store.logAction(id, "node", "label-" + i, "action", 0, 0L, "output " + i);
+            store.flushWrites();
+            if (store.getLogsByLevel(id, LogLevel.DEBUG).size() != 1) unreadable++;
+        }
+        assertThat(unreadable).as("writes not readable right after flushWrites returned").isZero();
+    }
 }

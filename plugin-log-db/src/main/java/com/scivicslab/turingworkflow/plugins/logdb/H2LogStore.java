@@ -447,7 +447,8 @@ public class H2LogStore implements DistributedLogStore {
      * Waits for all queued and in-flight writes to complete (including commit).
      * Uses a sentinel task whose latch is counted down after the batch commit.
      */
-    private void flushWrites() {
+    @Override
+    public void flushWrites() {
         CountDownLatch latch = new CountDownLatch(1);
         writeQueue.offer(new FlushSentinel(latch));
         try {
