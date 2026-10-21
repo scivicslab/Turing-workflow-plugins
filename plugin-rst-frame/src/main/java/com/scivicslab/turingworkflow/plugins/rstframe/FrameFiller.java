@@ -100,6 +100,7 @@ public final class FrameFiller {
         if (frameRules.isEmpty()) throw new IllegalArgumentException("the sub-frame has no rule");
         String root = frameRules.get(0).name();
 
+        java.util.Set<String> defined = namesOf(frameRules);
         List<String> copies = new ArrayList<>();
         List<String> copyRoots = new ArrayList<>();
         for (int n = 1; n <= names.size(); n++) {
@@ -107,7 +108,7 @@ public final class FrameFiller {
             copyRoots.add(copyRoot);
             String item = RuleFile.escape(names.get(n - 1));
             for (RuleFile.Rule r : frameRules) {
-                copies.add(form(rename(r.name(), root, copyRoot), renameSymbols(r.items(), root, copyRoot)).replace("{item}", item));
+                copies.add(form(rename(r.name(), root, copyRoot, defined), renameSymbols(r.items(), root, copyRoot, defined)).replace("{item}", item));
             }
         }
         if (blank.attr(":heading") == null) {
@@ -143,15 +144,16 @@ public final class FrameFiller {
         List<RuleFile.Rule> frameRules = RuleFile.parse(frameText).rules();
         if (frameRules.isEmpty()) throw new IllegalArgumentException("the child frame has no rule");
         String root = frameRules.get(0).name();
+        java.util.Set<String> defined = namesOf(frameRules);
         StringBuilder rootBody = new StringBuilder();
-        for (RuleFile.Token t : renameSymbols(frameRules.get(0).items(), root, blankName)) {
+        for (RuleFile.Token t : renameSymbols(frameRules.get(0).items(), root, blankName, defined)) {
             if (rootBody.length() > 0) rootBody.append(' ');
             rootBody.append(t.raw());
         }
         String head = form(blankName, rootBody + restOf(blank.items()));
         List<String> rest = new ArrayList<>();
         for (RuleFile.Rule r : frameRules.subList(1, frameRules.size())) {
-            rest.add(form(rename(r.name(), root, blankName), renameSymbols(r.items(), root, blankName)));
+            rest.add(form(rename(r.name(), root, blankName, defined), renameSymbols(r.items(), root, blankName, defined)));
         }
         return file.replace(blankName, head).insertAfter(blankName, rest).text();
     }
@@ -380,19 +382,31 @@ public final class FrameFiller {
         return form(name, sb.toString());
     }
 
-    private static List<RuleFile.Token> renameSymbols(List<RuleFile.Token> items, String root, String copyRoot) {
+    private static List<RuleFile.Token> renameSymbols(List<RuleFile.Token> items, String root, String copyRoot, java.util.Set<String> defined) {
         List<RuleFile.Token> out = new ArrayList<>();
         for (RuleFile.Token t : items) {
             out.add(t.kind() == RuleFile.Token.Kind.SYMBOL
-                    ? new RuleFile.Token(t.kind(), rename(t.raw(), root, copyRoot)) : t);
+                    ? new RuleFile.Token(t.kind(), rename(t.raw(), root, copyRoot, defined)) : t);
         }
         return out;
     }
 
-    private static String rename(String name, String root, String copyRoot) {
+    /**
+     * The name a rule of a (sub-)frame takes in a copy rooted at {@code copyRoot}: the root becomes the copy's root, a name
+     * under the root moves under the copy's root, and any other name the frame defines moves under the copy's root as it is,
+     * so that two copies of one frame, or two frames with the same names, never define the same rule twice.
+     */
+    private static String rename(String name, String root, String copyRoot, java.util.Set<String> defined) {
         if (name.equals(root)) return copyRoot;
         if (name.startsWith(root + "/")) return copyRoot + name.substring(root.length());
+        if (defined.contains(name)) return copyRoot + "/" + name;
         return name;
+    }
+
+    private static java.util.Set<String> namesOf(List<RuleFile.Rule> rules) {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        for (RuleFile.Rule r : rules) out.add(r.name());
+        return out;
     }
 
     /** @return the attributes of a blank that stay when it is filled or expanded, with a leading space; {@code ""} when none */

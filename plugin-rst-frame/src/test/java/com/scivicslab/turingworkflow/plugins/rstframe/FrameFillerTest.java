@@ -301,4 +301,24 @@ class FrameFillerTest {
         assertTrue(out.contains("(defrule steps/2/n -> :instruction \"Say what Seller: \\\"add\\\" does\")"), out);
         assertFalse(out.contains("(defrule steps ->"), out);
     }
+
+    @Test
+    @DisplayName("同じ子のフレームを 2 回取り込んでも、子の規則の名前は空欄の名前の下に移るので、ぶつからない")
+    void includingOneFrameTwiceDefinesNoRuleTwice() {
+        String file = """
+                (defrule s1 -> a b :heading "## X")
+                (defrule a -> :instruction "First" :include "t.lisp" :heading "### A")
+                (defrule b -> :instruction "Second" :include "t.lisp" :heading "### B")
+                """;
+        String child = """
+                (defrule transform -> t/why steps)
+                (defrule t/why -> :instruction "Say why")
+                (defrule steps -> :instruction "List the steps" :frame "s.lisp")
+                """;
+        FrameFiller f = new FrameFiller();
+        String out = f.include(f.include(file, "a", child), "b", child);
+        assertTrue(out.contains("(defrule a -> a/t/why a/steps :heading \"### A\")"), out);
+        assertTrue(out.contains("(defrule b/steps -> :instruction \"List the steps\" :frame \"s.lisp\")"), out);
+        assertEquals(1, out.split("\\(defrule a/steps ", -1).length - 1, out);
+    }
 }
