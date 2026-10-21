@@ -77,7 +77,9 @@ public final class FrameFiller {
     }
 
     /**
-     * Replaces a frame blank with the list of its copies and adds the copies after it.
+     * Replaces a frame blank with the list of its copies and adds the copies after it. A blank without a
+     * {@code :heading} gets no list of its own: its copies take its place in the rule that names it. In the
+     * copies, {@code {item}} is replaced by the item's name, so a copy's {@code :heading} can name its item.
      *
      * @param fileText  the rule file as it stands
      * @param blankName the frame blank
@@ -99,16 +101,29 @@ public final class FrameFiller {
         String root = frameRules.get(0).name();
 
         List<String> copies = new ArrayList<>();
-        StringBuilder children = new StringBuilder();
+        List<String> copyRoots = new ArrayList<>();
         for (int n = 1; n <= names.size(); n++) {
             String copyRoot = blankName + "/" + n;
-            if (children.length() > 0) children.append(' ');
-            children.append(copyRoot);
+            copyRoots.add(copyRoot);
+            String item = RuleFile.escape(names.get(n - 1));
             for (RuleFile.Rule r : frameRules) {
-                copies.add(form(rename(r.name(), root, copyRoot), renameSymbols(r.items(), root, copyRoot)));
+                copies.add(form(rename(r.name(), root, copyRoot), renameSymbols(r.items(), root, copyRoot)).replace("{item}", item));
             }
         }
-        String list = form(blankName, children + restOf(blank.items()));
+        if (blank.attr(":heading") == null) {
+            // No heading: the copies take the blank's place in the rule that names it, with no list of their own.
+            for (RuleFile.Rule parent : file.rules()) {
+                if (parent.items().stream().noneMatch(t -> t.kind() == RuleFile.Token.Kind.SYMBOL && t.raw().equals(blankName))) continue;
+                StringBuilder body = new StringBuilder();
+                for (RuleFile.Token t : parent.items()) {
+                    if (body.length() > 0) body.append(' ');
+                    body.append(t.kind() == RuleFile.Token.Kind.SYMBOL && t.raw().equals(blankName) ? String.join(" ", copyRoots) : t.raw());
+                }
+                file = file.replace(parent.name(), form(parent.name(), body.toString()));
+            }
+            return file.replace(blankName, String.join("\n", copies)).text();
+        }
+        String list = form(blankName, String.join(" ", copyRoots) + restOf(blank.items()));
         return file.replace(blankName, list).insertAfter(blankName, copies).text();
     }
 

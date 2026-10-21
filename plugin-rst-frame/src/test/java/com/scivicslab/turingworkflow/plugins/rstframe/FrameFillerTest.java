@@ -281,4 +281,24 @@ class FrameFillerTest {
         assertEquals("deploy/n", f.next(out).name());
         assertThrows(IllegalArgumentException.class, () -> f.include(out, "deploy/n", child));
     }
+
+    @Test
+    @DisplayName("見出しの無いフレームの空欄は、写しが親の右辺の空欄の位置に並び、写しの {item} は項目の名前になる")
+    void aFrameBlankWithoutHeadingSplicesItsCopiesIntoTheParent() {
+        String file = """
+                (defrule s1 -> p-intro steps p-end :heading "## X")
+                (defrule p-intro -> "Intro.")
+                (defrule steps -> :instruction "List the operations" :frame "op.lisp")
+                (defrule p-end -> "End.")
+                """;
+        String op = """
+                (defrule op -> op/n :heading "### {item}")
+                (defrule op/n -> :instruction "Say what {item} does")
+                """;
+        String out = new FrameFiller().expand(file, "steps", op, List.of("Broker: find", "Seller: \"add\""));
+        assertTrue(out.contains("(defrule s1 -> p-intro steps/1 steps/2 p-end :heading \"## X\")"), out);
+        assertTrue(out.contains("(defrule steps/1 -> steps/1/n :heading \"### Broker: find\")"), out);
+        assertTrue(out.contains("(defrule steps/2/n -> :instruction \"Say what Seller: \\\"add\\\" does\")"), out);
+        assertFalse(out.contains("(defrule steps ->"), out);
+    }
 }
