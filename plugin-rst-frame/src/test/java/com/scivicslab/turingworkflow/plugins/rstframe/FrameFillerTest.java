@@ -255,4 +255,30 @@ class FrameFillerTest {
         assertTrue(filled.contains("(defrule rules/2 -> \"main を宣言する\")"), filled);
         assertThrows(IllegalArgumentException.class, () -> f.fillList(file, "rules", List.of()));
     }
+
+    @Test
+    @DisplayName("子のフレームを取り込む空欄は、何も聞かずに子のフレームの 1 回分に置き換わり、見出しを残し、子の空欄が次に来る")
+    void anIncludeBlankBecomesOneCopyOfTheChildFrame() {
+        String file = REQUEST + "(defrule deploy -> :instruction \"Where the parts run\" :include \"design.deployment.lisp\" :heading \"### Deployment\")\n";
+        String child = """
+                ;;; one deployment
+                (defrule deployment -> :nucleus deployment/n :elaboration-additional deployment/legend)
+                (defrule deployment/n -> :instruction "Say how many kinds of machine there are")
+                (defrule deployment/legend -> :instruction "Say what each kind of line means")
+                """;
+        FrameFiller f = new FrameFiller();
+        String filled = f.fill(file, "p-whole/n", "x");
+        filled = f.fillWithFile(filled, "p-whole/code", "Squares.java");
+        filled = f.expand(filled, "concepts", FRAME, List.of("a"));
+        filled = f.fill(f.fill(filled, "concepts/1/n", "x"), "concepts/1/def", "x");
+        FrameFiller.Blank blank = f.next(filled);
+        assertEquals("deploy", blank.name());
+        assertTrue(blank.isInclude());
+
+        String out = f.include(filled, "deploy", child);
+        assertTrue(out.contains("(defrule deploy -> :nucleus deploy/n :elaboration-additional deploy/legend :heading \"### Deployment\")"), out);
+        assertTrue(out.contains("(defrule deploy/legend -> :instruction \"Say what each kind of line means\")"), out);
+        assertEquals("deploy/n", f.next(out).name());
+        assertThrows(IllegalArgumentException.class, () -> f.include(out, "deploy/n", child));
+    }
 }

@@ -30,11 +30,21 @@ public final class FrameFiller {
      * @param sample      a model sentence from another document, or {@code ""}
      * @param frame       the sub-frame's file name for a frame blank, else {@code ""}
      * @param kind        the blank's {@code :kind}, e.g. {@code code-block}, or {@code ""}
+     * @param include     the child frame's file name for an include blank, else {@code ""}
      */
-    public record Blank(String name, String instruction, String sample, String frame, String kind) {
+    public record Blank(String name, String instruction, String sample, String frame, String kind, String include) {
+        public Blank(String name, String instruction, String sample, String frame, String kind) {
+            this(name, instruction, sample, frame, kind, "");
+        }
+
         /** @return whether this blank is a list of items, each explained with the sub-frame */
         public boolean isFrame() {
             return !frame.isBlank();
+        }
+
+        /** @return whether this blank is one child frame, put in once as it is: nothing is asked for it */
+        public boolean isInclude() {
+            return !include.isBlank();
         }
 
         /** @return whether this blank is filled with code, kept in a file of its own and shown as a code block */
@@ -59,8 +69,9 @@ public final class FrameFiller {
             String sample = r.attr(":sample");
             String frame = r.attr(":frame");
             String kind = r.symbolAfter(":kind");
+            String include = r.attr(":include");
             return new Blank(r.name(), instruction, sample == null ? "" : sample, frame == null ? "" : frame,
-                    kind == null ? "" : kind);
+                    kind == null ? "" : kind, include == null ? "" : include);
         }
         return null;
     }
@@ -99,6 +110,35 @@ public final class FrameFiller {
         }
         String list = form(blankName, children + restOf(blank.items()));
         return file.replace(blankName, list).insertAfter(blankName, copies).text();
+    }
+
+    /**
+     * Replaces an include blank with one copy of the child frame: the child's first rule takes the
+     * blank's name, keeping the blank's other attributes such as {@code :heading}, and the child's other
+     * rules follow it, renamed under the blank's name. The copy's own blanks are filled in turn.
+     *
+     * @throws IllegalArgumentException when the blank is not an include blank, or the child frame has no rule
+     */
+    public String include(String fileText, String blankName, String frameText) {
+        RuleFile file = RuleFile.parse(fileText);
+        RuleFile.Rule blank = file.rule(blankName);
+        if (blank == null || blank.attr(":include") == null) {
+            throw new IllegalArgumentException(blankName + " is not a blank with an :include");
+        }
+        List<RuleFile.Rule> frameRules = RuleFile.parse(frameText).rules();
+        if (frameRules.isEmpty()) throw new IllegalArgumentException("the child frame has no rule");
+        String root = frameRules.get(0).name();
+        StringBuilder rootBody = new StringBuilder();
+        for (RuleFile.Token t : renameSymbols(frameRules.get(0).items(), root, blankName)) {
+            if (rootBody.length() > 0) rootBody.append(' ');
+            rootBody.append(t.raw());
+        }
+        String head = form(blankName, rootBody + restOf(blank.items()));
+        List<String> rest = new ArrayList<>();
+        for (RuleFile.Rule r : frameRules.subList(1, frameRules.size())) {
+            rest.add(form(rename(r.name(), root, blankName), renameSymbols(r.items(), root, blankName)));
+        }
+        return file.replace(blankName, head).insertAfter(blankName, rest).text();
     }
 
     /**
@@ -346,7 +386,8 @@ public final class FrameFiller {
         for (int i = 0; i < items.size(); i++) {
             RuleFile.Token t = items.get(i);
             if (t.kind() == RuleFile.Token.Kind.KEYWORD
-                    && (t.raw().equals(":instruction") || t.raw().equals(":sample") || t.raw().equals(":frame"))) {
+                    && (t.raw().equals(":instruction") || t.raw().equals(":sample") || t.raw().equals(":frame")
+                        || t.raw().equals(":include"))) {
                 i++;
                 continue;
             }
