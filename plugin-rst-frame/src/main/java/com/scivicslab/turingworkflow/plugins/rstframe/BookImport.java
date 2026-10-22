@@ -9,10 +9,12 @@ import java.util.Map;
  * Runs the steps that read a book's structure into the H2 database ({@code FrameOntology_261021_oo01}). No LLM is used.
  *
  * <pre>java ... BookImport toc &lt;db-file&gt; &lt;book-name&gt; &lt;book-dir&gt;
- * java ... BookImport sections &lt;db-file&gt; &lt;book-name&gt;</pre>
+ * java ... BookImport sections &lt;db-file&gt; &lt;book-name&gt;
+ * java ... BookImport rules &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]</pre>
  * {@code toc}: reads the table of contents from the headings of every markdown file under the book's directory, in path
  * order, and replaces the book's rows of {@code toc_node}. {@code sections}: cuts the book's text into the nodes
- * {@code toc} stored, and replaces the book's rows of {@code section_text}.
+ * {@code toc} stored, and replaces the book's rows of {@code section_text}. {@code rules}: makes each section without a
+ * rule file (or each section named) into an rst-on-lisp rule file, asking the model at the chat endpoint.
  */
 public final class BookImport {
 
@@ -22,6 +24,14 @@ public final class BookImport {
     public static void main(String[] a) throws Exception {
         if (a.length == 3 && a[0].equals("sections")) {
             sections(a[1], a[2]);
+            return;
+        }
+        if (a.length >= 6 && a[0].equals("rules")) {
+            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+                java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
+                System.out.println(SectionTagging.tagAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 2000), Integer.parseInt(a[5]),
+                        line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
+            }
             return;
         }
         if (a.length != 4 || !a[0].equals("toc")) {

@@ -15,7 +15,8 @@ import java.util.List;
  *
  * <p>{@code book}: a book's name and directory. {@code toc_node}: its table of contents, one row per part, chapter,
  * section or subsection, in the book's order. {@code section_text}: the book's text cut into those nodes, each with
- * the markdown files it was read from.</p>
+ * the markdown files it was read from. {@code section_rules}: each section's text as an rst-on-lisp rule file, with
+ * {@code section_code} the files its code blocks name. {@code section_concept}: the concepts each section explains.</p>
  */
 public final class BookStore implements AutoCloseable {
 
@@ -31,6 +32,12 @@ public final class BookStore implements AutoCloseable {
                     + "first_file VARCHAR(2000) NOT NULL, PRIMARY KEY (book, number))");
             s.execute("CREATE TABLE IF NOT EXISTS section_text (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "text CLOB NOT NULL, files CLOB NOT NULL, chars INT NOT NULL, PRIMARY KEY (book, number))");
+            s.execute("CREATE TABLE IF NOT EXISTS section_rules (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "rules CLOB NOT NULL, questions INT NOT NULL, PRIMARY KEY (book, number))");
+            s.execute("CREATE TABLE IF NOT EXISTS section_code (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "name VARCHAR(200) NOT NULL, text CLOB NOT NULL, PRIMARY KEY (book, number, name))");
+            s.execute("CREATE TABLE IF NOT EXISTS section_concept (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "ordinal INT NOT NULL, concept VARCHAR(1000) NOT NULL, PRIMARY KEY (book, number, ordinal))");
         }
     }
 
@@ -71,13 +78,18 @@ public final class BookStore implements AutoCloseable {
         }
     }
 
-    /** Replaces the book's section texts with {@code sections}. */
-    public void saveSections(String book, List<BookSections.Section> sections) throws SQLException {
+    /**
+     * Replaces the book's section texts with {@code sections}. What was made from the old texts (rule files, code files,
+     * concepts) is removed with them, since it no longer matches.
+     */
+    public synchronized void saveSections(String book, List<BookSections.Section> sections) throws SQLException {
         db.setAutoCommit(false);
         try {
-            try (PreparedStatement d = db.prepareStatement("DELETE FROM section_text WHERE book = ?")) {
-                d.setString(1, book);
-                d.executeUpdate();
+            for (String table : List.of("section_text", "section_rules", "section_code", "section_concept")) {
+                try (PreparedStatement d = db.prepareStatement("DELETE FROM " + table + " WHERE book = ?")) {
+                    d.setString(1, book);
+                    d.executeUpdate();
+                }
             }
             try (PreparedStatement i = db.prepareStatement("INSERT INTO section_text (book, number, text, files, chars) VALUES (?, ?, ?, ?, ?)")) {
                 for (BookSections.Section s : sections) {
@@ -110,6 +122,123 @@ public final class BookStore implements AutoCloseable {
                     String files = r.getString(3);
                     out.add(new BookSections.Section(r.getString(1), r.getString(2), files.isEmpty() ? List.of() : List.of(files.split("\n"))));
                 }
+            }
+        }
+        return out;
+    }
+
+    /** One section's rule file and the files its code blocks name. */
+    public record SectionRules(String number, String rules, java.util.Map<String, String> code, int questions) {
+    }
+
+    /** Replaces one section's rule file and code files. */
+    public synchronized void saveSectionRules(String book, SectionRules r) throws SQLException {
+        db.setAutoCommit(false);
+        try {
+            for (String table : List.of("section_rules", "section_code")) {
+                try (PreparedStatement d = db.prepareStatement("DELETE FROM " + table + " WHERE book = ? AND number = ?")) {
+                    d.setString(1, book);
+                    d.setString(2, r.number());
+                    d.executeUpdate();
+                }
+            }
+            try (PreparedStatement i = db.prepareStatement("INSERT INTO section_rules (book, number, rules, questions) VALUES (?, ?, ?, ?)")) {
+                i.setString(1, book);
+                i.setString(2, r.number());
+                i.setString(3, r.rules());
+                i.setInt(4, r.questions());
+                i.executeUpdate();
+            }
+            try (PreparedStatement i = db.prepareStatement("INSERT INTO section_code (book, number, name, text) VALUES (?, ?, ?, ?)")) {
+                for (var e : r.code().entrySet()) {
+                    i.setString(1, book);
+                    i.setString(2, r.number());
+                    i.setString(3, e.getKey());
+                    i.setString(4, e.getValue());
+                    i.addBatch();
+                }
+                i.executeBatch();
+            }
+            db.commit();
+        } catch (SQLException e) {
+            db.rollback();
+            throw e;
+        } finally {
+            db.setAutoCommit(true);
+        }
+    }
+
+    /** @return one section's rule file and code files, or {@code null} when it has none yet */
+    public synchronized SectionRules sectionRules(String book, String number) throws SQLException {
+        String rules;
+        int questions;
+        try (PreparedStatement p = db.prepareStatement("SELECT rules, questions FROM section_rules WHERE book = ? AND number = ?")) {
+            p.setString(1, book);
+            p.setString(2, number);
+            try (ResultSet r = p.executeQuery()) {
+                if (!r.next()) return null;
+                rules = r.getString(1);
+                questions = r.getInt(2);
+            }
+        }
+        java.util.Map<String, String> code = new java.util.LinkedHashMap<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT name, text FROM section_code WHERE book = ? AND number = ? ORDER BY name")) {
+            p.setString(1, book);
+            p.setString(2, number);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) code.put(r.getString(1), r.getString(2));
+            }
+        }
+        return new SectionRules(number, rules, code, questions);
+    }
+
+    /** @return the numbers of the book's sections that have a rule file */
+    public synchronized java.util.Set<String> sectionsWithRules(String book) throws SQLException {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT number FROM section_rules WHERE book = ?")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) out.add(r.getString(1));
+            }
+        }
+        return out;
+    }
+
+    /** Replaces the concepts one section explains. */
+    public synchronized void saveConcepts(String book, String number, List<String> concepts) throws SQLException {
+        db.setAutoCommit(false);
+        try {
+            try (PreparedStatement d = db.prepareStatement("DELETE FROM section_concept WHERE book = ? AND number = ?")) {
+                d.setString(1, book);
+                d.setString(2, number);
+                d.executeUpdate();
+            }
+            try (PreparedStatement i = db.prepareStatement("INSERT INTO section_concept (book, number, ordinal, concept) VALUES (?, ?, ?, ?)")) {
+                for (int n = 0; n < concepts.size(); n++) {
+                    i.setString(1, book);
+                    i.setString(2, number);
+                    i.setInt(3, n);
+                    i.setString(4, concepts.get(n));
+                    i.addBatch();
+                }
+                i.executeBatch();
+            }
+            db.commit();
+        } catch (SQLException e) {
+            db.rollback();
+            throw e;
+        } finally {
+            db.setAutoCommit(true);
+        }
+    }
+
+    /** @return the concepts each of the book's sections explains, by section number; a section not asked yet is absent */
+    public synchronized java.util.Map<String, List<String>> concepts(String book) throws SQLException {
+        java.util.Map<String, List<String>> out = new java.util.LinkedHashMap<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT number, concept FROM section_concept WHERE book = ? ORDER BY number, ordinal")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) out.computeIfAbsent(r.getString(1), k -> new ArrayList<>()).add(r.getString(2));
             }
         }
         return out;

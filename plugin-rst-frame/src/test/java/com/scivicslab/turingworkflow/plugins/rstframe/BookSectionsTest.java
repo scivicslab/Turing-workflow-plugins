@@ -100,4 +100,18 @@ class BookSectionsTest {
             assertEquals("/b", s.dirOf("core"));
         }
     }
+
+    @Test
+    void aParagraphCutByThePageIsJoinedAndAHyphenAtTheBreakIsDropped() {
+        Map<String, String> f = new LinkedHashMap<>();
+        f.put("Chap04/p001.md", "## Chapter 4 ▪ Objects\n\n## 4.1.1. Classes\n\nYou then supply new meth-\n");
+        f.put("Chap04/p006.md", "---\ntitle: x\n---\nods and instance fields that apply,\n");
+        f.put("Chap04/p011.md", "and nothing else.\n\n## 4.1.2. Objects\n\nAn object has state.\n");
+        f.put("Chap04/p016.md", "```\ncode at the top of a page\n```\n");
+        BookSections.Result r = BookSections.split(f, BookOutline.read(f).nodes());
+        Map<String, String> by = new LinkedHashMap<>();
+        for (BookSections.Section s : r.sections()) by.put(s.number(), s.text());
+        assertEquals("You then supply new methods and instance fields that apply, and nothing else.", by.get("4.1.1"));
+        assertEquals("An object has state.\n\n```\ncode at the top of a page\n```", by.get("4.1.2"), "code at a page's top is not joined");
+    }
 }

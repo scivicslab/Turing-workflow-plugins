@@ -19,6 +19,12 @@ import java.util.regex.Pattern;
  * removed; the heading line itself is not part of the text. A heading a page file repeats continues its node. A
  * heading deeper than a subsection stays in its subsection's text. Text that comes before any node of its top-level
  * directory (a preface, the acknowledgments, the cover) belongs to no node and is counted.</p>
+ *
+ * <p>A page file often ends in the middle of a sentence, even of a word ("You then supply new meth-" and, in the next
+ * file, "ods and instance fields ..."). When the text so far ends mid-sentence (in a lower-case letter, a comma, a
+ * semicolon or a hyphen) and the next file begins with ordinary text (not a heading, code, a list, a table, an image),
+ * the two are one paragraph: the lines are joined, and a hyphen at the break is dropped. A compound split exactly at
+ * its own hyphen loses that hyphen; that is taken to be rarer than a word hyphenated by the page.</p>
  */
 public final class BookSections {
 
@@ -34,6 +40,34 @@ public final class BookSections {
     private static final Pattern FRONT_MATTER = Pattern.compile("\\A---\\R.*?\\R---\\R", Pattern.DOTALL);
 
     private BookSections() {
+    }
+
+    /** @return whether a line is ordinary text, not a heading, code, a list, a table, an image or a quote */
+    static boolean isText(String line) {
+        String t = line.strip();
+        return !(t.startsWith("#") || t.startsWith("```") || t.startsWith("|") || t.startsWith("!") || t.startsWith(">")
+                || t.startsWith("- ") || t.startsWith("* ") || t.startsWith("$$") || t.matches("^\\d+\\.\\s.*"));
+    }
+
+    /**
+     * Joins {@code line}, the first text of a page file, to the paragraph the previous page file ended in, when that
+     * paragraph ends mid-sentence.
+     *
+     * @return whether it was joined
+     */
+    static boolean joinAcrossPages(StringBuilder text, String line) {
+        int end = text.length();
+        while (end > 0 && Character.isWhitespace(text.charAt(end - 1))) end--;
+        if (end == 0) return false;
+        char last = text.charAt(end - 1);
+        if (!(Character.isLowerCase(last) || last == ',' || last == ';' || last == '-')) return false;
+        int lineStart = text.lastIndexOf("\n", end - 1) + 1;
+        if (!isText(text.substring(lineStart, end))) return false;
+        text.setLength(end);
+        if (last == '-') text.setLength(end - 1);
+        else text.append(' ');
+        text.append(line.strip()).append('\n');
+        return true;
     }
 
     /**
@@ -60,7 +94,15 @@ public final class BookSections {
                 part = null;
             }
             String body = FRONT_MATTER.matcher(f.getValue()).replaceFirst("");
+            boolean fileStart = true;
             for (String line : body.split("\\R", -1)) {
+                if (fileStart && !line.isBlank()) {
+                    fileStart = false;
+                    if (current != null && isText(line) && joinAcrossPages(texts.get(current), line)) {
+                        from.get(current).add(f.getKey());
+                        continue;
+                    }
+                }
                 Matcher m = HEADING.matcher(line);
                 if (m.matches()) {
                     BookOutline.Heading h = BookOutline.classify(m.group(1), part, chapter);
