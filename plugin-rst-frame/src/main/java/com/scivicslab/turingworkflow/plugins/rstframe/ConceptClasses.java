@@ -109,6 +109,20 @@ public final class ConceptClasses implements AutoCloseable {
             (defun all-classes (pkg) (lines (mapcar #'kind-line (mapcar #'find-class (class-names-in pkg)))))
             (defun superclasses (pkg name)
               (lines (mapcar (lambda (c) (string-downcase (class-name c))) (own-supers pkg (own-class pkg name)))))
+            (defun remove-slot (pkg name slot)
+              (let ((c (own-class pkg name)))
+                (redefine pkg name (mapcar (lambda (s) (string-downcase (class-name s))) (own-supers pkg c))
+                          (remove-if (lambda (s) (string-equal (symbol-name (first s)) slot)) (direct-slots c))
+                          (or (documentation c t) ""))))
+            (defun slot-lines (pkg name)
+              (lines (mapcar (lambda (s) (format nil "~(~a~)~a~a~a~(~a~)" (first s) #\\Tab (substitute #\\Space #\\Newline (second s))
+                                                 #\\Tab (if (eq (third s) t) "" (third s))))
+                             (direct-slots (own-class pkg name)))))
+            (defun remove-class (pkg name)
+              (let ((c (own-class pkg name)))
+                (dolist (s (mop:class-direct-superclasses c)) (mop:remove-direct-subclass s c))
+                (setf (find-class (class-name c)) nil)
+                name))
             (defun drop (pkg)
               (dolist (s (class-names-in pkg)) (setf (find-class s) nil))
               (delete-package pkg))
@@ -119,6 +133,13 @@ public final class ConceptClasses implements AutoCloseable {
     private final String pkg;
     /** For each class read from a file, the file it was read from. */
     private final Map<String, String> files = new java.util.LinkedHashMap<>();
+    /**
+     * The values of classes: a concept whose class said nothing more than its superclass, kept by name with the class
+     * it is a value of ({@code (instance "effort level" reasoning-effort)} in a class file).
+     */
+    private final Map<String, String> instances = new java.util.LinkedHashMap<>();
+    private static final java.util.regex.Pattern INSTANCE =
+            java.util.regex.Pattern.compile("(?m)^\\(instance \"((?:[^\"\\\\]|\\\\.)*)\" ([^\\s)]+)\\)");
 
     /** @param files the class files to read, path to text; each holds {@code defclass} forms */
     public ConceptClasses(Map<String, String> files) {
@@ -136,7 +157,47 @@ public final class ConceptClasses implements AutoCloseable {
             java.util.Set<String> before = new java.util.HashSet<>(names());
             call("read-classes", string(e.getValue()));
             for (String n : names()) if (!before.contains(n)) this.files.putIfAbsent(n, e.getKey());
+            java.util.regex.Matcher m = INSTANCE.matcher(e.getValue());
+            while (m.find()) instances.put(m.group(1).replace("\\\"", "\""), m.group(2));
         }
+    }
+
+    /** One slot a class defines itself: its name, its question, and the class its values are of ({@code ""} for any). */
+    public record OwnSlot(String name, String question, String type) {
+    }
+
+    /** @return the slots {@code cls} defines itself, without the ones it inherits */
+    public List<OwnSlot> ownSlots(String cls) {
+        List<OwnSlot> out = new ArrayList<>();
+        for (String l : call("slot-lines", string(cls)).split("\n")) {
+            if (l.isEmpty()) continue;
+            String[] f = l.split("\t", -1);
+            out.add(new OwnSlot(f[0], f[1], f.length > 2 ? f[2] : ""));
+        }
+        return out;
+    }
+
+    /** Removes a slot {@code cls} defines itself. */
+    public void removeSlot(String cls, String slot) {
+        call("remove-slot", string(cls), string(slot));
+    }
+
+    /**
+     * Makes a class with no subclasses a value of its superclass: the class is removed, and its name is kept as a value
+     * of the superclass, so that {@link #find} still finds the concept, now as the superclass.
+     */
+    public void toInstance(String cls, String name) {
+        List<String> supers = superclasses(cls);
+        if (supers.size() != 1) throw new IllegalStateException(cls + " has " + supers.size() + " superclasses; only a class with one becomes its value");
+        if (!subclasses(cls).isEmpty()) throw new IllegalStateException(cls + " has subclasses; only a class with none becomes a value");
+        call("remove-class", string(cls));
+        for (Map.Entry<String, String> e : instances.entrySet()) if (e.getValue().equals(cls)) e.setValue(supers.get(0));
+        instances.put(name, supers.get(0));
+    }
+
+    /** @return the values of classes, by name, with the class each is a value of */
+    public Map<String, String> instances() {
+        return java.util.Collections.unmodifiableMap(instances);
     }
 
     /** @return every class, with its documentation, in name order */
@@ -170,7 +231,9 @@ public final class ConceptClasses implements AutoCloseable {
     /** @return the class the concept {@code name} is, or {@code null}: {@code ResultMessage} is {@code result-message} */
     public String find(String name) {
         String c = lispName(name);
-        return !c.isEmpty() && eval("(if (rst-concept-classes::own-class :" + pkg + " " + string(c) + ") \"y\" \"\")").equals("y") ? c : null;
+        if (!c.isEmpty() && eval("(if (rst-concept-classes::own-class :" + pkg + " " + string(c) + ") \"y\" \"\")").equals("y")) return c;
+        for (Map.Entry<String, String> e : instances.entrySet()) if (lispName(e.getKey()).equals(c)) return e.getValue();
+        return null;
     }
 
     /** @return the classes with no superclass among these classes */
