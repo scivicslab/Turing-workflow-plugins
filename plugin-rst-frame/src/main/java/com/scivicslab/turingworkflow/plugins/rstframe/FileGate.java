@@ -37,6 +37,9 @@ public interface FileGate {
     /** Refuses ({@link SecurityException}) when {@code file} is outside what may be written, for a file written by other means (a database). */
     void mayWrite(Path file);
 
+    /** @return whether a file or directory is at {@code path}; refused when it is outside what may be read or written */
+    boolean exists(Path path);
+
     /** @return a gate that refuses nothing */
     static FileGate open() {
         return new FileGate() {
@@ -63,6 +66,11 @@ public interface FileGate {
 
             @Override
             public void mayWrite(Path file) {
+            }
+
+            @Override
+            public boolean exists(Path path) {
+                return Files.exists(path);
             }
         };
     }
@@ -108,6 +116,15 @@ public interface FileGate {
                         g.mayWrite(file);
                         return null;
                     });
+                } catch (IOException e) {
+                    throw new SecurityException(e.getMessage(), e);
+                }
+            }
+
+            @Override
+            public boolean exists(Path path) {
+                try {
+                    return call(ref, g -> g.exists(path));
                 } catch (IOException e) {
                     throw new SecurityException(e.getMessage(), e);
                 }

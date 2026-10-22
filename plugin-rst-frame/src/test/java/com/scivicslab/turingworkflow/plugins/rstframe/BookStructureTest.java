@@ -68,6 +68,7 @@ class BookStructureTest {
             public void write(Path f, String t) throws java.io.IOException { check(f); open.write(f, t); }
             public java.util.List<Path> list(Path d, String s, int depth) throws java.io.IOException { check(d); return open.list(d, s, depth); }
             public void mayWrite(Path f) { check(f); }
+            public boolean exists(Path p) { check(p); return open.exists(p); }
         };
         IIActorSystem system = new IIActorSystem("files-test");
         try {
