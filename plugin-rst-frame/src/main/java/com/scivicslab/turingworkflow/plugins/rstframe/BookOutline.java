@@ -76,7 +76,28 @@ public final class BookOutline {
             }
         }
         if (repeated > 0) notes.add(repeated + " heading(s) seen again were not added");
-        return new Outline(List.copyOf(nodes.values()), notes);
+        return new Outline(inBookOrder(List.copyOf(nodes.values())), notes);
+    }
+
+    /**
+     * The nodes in the book's order: the files are read in path order, in which a directory such as {@code Appendix}
+     * comes before {@code Chap01}. Chapters go by their number, lettered ones (an appendix) after the numbered ones;
+     * each chapter's sections and subsections stay in the order they were read. A book with parts keeps the order read.
+     */
+    static List<Node> inBookOrder(List<Node> read) {
+        if (read.stream().anyMatch(n -> n.level().equals("part"))) return read;
+        Map<String, List<Node>> byChapter = new LinkedHashMap<>();
+        for (Node n : read) byChapter.computeIfAbsent(n.number().split("\\.")[0], k -> new ArrayList<>()).add(n);
+        List<String> chapters = new ArrayList<>(byChapter.keySet());
+        chapters.sort((a, b) -> {
+            boolean na = a.matches("\\d+"), nb = b.matches("\\d+");
+            if (na && nb) return Integer.compare(Integer.parseInt(a), Integer.parseInt(b));
+            if (na != nb) return na ? -1 : 1;
+            return a.compareTo(b);
+        });
+        List<Node> out = new ArrayList<>();
+        for (String c : chapters) out.addAll(byChapter.get(c));
+        return out;
     }
 
     /** @return what a heading is, given the part and chapter it comes in ({@code null} for none), or {@code null} when it is none of the kinds */

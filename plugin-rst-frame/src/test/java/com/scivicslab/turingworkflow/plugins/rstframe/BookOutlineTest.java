@@ -16,6 +16,12 @@ class BookOutlineTest {
 
     private static Map<String, String> book() {
         Map<String, String> f = new LinkedHashMap<>();
+        // the path order puts the appendix before the chapters
+        f.put("Appendix/p001.md", """
+                ## Appendix
+
+                Java keywords.
+                """);
         f.put("Chap04/p001.md", """
                 ---
                 title: "x"
@@ -50,11 +56,6 @@ class BookOutlineTest {
                 A numbered item, not a heading.
 
                 ## 4.2. Using Predefined Classes
-                """);
-        f.put("Appendix/p001.md", """
-                ## Appendix
-
-                Java keywords.
                 """);
         return f;
     }
