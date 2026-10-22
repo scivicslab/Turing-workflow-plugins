@@ -70,4 +70,15 @@ class TextbookConceptTreeTest {
             assertTrue(q.contains("Objects and Classes"), q);
         }
     }
+
+    @Test
+    void aNodeWithThousandsOfParagraphsIsReadWithoutOverflowingTheStack() {
+        StringBuilder refs = new StringBuilder();
+        for (int i = 0; i < 5000; i++) refs.append("Ch 4 p001-005.lisp / b").append(i).append("; ");
+        String tree = "(subject \"4\" \"Objects and Classes\" :paragraphs \"" + refs + "\")\n";
+        try (ConceptClasses c = new ConceptClasses(Map.of())) {
+            SlotAssignment s = new SlotAssignment("core", files(), tree, c);
+            assertEquals(4997, s.notes().size(), "every reference was read; only b0 to b2 are in the files");
+        }
+    }
 }

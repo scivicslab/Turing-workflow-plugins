@@ -139,7 +139,7 @@ public final class ConceptClasses implements AutoCloseable {
      */
     private final Map<String, String> instances = new java.util.LinkedHashMap<>();
     private static final java.util.regex.Pattern INSTANCE =
-            java.util.regex.Pattern.compile("(?m)^\\(instance \"((?:[^\"\\\\]|\\\\.)*)\" ([^\\s)]+)\\)");
+            java.util.regex.Pattern.compile("(?m)^\\(instance \"((?:[^\"\\\\]++|\\\\.)*+)\" ([^\\s)]+)\\)");
 
     /** @param files the class files to read, path to text; each holds {@code defclass} forms */
     public ConceptClasses(Map<String, String> files) {

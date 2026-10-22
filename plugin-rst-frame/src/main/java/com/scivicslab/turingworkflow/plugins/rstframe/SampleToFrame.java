@@ -167,7 +167,7 @@ public final class SampleToFrame implements Questioner {
         // the list's item rules are no longer reached; drop them so the file holds only what the frame uses
         for (Block b : blocks) {
             if (!b.kind().equals("list")) continue;
-            text = text.replaceAll("(?m)^\\(defrule " + Pattern.quote(b.name()) + "/\\d+ -> \"(?:[^\"\\\\]|\\\\.)*\"\\)\\R", "");
+            text = text.replaceAll("(?m)^\\(defrule " + Pattern.quote(b.name()) + "/\\d+ -> \"(?:[^\"\\\\]++|\\\\.)*+\"\\)\\R", "");
         }
         StringBuilder head = new StringBuilder();
         StringBuilder rest = new StringBuilder();

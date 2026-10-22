@@ -42,8 +42,8 @@ public final class SlotAssignment implements Questioner {
     record Placed(String concept, String cls, Map<String, List<String>> slots) {
     }
 
-    private static final Pattern SUBJECT = Pattern.compile("^\\(subject \"[^\"]*\" \"((?:[^\"\\\\]|\\\\.)*)\"(.*)\\)\\s*$");
-    private static final Pattern PARAGRAPHS = Pattern.compile(":paragraphs \"((?:[^\"\\\\]|\\\\.)*)\"");
+    private static final Pattern SUBJECT = Pattern.compile("^\\(subject \"[^\"]*\" \"((?:[^\"\\\\]++|\\\\.)*+)\"(.*)\\)\\s*$");
+    private static final Pattern PARAGRAPHS = Pattern.compile(":paragraphs \"((?:[^\"\\\\]++|\\\\.)*+)\"");
     private static final Pattern REF = Pattern.compile("\\S+ / \\S+|\\S+");
     /** {@code NEW: name: text}, or {@code name: text} as writers often answer: a name and what it stands for. */
     private static final Pattern NAMED = Pattern.compile("(?i)^\\s*(?:NEW\\s*:\\s*)?([^:]+?)\\s*:\\s*(.+?)\\s*$");

@@ -19,7 +19,7 @@ import java.util.regex.Pattern;
  */
 public final class TextbookConceptTree {
 
-    private static final Pattern SUBJECT = Pattern.compile("^\\(subject \"([^\"]*)\" \"((?:[^\"\\\\]|\\\\.)*)\"");
+    private static final Pattern SUBJECT = Pattern.compile("^\\(subject \"([^\"]*)\" \"((?:[^\"\\\\]++|\\\\.)*+)\"");
     private static final Pattern NUMBERED = Pattern.compile("^(\\d+(?:\\.\\d+)*)\\.?\\s+\\S");
     private static final Pattern CHAPTER = Pattern.compile("^Chapter\\s+(\\d+)\\b");
 

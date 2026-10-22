@@ -33,9 +33,9 @@ public final class ConceptConsolidation implements Questioner {
     private record Candidate(String cls, String superclass, ConceptClasses.OwnSlot slot) {
     }
 
-    private static final Pattern ASSIGN = Pattern.compile("^\\(assign \"((?:[^\"\\\\]|\\\\.)*)\" (\\S+?)\\)?$");
-    private static final Pattern SLOT = Pattern.compile("^\\s+\\((\\S+)((?: \"(?:[^\"\\\\]|\\\\.)*\")*)\\)\\)?$");
-    private static final Pattern STRING = Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"");
+    private static final Pattern ASSIGN = Pattern.compile("^\\(assign \"((?:[^\"\\\\]++|\\\\.)*+)\" (\\S+?)\\)?$");
+    private static final Pattern SLOT = Pattern.compile("^\\s+\\((\\S+)((?: \"(?:[^\"\\\\]++|\\\\.)*+\")*)\\)\\)?$");
+    private static final Pattern STRING = Pattern.compile("\"((?:[^\"\\\\]++|\\\\.)*+)\"");
     private static final Pattern KEPT_LINE = Pattern.compile("(?m)^;;; (book-file|frame-file): .*$");
 
     private final ConceptClasses classes;
