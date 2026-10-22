@@ -65,7 +65,8 @@ class ConceptTreeTest {
         assertTrue(how.startsWith("In a document, turn belongs to agent loop."), how);
         t.answer("PART-OF");
         String down = t.nextQuestion();                         // max turns: the root now has turn under it
-        assertTrue(down.contains("The narrower concepts already placed under agent loop:\n- turn\n"), down);
+        assertTrue(down.contains("The narrower concepts already placed under agent loop, each with what the document says of it:\n"
+                + "- turn: A turn is one model call and the tools it asks for.\n"), down);
         assertTrue(down.contains("What the document says of max turns:\n- Max turns caps"), down);
         t.answer("HERE");
         t.nextQuestion(); t.answer("setting-of");

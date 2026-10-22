@@ -352,6 +352,17 @@ public final class ConceptTree implements Questioner {
         return sb.toString();
     }
 
+    /** What the document says of a concept, in one line: its first two nucleus sentences, cut short. */
+    private String said(String name) {
+        List<String> ns = nuclei.getOrDefault(key(name), List.of());
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < ns.size() && i < 2; i++) {
+            if (sb.length() > 0) sb.append(" / ");
+            sb.append(cut(ns.get(i), 160));
+        }
+        return sb.toString();
+    }
+
     String rootQuestion() {
         StringBuilder sb = new StringBuilder();
         for (Unit u : units) {
@@ -372,8 +383,8 @@ public final class ConceptTree implements Questioner {
         StringBuilder sb = new StringBuilder();
         sb.append("In a document, ").append(name).append(" is explained as belonging to ").append(at).append(".\nWhat the document says of ")
           .append(name).append(":\n").append(saying(name));
-        sb.append("\nThe narrower concepts already placed under ").append(at).append(":\n");
-        for (String c : childrenOf(at)) sb.append("- ").append(c).append('\n');
+        sb.append("\nThe narrower concepts already placed under ").append(at).append(", each with what the document says of it:\n");
+        for (String c : childrenOf(at)) sb.append("- ").append(c).append(": ").append(said(c)).append('\n');
         sb.append("\nDoes ").append(name).append(" belong under one of these narrower concepts, or directly under ").append(at)
           .append("? Answer with exactly one line: the name of that narrower concept, written exactly as it is in the list, "
                 + "or HERE if it belongs directly under ").append(at).append('.');
