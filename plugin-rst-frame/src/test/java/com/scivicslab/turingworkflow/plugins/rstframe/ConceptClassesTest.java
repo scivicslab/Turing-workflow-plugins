@@ -124,4 +124,35 @@ class ConceptClassesTest {
         assertEquals(3, d.names().size());
         d.close();
     }
+
+    @Test
+    void aSlotOfAPartIsTypedWithThePartsClassAndKeepsItsTypeWhenTheClassGrows() {
+        try (ConceptClasses c = classes()) {
+            c.define("agent-loop", null, "The loop around a model");
+            c.addSlot("agent-loop", "messages", "Which messages it hands to the program", "message");
+            c.addSlot("agent-loop", "ending", "How it ends");
+            assertEquals("""
+                    (defclass agent-loop ()
+                      ((messages :type message :documentation "Which messages it hands to the program")
+                       (ending :documentation "How it ends"))
+                      (:documentation "The loop around a model"))""", c.source("agent-loop"));
+        }
+    }
+
+    @Test
+    void aLispErrorIsAJavaExceptionAndNotTheDebugger() {
+        try (ConceptClasses c = classes()) {
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class, () -> c.addSlot("no-such-class", "x", "y"));
+        }
+    }
+
+    @Test
+    void aConceptNamedLikeALispSymbolIsAClassOfItsOwn() {
+        try (ConceptClasses c = classes()) {
+            c.define("loop", null, "The agent loop");
+            c.addSlot("loop", "values", "Which values it takes");
+            assertEquals("loop", c.find("loop"));
+            assertEquals(List.of("values"), c.whatCanBeSaid("loop").stream().map(ConceptClasses.Slot::name).toList());
+        }
+    }
 }

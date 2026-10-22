@@ -139,4 +139,74 @@ class SlotAssignmentTest {
         s.answer("NEW: presence: When is each value present");
         assertTrue(s.nextQuestion().startsWith("A paragraph of a document about ResultMessage answers a question not asked of it before"));
     }
+
+    private static final String TOP = """
+            (defrule document -> title harness)
+            (defrule title -> :instruction "Name the harness")
+            (defrule harness -> :nucleus what :elaboration-part-whole messages-part)
+            (defrule what -> :instruction "Define the harness in one sentence" :sample "A harness wraps a model.")
+            (defrule messages-part -> :nucleus message-kinds)
+            (defrule message-kinds -> :instruction "List the kinds of message the loop hands out" :frame "explain-loop.message-kind.lisp")
+            """;
+    private static final String SUB = """
+            (defrule message-kind -> :nucleus message-kind/carries)
+            (defrule message-kind/carries -> :instruction "Say what it carries" :sample "Each carries one content block.")
+            """;
+
+    @Test
+    void aFramesBlanksBecomeSlotsAndABlankNamingASubFrameIsTypedWithItsClass() {
+        ConceptClasses c = classes();
+        Map<String, String> files = new java.util.LinkedHashMap<>();
+        files.put("frames/explanation/explain-loop.lisp", TOP);
+        files.put("frames/explanation/explain-loop.message-kind.lisp", SUB);
+        SlotAssignment s = SlotAssignment.fromFrame("explain-loop", files, c);
+        // the sub-frame first: asked what it is, then said to be the message class under another name, and that confirmed
+        String q = s.nextQuestion();
+        assertTrue(q.endsWith("without naming any particular product."), q);
+        s.answer("Something the agent loop hands to the program that drives it.");
+        q = s.nextQuestion();
+        assertTrue(q.startsWith("An explanation frame has blanks for writing about message kind. message kind: Something the agent loop hands"), q);
+        assertTrue(q.contains("SAME <name>"), q);
+        s.answer("SAME message");
+        q = s.nextQuestion();
+        assertTrue(q.contains("Are message kind and message one and the same thing, under two names?"), q);
+        assertTrue(q.contains("- What values it carries\n"), q);
+        s.answer("YES");
+        q = s.nextQuestion();
+        assertTrue(q.contains("A blank of the frame: what the writer is asked to write in it"), q);
+        assertTrue(q.contains("Say what it carries\nan example of what was written: Each carries one content block."), q);
+        s.answer("carried-values");
+        // then the part of the top frame, whose blank names the sub-frame
+        s.nextQuestion();
+        s.answer("What a loop hands out while it runs.");
+        q = s.nextQuestion();
+        assertTrue(q.startsWith("An explanation frame has blanks for writing about messages."), q);
+        // a SAME the writer then denies leaves the concept to be placed, and the class is not offered as the same again
+        s.answer("SAME message");
+        s.nextQuestion();
+        s.answer("NO");
+        assertTrue(s.nextQuestion().contains("It is not the same thing as message."));
+        s.answer("NEW: report stream: What a loop hands out while it runs");
+        s.nextQuestion();
+        s.answer("NEW: kinds: Which kinds of message it hands out");
+        assertTrue(s.nextQuestion().startsWith("A blank of an explanation frame about messages asks a question not asked of it before"));
+        s.answer("messages");
+        // then the harness itself, last
+        s.nextQuestion();
+        s.answer("A program that runs a model in a loop.");
+        q = s.nextQuestion();
+        assertTrue(q.startsWith("An explanation frame has blanks for writing about loop."), q);
+        s.answer("NEW: runtime: A program that runs a model");
+        s.nextQuestion();
+        s.answer("ASIDE");
+        s.nextQuestion();
+        s.answer("NEW: definition: What is it, in one sentence");
+        s.nextQuestion();
+        s.answer("runtime");
+        assertNull(s.nextQuestion());
+        assertTrue(c.source("messages").contains("(kinds :type message :documentation \"Which kinds of message it hands out\")"), c.source("messages"));
+        assertEquals(Map.of("carried-values", List.of("message-kind/carries")), s.placed().get(0).slots());
+        assertEquals("message", s.placed().get(0).cls());
+        assertTrue(s.resultFile("x").contains(";;; frame-file: frames/explanation/explain-loop.lisp"));
+    }
 }
