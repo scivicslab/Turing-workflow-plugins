@@ -14,10 +14,12 @@ import org.armedbear.lisp.Interpreter;
  * concept answers. What a class inherits is computed by CLOS, not by this class.
  *
  * <p>The class files of {@code rst-on-lisp/concepts/} are read into a package of this instance's own, so that two
- * instances never see each other's classes; their {@code defpackage} and {@code in-package} forms are skipped. Classes
- * and slots added later are defined in the same package, and every class below them sees them at once.</p>
+ * instances never see each other's classes. Only their {@code defclass} forms are evaluated: a class file is data, and
+ * a file of assignments ({@link SlotAssignment#resultFile}) can be read as one too. Classes and slots added later are
+ * defined in the same package, and every class below them sees them at once. {@link #close()} removes the classes and
+ * the package.</p>
  */
-public final class ConceptClasses {
+public final class ConceptClasses implements AutoCloseable {
 
     /** One slot of a class: its name, the class it is defined in, and the question it stands for. */
     public record Slot(String name, String from, String question) {
@@ -95,13 +97,21 @@ public final class ConceptClasses {
               (let ((*package* (find-package pkg)))
                 (with-input-from-string (in text)
                   (loop for form = (read in nil in) until (eq form in)
-                        unless (and (consp form) (member (symbol-name (first form)) '("DEFPACKAGE" "IN-PACKAGE") :test #'string=))
+                        when (and (consp form) (symbolp (first form)) (string= (symbol-name (first form)) "DEFCLASS"))
                           do (eval form)))))
+            (defun all-classes (pkg) (lines (mapcar #'kind-line (mapcar #'find-class (class-names-in pkg)))))
+            (defun superclasses (pkg name)
+              (lines (mapcar (lambda (c) (string-downcase (class-name c))) (own-supers pkg (own-class pkg name)))))
+            (defun drop (pkg)
+              (dolist (s (class-names-in pkg)) (setf (find-class s) nil))
+              (delete-package pkg))
             """;
 
     private static Interpreter lisp;
 
     private final String pkg;
+    /** For each class read from a file, the file it was read from. */
+    private final Map<String, String> files = new java.util.LinkedHashMap<>();
 
     /** @param files the class files to read, path to text; each holds {@code defclass} forms */
     public ConceptClasses(Map<String, String> files) {
@@ -114,7 +124,39 @@ public final class ConceptClasses {
             }
         }
         eval("(defpackage :" + pkg + " (:use :cl))");
-        for (Map.Entry<String, String> e : files.entrySet()) call("read-classes", string(e.getValue()));
+        for (Map.Entry<String, String> e : files.entrySet()) {
+            java.util.Set<String> before = new java.util.HashSet<>(names());
+            call("read-classes", string(e.getValue()));
+            for (String n : names()) if (!before.contains(n)) this.files.putIfAbsent(n, e.getKey());
+        }
+    }
+
+    /** @return every class, with its documentation, in name order */
+    public List<Kind> all() {
+        return kinds(call("all-classes"));
+    }
+
+    /** @return the names of every class */
+    public List<String> names() {
+        return all().stream().map(Kind::name).toList();
+    }
+
+    /** @return the classes {@code cls} is a direct subclass of */
+    public List<String> superclasses(String cls) {
+        List<String> out = new ArrayList<>();
+        for (String l : call("superclasses", string(cls)).split("\n")) if (!l.isEmpty()) out.add(l);
+        return out;
+    }
+
+    /** @return the file {@code cls} was first read from, or {@code null} for a class defined later */
+    public String fileOf(String cls) {
+        return files.get(cls);
+    }
+
+    /** Removes these classes and their package from the Lisp image. */
+    @Override
+    public void close() {
+        call("drop");
     }
 
     /** @return the class the concept {@code name} is, or {@code null}: {@code ResultMessage} is {@code result-message} */

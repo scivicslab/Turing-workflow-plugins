@@ -88,4 +88,40 @@ class ConceptClassesTest {
         assertEquals("hook", a.find("Hook"));
         assertNull(b.find("Hook"));
     }
+
+    @Test
+    void aResultFileIsReadForItsClassesAndEachClassKnowsItsFile() {
+        String result = """
+                ;;; book-file: /x/loop.lisp
+                (in-package :concepts)
+                ;; slots added to a class that was there before
+                (defclass message ()
+                  ((when-delivered :documentation "When the program is handed this message")
+                   (carried-values :documentation "What values it carries")
+                   (cautions :documentation "What to watch for"))
+                  (:documentation "Something the agent loop hands to the program"))
+                (defclass loop-option () () (:documentation "A value that changes how the loop runs"))
+                (assign "ResultMessage" result-message
+                  (how-it-ended "p-result"))
+                """;
+        java.util.Map<String, String> files = new java.util.LinkedHashMap<>();
+        files.put("concepts/messages.lisp", MESSAGES);
+        files.put("assignments/loop.lisp", result);
+        try (ConceptClasses c = new ConceptClasses(files)) {
+            assertEquals(List.of("loop-option", "message", "result-message", "system-message"), c.names());
+            assertEquals("concepts/messages.lisp", c.fileOf("message"));
+            assertEquals("assignments/loop.lisp", c.fileOf("loop-option"));
+            assertEquals(List.of("message"), c.superclasses("result-message"));
+            assertTrue(c.whatCanBeSaid("result-message").stream().anyMatch(x -> x.name().equals("cautions")));
+        }
+    }
+
+    @Test
+    void closingRemovesTheClasses() {
+        ConceptClasses c = classes();
+        c.close();
+        ConceptClasses d = classes();
+        assertEquals(3, d.names().size());
+        d.close();
+    }
 }

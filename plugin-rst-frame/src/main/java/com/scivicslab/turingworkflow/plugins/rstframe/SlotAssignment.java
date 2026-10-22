@@ -52,6 +52,8 @@ public final class SlotAssignment implements Questioner {
     private final Set<String> added = new LinkedHashSet<>();
     private final Set<String> grown = new LinkedHashSet<>();
     private final List<String> notes = new ArrayList<>();
+    /** The book's rule files, as they were given, so that a reader of the result can find each paragraph. */
+    private final List<String> files;
 
     private int concept = -1;
     private Phase phase = Phase.LOCATE;
@@ -74,6 +76,7 @@ public final class SlotAssignment implements Questioner {
     public SlotAssignment(String book, Map<String, String> files, String subjects, ConceptClasses classes) {
         this.book = book;
         this.classes = classes;
+        this.files = List.copyOf(files.keySet());
         Map<String, ConceptTree.Unit> byRef = new LinkedHashMap<>();
         for (Map.Entry<String, String> e : files.entrySet()) {
             for (ConceptTree.Unit u : ConceptTree.units(e.getKey(), RuleFile.parse(e.getValue()))) {
@@ -380,6 +383,7 @@ public final class SlotAssignment implements Questioner {
           .append(";;; (ConceptClasses_261022_oo01, FrameMakingWorkflow_261022_oo01 step 3), from ").append(from).append(".\n")
           .append(";;; The classes below were added, or had slots added, while assigning. They are proposals: whether they join\n")
           .append(";;; rst-on-lisp/concepts/ is decided by a person.\n");
+        for (String f : files) sb.append(";;; book-file: ").append(f).append('\n');
         for (String n : notes) sb.append(";;; note: ").append(n).append('\n');
         sb.append("(in-package :concepts)\n\n");
         for (String c : grown) sb.append(";; slots added to a class that was there before\n").append(classes.source(c)).append("\n\n");
