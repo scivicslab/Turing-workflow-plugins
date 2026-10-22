@@ -34,8 +34,13 @@ import java.util.regex.Pattern;
  *       books.</li>
  * </ul>
  *
- * <p>Pure: frames are handed in as texts by their path under {@code frames/}, and the books are read through
- * {@code readWorks}, which takes a path under the works directory and returns the text or null.</p>
+ * <p>Where the library has an edge list ({@code rst-on-lisp/links/*.tsv}, {@code FrameLinks_261022_oo01}) for a frame,
+ * the edges are used instead of the roles table: {@code integrates} edges join a rule of an integrated frame and a rule
+ * of a concrete frame (an integrated frame is one under {@code explanation/}), {@code made-from} edges join a rule of a concrete frame and a paragraph of a book, and both are
+ * followed either way. A rule with no {@code made-from} edge gives its {@code :sample} sentences.</p>
+ *
+ * <p>Pure: frames are handed in as texts by their path under {@code frames/}, the edge lists as texts, and the books
+ * are read through {@code readWorks}, which takes a path under the works directory and returns the text or null.</p>
  */
 public final class FrameExamples {
 
@@ -64,8 +69,35 @@ public final class FrameExamples {
      * @param readWorks reads a path under the works directory; null when there is no such file
      */
     public FrameExamples(Map<String, String> frames, Function<String, String> readWorks) {
+        this(frames, List.of(), readWorks);
+    }
+
+    /** One end of an edge: a rule of a file, the file by its path under {@code frames/} or under the works directory. */
+    private record End(String file, String rule) {
+    }
+
+    /** Every edge, from both of its ends: an end, to the ends joined to it, by kind. */
+    private final Map<End, Map<String, List<End>>> edges = new LinkedHashMap<>();
+
+    /**
+     * @param links the edge lists ({@code links/**}{@code /*.tsv}), as texts: five tab-separated columns
+     *              {@code a_file a_rule b_file b_rule kind}, lines starting with {@code #} left out
+     */
+    public FrameExamples(Map<String, String> frames, List<String> links, Function<String, String> readWorks) {
         this.frames = frames;
         this.readWorks = readWorks;
+        for (String text : links) {
+            for (String line : text.split("\n")) {
+                if (line.isBlank() || line.startsWith("#")) continue;
+                String[] c = line.split("\t");
+                if (c.length < 5) continue;
+                End a = new End(c[0].strip(), c[1].strip());
+                End b = new End(c[2].strip(), c[3].strip());
+                String kind = c[4].strip();
+                edges.computeIfAbsent(a, k -> new LinkedHashMap<>()).computeIfAbsent(kind, k -> new ArrayList<>()).add(b);
+                edges.computeIfAbsent(b, k -> new LinkedHashMap<>()).computeIfAbsent(kind, k -> new ArrayList<>()).add(a);
+            }
+        }
         for (String path : frames.keySet()) {
             if (!isTop(path)) continue;
             List<String> integrates = integrates(frames.get(path));
@@ -94,6 +126,31 @@ public final class FrameExamples {
         List<String> segments = segments(blank);
         List<Example> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();
+        if (hasEdges(frame)) {
+            for (String seg : segments) {
+                End at = new End(frame, seg);
+                if (!edges.containsKey(at)) continue;
+                List<End> concrete = new ArrayList<>();
+                if (frame.startsWith("explanation/")) {
+                    // a rule of an integrated frame: the concrete rules it was made from
+                    concrete.addAll(joined(at, "integrates"));
+                } else {
+                    // a rule of a concrete frame: the other concrete rules of the integrated rules it went into
+                    for (End integrated : joined(at, "integrates")) {
+                        for (End other : joined(integrated, "integrates")) {
+                            if (!other.file().equals(frame) && !concrete.contains(other)) concrete.add(other);
+                        }
+                    }
+                }
+                for (End c : concrete) {
+                    if (out.size() >= max) break;
+                    Example e = paragraphsOf(c, seen);
+                    if (e != null) out.add(e);
+                }
+                if (!out.isEmpty()) return out;
+            }
+            return out;
+        }
         for (Group g : groups) {
             if (!g.frames().contains(frame)) continue;
             for (String seg : segments) {
@@ -122,6 +179,33 @@ public final class FrameExamples {
      * The examples a row names: for each name, the paragraph of that name in the first book that has it; failing that,
      * the {@code :sample} sentences of the rule of that name in the first integrated concrete frame that has it.
      */
+    private boolean hasEdges(String frame) {
+        for (End e : edges.keySet()) if (e.file().equals(frame)) return true;
+        return false;
+    }
+
+    private List<End> joined(End at, String kind) {
+        return edges.getOrDefault(at, Map.of()).getOrDefault(kind, List.of());
+    }
+
+    /** The book paragraphs a concrete rule was made from, joined; failing those, the rule's {@code :sample} sentences. */
+    private Example paragraphsOf(End concrete, Set<String> seen) {
+        if (!seen.add(concrete.file() + "#" + concrete.rule())) return null;
+        List<String> texts = new ArrayList<>();
+        List<String> sources = new ArrayList<>();
+        for (End book : joined(concrete, "made-from")) {
+            RuleFile f = book(book.file());
+            if (f == null || f.rule(book.rule()) == null) continue;
+            String text = String.join(" ", textOf(f, book.rule(), new HashSet<>()));
+            if (text.isBlank()) continue;
+            texts.add(text);
+            sources.add(book.file().substring(book.file().lastIndexOf('/') + 1) + " / " + book.rule());
+        }
+        if (!texts.isEmpty()) return new Example(String.join(", ", sources), cut(String.join(" ", texts)));
+        Example e = fromFrames(concrete.rule(), Set.of(concrete.file()), Set.of(), new HashSet<>());
+        return e;
+    }
+
     /** The row of a part named {@code seg}, or of the longest part {@code seg} starts with followed by {@code -}. */
     private static List<String> rowOf(Map<String, List<String>> rows, String seg) {
         if (rows.containsKey(seg)) return rows.get(seg);

@@ -112,6 +112,45 @@ class FrameExamplesTest {
         assertEquals("FileBuy is a system.", e.get(0).text());
     }
 
+    private static final List<String> LINKS = List.of(
+            "# a_file\ta_rule\tb_file\tb_rule\tkind\n"
+                    + "explanation/explain.lisp\tp-what\tsubject/a/design.lisp\tp-what\tintegrates\n"
+                    + "explanation/explain.lisp\tp-what\tsubject/b/ipv4.lisp\tp-what\tintegrates\n",
+            "subject/a/design.lisp\tp-what\t" + BOOK_A + "\tp-system-what\tmade-from\n");
+
+    /** As {@link #FRAMES}, with a sample in ipv4's p-what, which has no made-from edge. */
+    private static Map<String, String> framesWithIpv4Sample() {
+        Map<String, String> f = new java.util.HashMap<>(FRAMES);
+        f.put("subject/b/ipv4.lisp", f.get("subject/b/ipv4.lisp").replace(
+                ":instruction \"say what the subsystem is\")", ":instruction \"say what the subsystem is\" :sample \"IPv4 is a layer.\")"));
+        return f;
+    }
+
+    @Test
+    void withAnEdgeListAnIntegratedBlankFollowsIntegratesThenMadeFrom() {
+        FrameExamples fx = new FrameExamples(framesWithIpv4Sample(), LINKS, WORKS::get);
+        List<FrameExamples.Example> e = fx.forBlank("explanation/explain.lisp", "p-what/n", 5);
+        assertEquals(List.of("a1.lisp / p-system-what", "subject/b/ipv4.lisp / p-what"), e.stream().map(FrameExamples.Example::source).toList(),
+                "design has a made-from edge to the book; ipv4 has none, so its rule's own sample stands in");
+        assertEquals("FileBuy is a file-buying system. It runs on several machines.", e.get(0).text());
+        assertEquals("IPv4 is a layer.", e.get(1).text());
+    }
+
+    @Test
+    void withAnEdgeListAConcreteBlankGetsTheOtherConcreteRulesOfItsIntegratedRule() {
+        FrameExamples fx = new FrameExamples(framesWithIpv4Sample(), LINKS, WORKS::get);
+        assertEquals(List.of("subject/b/ipv4.lisp / p-what"),
+                fx.forBlank("subject/a/design.lisp", "p-what", 5).stream().map(FrameExamples.Example::source).toList());
+        assertEquals(List.of("a1.lisp / p-system-what"),
+                fx.forBlank("subject/b/ipv4.lisp", "p-what", 5).stream().map(FrameExamples.Example::source).toList());
+    }
+
+    @Test
+    void withAnEdgeListTheRolesTableIsNotRead() {
+        FrameExamples fx = new FrameExamples(FRAMES, LINKS, WORKS::get);
+        assertTrue(fx.forBlank("explanation/explain.lisp", "p-prev", 5).isEmpty(), "p-prev is in the roles table but has no edge");
+    }
+
     @Test
     void aBlankWithNoRowGetsNothing() {
         assertTrue(examples().forBlank("explanation/explain.lisp", "title", 5).isEmpty());
