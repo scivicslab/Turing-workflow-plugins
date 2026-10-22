@@ -109,4 +109,13 @@ class ConceptTreeTest {
         t.answer("NEW: something");
         assertTrue(t.nextQuestion().contains("Your previous answer could not be read."));
     }
+
+    @Test
+    void aParagraphsWholeTextAndACodeBlocksFileAreGiven() {
+        String f = TEXT + "(defrule p-code -> :file \"b9.txt\" :kind code-block)\n";
+        assertEquals("A turn is one model call and the tools it asks for. The loop repeats turns until the model stops.",
+                ConceptTree.paragraphText(f, "p-turn"));
+        assertEquals("file:b9.txt", ConceptTree.paragraphText(f, "p-code"));
+        assertNull(ConceptTree.paragraphText(f, "no-such-rule"));
+    }
 }

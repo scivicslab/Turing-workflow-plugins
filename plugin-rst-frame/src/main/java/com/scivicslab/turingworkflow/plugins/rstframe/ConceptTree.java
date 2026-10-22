@@ -452,6 +452,18 @@ public final class ConceptTree implements Questioner {
      * section and its rules are walked; a rule with a relation keyword, a string of its own or a {@code :kind} is a
      * paragraph (or a list or table) and becomes one unit.
      */
+    /**
+     * @return the whole text of one paragraph (or list) of a rule file, its sentences in order; for a code block, the
+     *         name of the file beside the rule file that holds the code, prefixed with {@code file:}
+     */
+    public static String paragraphText(String fileText, String rule) {
+        RuleFile f = RuleFile.parse(fileText);
+        RuleFile.Rule r = f.rule(rule);
+        if (r == null) return null;
+        if (r.attr(":file") != null) return "file:" + r.attr(":file");
+        return String.join(" ", textOf(f, rule, new HashSet<>()));
+    }
+
     /** @return the paragraphs of one rule file, the way the concept tree reads them: its text, path to its paragraphs */
     public static List<Unit> paragraphs(String file, String text) {
         return units(file, RuleFile.parse(text));
