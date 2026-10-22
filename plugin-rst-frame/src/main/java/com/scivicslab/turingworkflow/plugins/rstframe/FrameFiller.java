@@ -293,6 +293,15 @@ public final class FrameFiller {
      * @param names    the items a frame blank was expanded with, in order
      */
     public String sentencePrompt(String fileText, Blank blank, String subject, List<String> names, String language) {
+        return sentencePrompt(fileText, blank, subject, names, language, List.of());
+    }
+
+    /**
+     * What the writer is asked for a sentence blank, with paragraphs of the source books that play the same part
+     * ({@link FrameExamples}) shown after the model sentence.
+     */
+    public String sentencePrompt(String fileText, Blank blank, String subject, List<String> names, String language,
+                                 List<FrameExamples.Example> examples) {
         StringBuilder sb = new StringBuilder();
         Matcher leaf = LEAF.matcher(blank.name());
         if (leaf.matches()) {
@@ -313,6 +322,11 @@ public final class FrameFiller {
         if (!blank.sample().isBlank()) {
             sb.append("Model sentence (from a different document; do not copy it, write this item's own content "
                     + "in the same role): ").append(blank.sample()).append("\n");
+        }
+        if (!examples.isEmpty()) {
+            sb.append("\nParagraphs of other books that play the same part (each from a different document; do not copy "
+                    + "them, take only how they serve the part):\n");
+            for (FrameExamples.Example e : examples) sb.append("- [").append(e.source()).append("] ").append(e.text()).append('\n');
         }
         sb.append("\nWrite only the sentence(s) asked for: no preface, explanation, heading, quotation marks or bullet marks. "
                 + "Write in ").append(language).append(", and end every sentence with the full stop of that language.");
