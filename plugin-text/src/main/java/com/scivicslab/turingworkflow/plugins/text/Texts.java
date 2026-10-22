@@ -1,9 +1,7 @@
 package com.scivicslab.turingworkflow.plugins.text;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -12,14 +10,12 @@ import org.json.JSONObject;
 
 /**
  * Work on texts a workflow keeps in its state: each method is given the texts and answers the result, which the
- * workflow keeps where it likes. The one thing held between calls is the verdicts {@link #sameAsLast} remembers.
+ * workflow keeps where it likes. Nothing is held between calls, so one instance serves every workflow at once.
  */
 public final class Texts {
 
     /** How many of one kind {@link #compare} lists before the rest are summed up. */
     private static final int COMPLAINTS_SHOWN = 8;
-
-    private final Map<String, String> lastVerdicts = new HashMap<>();
 
     /**
      * Writes a list as one line each, for a person to read. An empty or absent list is written as なし, so a heading
@@ -44,15 +40,15 @@ public final class Texts {
     }
 
     /**
-     * Whether this verdict says the same as the one remembered under {@code memo} ({@code WhenTheTwoRolesDoNotAgree_260915_oo01}):
-     * when a judge answers with the same words again, the two roles read the rule differently, and another round will
-     * produce the same pair of answers. Remembers this verdict either way. Blank space is ignored.
+     * Whether this verdict says the same as the last one ({@code WhenTheTwoRolesDoNotAgree_260915_oo01}): when a judge
+     * answers with the same words again, the two roles read the rule differently, and another round will produce the
+     * same pair of answers. Blank space is ignored. The workflow keeps the last verdict itself.
+     *
+     * @param last the verdict before this one; {@code null} or empty when there was none
      */
-    public boolean sameAsLast(String verdict, String memo) {
+    public boolean sameAsLast(String verdict, String last) {
         if (verdict == null) throw new IllegalArgumentException("no verdict was given");
-        if (memo == null || memo.isBlank()) throw new IllegalArgumentException("memo is required");
-        String last = lastVerdicts.put(memo, verdict);
-        return last != null && flatten(last).equals(flatten(verdict));
+        return last != null && !last.isEmpty() && flatten(last).equals(flatten(verdict));
     }
 
     /**

@@ -106,30 +106,23 @@ class TextsCasesTest {
 
     @Test
     void theFirstVerdictIsNeverTheSameAsTheLast() {
-        assertFalse(texts.sameAsLast("REVISE: 軸が混ざっています", "m"), "nothing to compare with yet");
-        assertTrue(texts.sameAsLast("REVISE: 軸が混ざっています", "m"), "and it is remembered for the next round");
+        assertFalse(texts.sameAsLast("REVISE: 軸が混ざっています", null), "nothing to compare with yet");
     }
 
     @Test
     void aVerdictThatSaysSomethingNewLetsTheFixingGoOn() {
-        texts.sameAsLast("REVISE: 軸が混ざっています", "m");
-        assertFalse(texts.sameAsLast("REVISE: 主語がありません", "m"));
-        assertTrue(texts.sameAsLast("REVISE: 主語がありません", "m"), "the newer one is what is remembered");
+        assertFalse(texts.sameAsLast("REVISE: 主語がありません", "REVISE: 軸が混ざっています"));
+    }
+
+    @Test
+    void theSameVerdictTwiceIsWhereItStops() {
+        assertTrue(texts.sameAsLast("REVISE: 軸が混ざっています", "REVISE: 軸が混ざっています"), "the two of them are not converging");
     }
 
     /** Whitespace a model adds or drops is not a new complaint. */
     @Test
     void theSameComplaintSpacedDifferentlyIsStillTheSame() {
-        texts.sameAsLast("REVISE: 軸が混ざっています", "m");
-        assertTrue(texts.sameAsLast("REVISE:  軸が混ざっています\n", "m"));
-    }
-
-    @Test
-    void eachCriterionRemembersItsOwn() {
-        texts.sameAsLast("REVISE: A", "1");
-        texts.sameAsLast("REVISE: B", "2");
-        assertTrue(texts.sameAsLast("REVISE: A", "1"), "criterion 1 has seen this one before");
-        assertFalse(texts.sameAsLast("REVISE: A", "2"), "criterion 2 has not");
+        assertTrue(texts.sameAsLast("REVISE:  軸が混ざっています\n", "REVISE: 軸が混ざっています"));
     }
 
     // ---- front matter ----

@@ -12,12 +12,10 @@ import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
  * The workflow actions of {@link Texts}. The texts go in as arguments and the result comes back as the message, for
- * the workflow to keep:
+ * the workflow to keep. Holding nothing, one actor serves every workflow of a program, which registers it at start-up
+ * (a workflow run alone creates it with {@code loader.createChild}):
  *
  * <pre>{@code
- * - actor: loader
- *   method: createChild
- *   arguments: ["ROOT", "texts", "com.scivicslab.turingworkflow.plugins.text.TextsIIAR"]
  * - actor: texts
  *   method: compare
  *   arguments: {before: 'jexl:state.getString("original")', after: 'jexl:state.getString("text")'}
@@ -39,12 +37,12 @@ public class TextsIIAR extends IIActorRef<Texts> {
         return perform("could not join the lines", t -> t.joinLines(opt(a, "list")));
     }
 
-    /** Args: {@code {verdict, memo}}; succeeds iff the verdict says the same as the last one remembered under {@code memo}. */
+    /** Args: {@code {verdict, last}}; succeeds iff the verdict says the same as the last one. */
     @Action("sameAsLast")
     public ActionResult sameAsLast(String args) {
         JSONObject a = new JSONObject(args);
         try {
-            boolean same = ask(t -> t.sameAsLast(opt(a, "verdict"), opt(a, "memo"))).get();
+            boolean same = ask(t -> t.sameAsLast(opt(a, "verdict"), opt(a, "last"))).get();
             return new ActionResult(same, same ? "the same verdict as last time" : "a different verdict");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

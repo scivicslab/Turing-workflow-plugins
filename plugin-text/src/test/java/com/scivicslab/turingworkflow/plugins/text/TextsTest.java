@@ -25,10 +25,10 @@ class TextsTest {
 
     @Test
     void theSameVerdictTwiceIsNoticedWhateverItsSpacing() {
-        assertFalse(texts.sameAsLast("REVISE: x  y", "m1"));
-        assertTrue(texts.sameAsLast("REVISE: x\ny", "m1"));
-        assertFalse(texts.sameAsLast("REVISE: x y", "m2"), "each memo is its own");
-        assertFalse(texts.sameAsLast("REVISE: z", "m1"));
+        assertFalse(texts.sameAsLast("REVISE: x  y", null));
+        assertFalse(texts.sameAsLast("REVISE: x  y", ""));
+        assertTrue(texts.sameAsLast("REVISE: x\ny", "REVISE: x  y"));
+        assertFalse(texts.sameAsLast("REVISE: z", "REVISE: x y"));
     }
 
     @Test
@@ -57,9 +57,8 @@ class TextsTest {
         IIActorSystem system = new IIActorSystem("texts-test");
         try {
             TextsIIAR t = new TextsIIAR("texts", system);
-            String args = new JSONObject().put("verdict", "REVISE: a").put("memo", "m").toString();
-            ActionResult first = t.callByActionName("sameAsLast", args);
-            ActionResult second = t.callByActionName("sameAsLast", args);
+            ActionResult first = t.callByActionName("sameAsLast", new JSONObject().put("verdict", "REVISE: a").toString());
+            ActionResult second = t.callByActionName("sameAsLast", new JSONObject().put("verdict", "REVISE: a").put("last", "REVISE:  a").toString());
             assertFalse(first.isSuccess());
             assertTrue(second.isSuccess(), second.getResult());
         } finally {
