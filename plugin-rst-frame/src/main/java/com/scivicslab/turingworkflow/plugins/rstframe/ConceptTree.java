@@ -16,9 +16,11 @@ import java.util.regex.Pattern;
  *
  * <p>Every judgement of meaning is the writer's; this class only orders the questions and records the answers. It
  * walks the rule files from the top and, for each paragraph, shows the nucleus sentence, the heading it is under and
- * the concepts found so far, and asks which concept the paragraph is about: one of the list, or a new one. When a new
- * concept comes, it asks once how it relates to a concept already in the list: a kind of it, a part of it, a setting
- * of it, or none. No candidate is chosen by spelling or by where it stands in the text.</p>
+ * the concepts found so far, and asks which concept the paragraph is about: one of the list, or a new one. Once every
+ * paragraph is placed, it goes over the concepts against the whole list, which by then is grown: first whether a
+ * concept is the same thing as another (the two are then one), then how each relates to another: a kind of it, a part
+ * of it, a setting of it, or none. Relations are asked only then, because a concept found early would otherwise be
+ * placed against the few concepts found before it. No candidate is chosen by spelling or by where it stands.</p>
  *
  * <p>For a textbook, whose table of contents already is the concept tree, the concepts are given at the start and no
  * new one is accepted; the questions then only place each paragraph under a node.</p>
@@ -48,8 +50,16 @@ public final class ConceptTree implements Questioner {
     private final List<String> notes = new ArrayList<>();
 
     private int at = 0;
-    /** The concept a relation question is pending for, or null when the next question is about a paragraph. */
+    /** After the paragraphs: the concepts still to be asked about, in order, and which question is next for them. */
+    private enum Phase { PARAGRAPHS, SAME, ROOT, DESCEND, RELATION, DONE }
+    private Phase phase = Phase.PARAGRAPHS;
+    private final List<String> pending = new ArrayList<>();
     private String relating;
+    /** The concept {@link #relating} is being taken down from, and the root of the tree. */
+    private String chosenParent;
+    private String root;
+    /** The nucleus sentences of each concept's paragraphs, shown when the concept is asked about. */
+    private final Map<String, List<String>> nuclei = new LinkedHashMap<>();
     private boolean retried;
     private String lastQuestion;
 
@@ -74,19 +84,67 @@ public final class ConceptTree implements Questioner {
 
     @Override
     public String nextQuestion() {
-        if (relating != null) {
-            lastQuestion = relationQuestion(relating);
-            return lastQuestion;
+        if (phase == Phase.PARAGRAPHS && at >= units.size()) startPhase(Phase.SAME);
+        while (true) {
+            if (phase == Phase.SAME && relating == null) {
+                if (pending.isEmpty()) { startPhase(Phase.ROOT); continue; }
+                String next = pending.remove(0);
+                if (concepts.containsKey(key(next)) && concepts.size() > 1) relating = next;
+                continue;
+            }
+            if (phase == Phase.ROOT && concepts.size() < 2) {
+                if (concepts.size() == 1) root = concepts.values().iterator().next().name();
+                startPhase(Phase.DONE);
+                continue;
+            }
+            if (phase == Phase.DESCEND && relating == null) {
+                if (pending.isEmpty()) { startPhase(Phase.DONE); continue; }
+                String next = pending.remove(0);
+                if (!concepts.containsKey(key(next)) || next.equals(root)) continue;
+                relating = next;
+                chosenParent = root;
+            }
+            if (phase == Phase.DESCEND && childrenOf(chosenParent).isEmpty()) {
+                // nothing narrower to choose from: the concept goes right under where it stands
+                phase = Phase.RELATION;
+                continue;
+            }
+            break;
         }
-        if (at >= units.size()) return null;
-        lastQuestion = paragraphQuestion(units.get(at));
-        return lastQuestion;
+        return switch (phase) {
+            case PARAGRAPHS -> lastQuestion = paragraphQuestion(units.get(at));
+            case SAME -> lastQuestion = sameQuestion(relating);
+            case ROOT -> lastQuestion = rootQuestion();
+            case DESCEND -> lastQuestion = descendQuestion(relating, chosenParent);
+            case RELATION -> lastQuestion = relationQuestion(relating, chosenParent);
+            case DONE -> null;
+        };
+    }
+
+    private void startPhase(Phase p) {
+        phase = p;
+        pending.clear();
+        relating = null;
+        retried = false;
+        if (p == Phase.SAME || p == Phase.DESCEND) for (Concept c : concepts.values()) pending.add(c.name());
     }
 
     @Override
     public void answer(String reply) {
         String line = firstLine(reply);
-        if (relating != null) {
+        if (phase == Phase.SAME) {
+            answerSame(line);
+            return;
+        }
+        if (phase == Phase.ROOT) {
+            answerRoot(line);
+            return;
+        }
+        if (phase == Phase.DESCEND) {
+            answerDescend(line);
+            return;
+        }
+        if (phase == Phase.RELATION) {
             answerRelation(line);
             return;
         }
@@ -98,23 +156,20 @@ public final class ConceptTree implements Questioner {
             return;
         }
         Matcher m = NEW.matcher(line);
-        if (m.matches() && allowNew) {
-            String name = clean(m.group(1));
+        // a name not in the list is a new concept, with or without the NEW: the question asks for
+        String asNew = m.matches() ? m.group(1) : line.isBlank() || line.length() > 80 || line.contains(". ") ? null : line;
+        if (asNew != null && allowNew) {
+            String name = clean(asNew);
             Concept existing = concepts.get(key(name));
             if (existing != null) {
                 place(existing, u);
                 next();
                 return;
             }
-            boolean others = !concepts.isEmpty();
             Concept c = new Concept(name, null, null, new ArrayList<>());
             concepts.put(key(name), c);
             place(c, u);
             next();
-            if (others) {
-                relating = name;
-                retried = false;
-            }
             return;
         }
         if (!retried) {
@@ -125,18 +180,25 @@ public final class ConceptTree implements Questioner {
         next();
     }
 
-    private void answerRelation(String line) {
-        Matcher m = REL.matcher(line);
+    private static final Pattern SAME = Pattern.compile("(?i)^\\s*SAME\\s+(.+?)\\s*$");
+
+    /** {@code SAME <concept>} folds the concept being asked about into that one; {@code DIFFERENT} leaves it. */
+    private void answerSame(String line) {
+        Matcher m = SAME.matcher(line);
         Concept c = concepts.get(key(relating));
         if (m.matches()) {
-            Concept parent = concepts.get(key(clean(m.group(2))));
-            if (parent != null && !parent.name().equals(c.name()) && !isUnder(parent.name(), c.name())) {
-                concepts.put(key(c.name()), new Concept(c.name(), parent.name(), m.group(1).toLowerCase(Locale.ROOT), c.paragraphs()));
+            Concept into = concepts.get(key(clean(m.group(1))));
+            if (into != null && !into.name().equals(c.name())) {
+                into.paragraphs().addAll(c.paragraphs());
+                nuclei.computeIfAbsent(key(into.name()), k -> new ArrayList<>()).addAll(nuclei.getOrDefault(key(c.name()), List.of()));
+                nuclei.remove(key(c.name()));
+                concepts.remove(key(c.name()));
+                pending.remove(into.name());
                 relating = null;
                 retried = false;
                 return;
             }
-        } else if (line.strip().equalsIgnoreCase("NONE")) {
+        } else if (line.strip().equalsIgnoreCase("DIFFERENT")) {
             relating = null;
             retried = false;
             return;
@@ -145,9 +207,82 @@ public final class ConceptTree implements Questioner {
             retried = true;
             return;
         }
-        notes.add(c.name() + ": no relation could be read from \"" + line + "\"");
+        notes.add(c.name() + ": no answer to whether it is the same as another could be read from \"" + line + "\"");
         relating = null;
         retried = false;
+    }
+
+    String sameQuestion(String name) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("The concepts found in a document:\n");
+        for (Concept c : concepts.values()) if (!c.name().equals(name)) sb.append("- ").append(c.name()).append('\n');
+        sb.append("\nIs \"").append(name).append("\" the same thing as one of these, under another name? Answer with exactly one line:\n")
+          .append("SAME <concept>  with the name written exactly as it is in the list, if it is the same thing\n")
+          .append("DIFFERENT       if it is a thing of its own (a kind or a part of another is a thing of its own)");
+        if (retried) sb.append("\nYour previous answer could not be read. Answer with one line in the form asked, and nothing else.");
+        return sb.toString();
+    }
+
+    /** The concept the whole document is about becomes the root; every other concept is then taken down from it. */
+    private void answerRoot(String line) {
+        Concept c = concepts.get(key(clean(line)));
+        if (c == null && !retried) {
+            retried = true;
+            return;
+        }
+        if (c == null) {
+            c = concepts.values().iterator().next();
+            notes.add("no root could be read from \"" + line + "\"; the first concept found, " + c.name() + ", is the root");
+        }
+        root = c.name();
+        startPhase(Phase.DESCEND);
+    }
+
+    /** A narrower concept's name takes the concept one step down; {@code HERE} places it under where it stands. */
+    private void answerDescend(String line) {
+        if (line.strip().equalsIgnoreCase("HERE")) {
+            phase = Phase.RELATION;
+            retried = false;
+            return;
+        }
+        Concept child = concepts.get(key(clean(line)));
+        if (child != null && chosenParent.equals(child.parent())) {
+            chosenParent = child.name();
+            retried = false;
+            return;
+        }
+        if (!retried) {
+            retried = true;
+            return;
+        }
+        notes.add(relating + ": no step down from " + chosenParent + " could be read from \"" + line + "\"; placed under it");
+        phase = Phase.RELATION;
+        retried = false;
+    }
+
+    private List<String> childrenOf(String parent) {
+        List<String> out = new ArrayList<>();
+        for (Concept c : concepts.values()) if (parent.equals(c.parent())) out.add(c.name());
+        return out;
+    }
+
+    /** {@code KIND-OF}, {@code PART-OF} or {@code SETTING-OF} records the relation to the chosen parent. */
+    private void answerRelation(String line) {
+        Concept c = concepts.get(key(relating));
+        String rel = line.strip().toUpperCase(Locale.ROOT).replaceAll("[^A-Z-]", "");
+        if (rel.equals("KIND-OF") || rel.equals("PART-OF") || rel.equals("SETTING-OF")) {
+            concepts.put(key(c.name()), new Concept(c.name(), chosenParent, rel.toLowerCase(Locale.ROOT), c.paragraphs()));
+        } else if (!retried) {
+            retried = true;
+            return;
+        } else {
+            notes.add(c.name() + ": no relation to " + chosenParent + " could be read from \"" + line + "\"; placed as part-of");
+            concepts.put(key(c.name()), new Concept(c.name(), chosenParent, "part-of", c.paragraphs()));
+        }
+        relating = null;
+        chosenParent = null;
+        retried = false;
+        phase = Phase.DESCEND;
     }
 
     /** @return whether {@code name} has {@code ancestor} above it (so making {@code ancestor} its child would loop) */
@@ -164,6 +299,7 @@ public final class ConceptTree implements Questioner {
 
     private void place(Concept c, Unit u) {
         c.paragraphs().add(shortFile(u.file()) + " / " + u.rule());
+        nuclei.computeIfAbsent(key(c.name()), k -> new ArrayList<>()).add(u.nucleus());
     }
 
     private void next() {
@@ -205,19 +341,55 @@ public final class ConceptTree implements Questioner {
         return sb.toString();
     }
 
-    String relationQuestion(String name) {
+    /** What the document says of a concept: the nucleus sentences of its paragraphs, a few of them. */
+    private String saying(String name) {
         StringBuilder sb = new StringBuilder();
-        sb.append("A new concept was found in a document: ").append(name).append("\n\nOther concepts of the same document:\n");
-        for (Concept c : concepts.values()) {
-            if (!c.name().equals(name)) sb.append("- ").append(c.name()).append('\n');
+        int n = 0;
+        for (String nu : nuclei.getOrDefault(key(name), List.of())) {
+            if (n++ == 3) break;
+            sb.append("- ").append(cut(nu, 300)).append('\n');
         }
-        sb.append("\nHow is ").append(name).append(" related to one of these? Answer with exactly one line:\n")
-          .append("KIND-OF <concept>    if ").append(name).append(" is a kind of that concept\n")
-          .append("PART-OF <concept>    if ").append(name).append(" is a part of that concept\n")
-          .append("SETTING-OF <concept> if ").append(name).append(" is a value that changes how that concept behaves\n")
-          .append("NONE                 if none of these holds for any of them\n")
-          .append("Write the concept's name exactly as it is in the list.");
+        return sb.toString();
+    }
+
+    String rootQuestion() {
+        StringBuilder sb = new StringBuilder();
+        for (Unit u : units) {
+            if (u.rule().equals("title")) {
+                sb.append("A document titled: ").append(u.nucleus()).append("\n\n");
+                break;
+            }
+        }
+        sb.append("The concepts found in the document:\n");
+        for (Concept c : concepts.values()) sb.append("- ").append(c.name()).append('\n');
+        sb.append("\nWhich one of these is the whole document about: the concept all the others are explained as belonging to? "
+                + "Answer with exactly one line: its name, written exactly as it is in the list.");
         if (retried) sb.append("\nYour previous answer could not be read. Answer with one line in the form asked, and nothing else.");
+        return sb.toString();
+    }
+
+    String descendQuestion(String name, String at) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("In a document, ").append(name).append(" is explained as belonging to ").append(at).append(".\nWhat the document says of ")
+          .append(name).append(":\n").append(saying(name));
+        sb.append("\nThe narrower concepts already placed under ").append(at).append(":\n");
+        for (String c : childrenOf(at)) sb.append("- ").append(c).append('\n');
+        sb.append("\nDoes ").append(name).append(" belong under one of these narrower concepts, or directly under ").append(at)
+          .append("? Answer with exactly one line: the name of that narrower concept, written exactly as it is in the list, "
+                + "or HERE if it belongs directly under ").append(at).append('.');
+        if (retried) sb.append("\nYour previous answer could not be read. Answer with one line in the form asked, and nothing else.");
+        return sb.toString();
+    }
+
+    String relationQuestion(String name, String parent) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("In a document, ").append(name).append(" belongs to ").append(parent).append(".\nWhat the document says of ")
+          .append(name).append(":\n").append(saying(name));
+        sb.append("\nHow does ").append(name).append(" belong to ").append(parent).append("? Answer with exactly one word:\n")
+          .append("KIND-OF     if ").append(name).append(" is a kind of ").append(parent).append('\n')
+          .append("PART-OF     if ").append(name).append(" is a part of ").append(parent).append('\n')
+          .append("SETTING-OF  if ").append(name).append(" is a value that changes how ").append(parent).append(" behaves");
+        if (retried) sb.append("\nYour previous answer could not be read. Answer with one word, and nothing else.");
         return sb.toString();
     }
 

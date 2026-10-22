@@ -50,21 +50,32 @@ class ConceptTreeTest {
         assertTrue(q.contains("Concepts found so far:\n- agent loop\n"), q);
         assertTrue(q.contains("Its central sentence (nucleus): A turn is one model call"), q);
         t.answer("NEW: turn");                                  // p-turn
-        String rel = t.nextQuestion();
-        assertTrue(rel.startsWith("A new concept was found in a document: turn"), rel);
-        t.answer("PART-OF agent loop");
         t.nextQuestion(); t.answer("NEW: max turns");           // p-max, under the task heading
-        t.nextQuestion(); t.answer("SETTING-OF agent loop");
-        t.nextQuestion(); t.answer("NEW: permission mode");     // p-mode
-        t.nextQuestion(); t.answer("SETTING-OF agent loop");
+        t.nextQuestion(); t.answer("NEW: the loop");            // p-mode: a second name for the loop, on purpose
+        // after the paragraphs: is each the same as another?
+        assertTrue(t.nextQuestion().contains("Is \"agent loop\" the same thing"));  t.answer("DIFFERENT");
+        assertTrue(t.nextQuestion().contains("Is \"turn\" the same thing"));        t.answer("DIFFERENT");
+        assertTrue(t.nextQuestion().contains("Is \"max turns\" the same thing"));   t.answer("DIFFERENT");
+        assertTrue(t.nextQuestion().contains("Is \"the loop\" the same thing"));    t.answer("SAME agent loop");
+        // then the root, and every other concept taken down from it
+        String rootQ = t.nextQuestion();
+        assertTrue(rootQ.startsWith("A document titled: How the loop works\n\nThe concepts found in the document:"), rootQ);
+        t.answer("agent loop");
+        String how = t.nextQuestion();                          // turn: nothing under the root yet, so straight to how
+        assertTrue(how.startsWith("In a document, turn belongs to agent loop."), how);
+        t.answer("PART-OF");
+        String down = t.nextQuestion();                         // max turns: the root now has turn under it
+        assertTrue(down.contains("The narrower concepts already placed under agent loop:\n- turn\n"), down);
+        assertTrue(down.contains("What the document says of max turns:\n- Max turns caps"), down);
+        t.answer("HERE");
+        t.nextQuestion(); t.answer("setting-of");
         assertNull(t.nextQuestion());
 
         String out = t.subjectsFile("the body of loop.lisp");
-        assertTrue(out.contains("(subject \"1\" \"agent loop\" :paragraphs \"title\")"), out);
+        assertTrue(out.contains("(subject \"1\" \"agent loop\" :paragraphs \"title p-mode\")"), out);
         assertTrue(out.contains("(subject \"1.1\" \"turn\" :relation part-of :paragraphs \"p-turn\")"), out);
         assertTrue(out.contains("(subject \"1.2\" \"max turns\" :relation setting-of :paragraphs \"p-max\")"), out);
-        assertTrue(out.contains("(subject \"1.3\" \"permission mode\" :relation setting-of :paragraphs \"p-mode\")"), out);
-        assertTrue(!out.contains("Control how the loop runs"), "a task heading is no node");
+        assertTrue(!out.contains("the loop") && !out.contains("Control how the loop runs"), out);
     }
 
     @Test
@@ -73,19 +84,18 @@ class ConceptTreeTest {
         t.nextQuestion(); t.answer("NEW: turn");
         t.nextQuestion(); t.answer("turn");
         t.nextQuestion(); t.answer("- Turn.");                  // case, a bullet and a full stop are not a new concept
-        t.nextQuestion(); t.answer("NEW: permission mode");
-        t.nextQuestion(); t.answer("NONE");
-        assertNull(t.nextQuestion());
+        t.nextQuestion(); t.answer("permission mode");          // a name not in the list is a new concept without NEW: too
+        assertEquals(List.of("turn", "permission mode"), t.concepts().stream().map(ConceptTree.Concept::name).toList());
         assertEquals(List.of("loop.lisp / title", "loop.lisp / p-turn", "loop.lisp / p-max"), t.concepts().get(0).paragraphs());
     }
 
     @Test
     void anAnswerThatCannotBeReadIsAskedOnceMoreThenNoted() {
         ConceptTree t = tree();
-        t.nextQuestion(); t.answer("I think it is about the loop in general");
+        t.nextQuestion(); t.answer("I think it is about the loop in general. It covers turns.");
         String again = t.nextQuestion();
         assertTrue(again.contains("Your previous answer could not be read."), again);
-        t.answer("still not a name");
+        t.answer("It is about the loop. And about turns.");
         assertTrue(t.notes().get(0).startsWith("doc_Y/docs/Papers/loop/loop.lisp / title: no concept could be read"), t.notes().toString());
         assertTrue(t.nextQuestion().contains("A turn is one model call"), "the next paragraph comes after the note");
     }
