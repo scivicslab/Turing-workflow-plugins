@@ -58,6 +58,7 @@
         <module>plugin-ocr</module>
         <module>plugin-codedoc</module>
         <module>plugin-rst-frame</module>
+        <module>plugin-text</module>
     </modules>
 
     <properties>
