@@ -108,14 +108,21 @@ public final class SlotAssignment implements Questioner {
             if (!p.find()) continue;
             List<String> refs = new ArrayList<>();
             List<ConceptTree.Unit> units = new ArrayList<>();
-            Matcher r = REF.matcher(p.group(1));
-            while (r.find()) {
-                ConceptTree.Unit u = byRef.get(r.group());
+            // paragraphs separated by ';' when file names hold spaces (TextbookConceptTree), else by spaces
+            List<String> found = new ArrayList<>();
+            if (p.group(1).contains(";")) {
+                for (String x : p.group(1).split(";")) if (!x.isBlank()) found.add(x.strip());
+            } else {
+                Matcher r = REF.matcher(p.group(1));
+                while (r.find()) found.add(r.group());
+            }
+            for (String ref : found) {
+                ConceptTree.Unit u = byRef.get(ref);
                 if (u == null) {
-                    notes.add(m.group(1) + ": no paragraph " + r.group() + " in the rule files");
+                    notes.add(m.group(1) + ": no paragraph " + ref + " in the rule files");
                     continue;
                 }
-                refs.add(r.group());
+                refs.add(ref);
                 units.add(u);
             }
             if (!units.isEmpty()) works.add(new Work(m.group(1).replace("\\\"", "\""), refs, units, Map.of(), null));
