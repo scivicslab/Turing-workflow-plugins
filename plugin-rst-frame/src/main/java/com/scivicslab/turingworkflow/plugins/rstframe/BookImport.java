@@ -8,9 +8,11 @@ import java.util.Map;
 /**
  * Runs the steps that read a book's structure into the H2 database ({@code FrameOntology_261021_oo01}). No LLM is used.
  *
- * <pre>java ... BookImport toc &lt;db-file&gt; &lt;book-name&gt; &lt;book-dir&gt;</pre>
+ * <pre>java ... BookImport toc &lt;db-file&gt; &lt;book-name&gt; &lt;book-dir&gt;
+ * java ... BookImport sections &lt;db-file&gt; &lt;book-name&gt;</pre>
  * {@code toc}: reads the table of contents from the headings of every markdown file under the book's directory, in path
- * order, and replaces the book's rows of {@code toc_node}.
+ * order, and replaces the book's rows of {@code toc_node}. {@code sections}: cuts the book's text into the nodes
+ * {@code toc} stored, and replaces the book's rows of {@code section_text}.
  */
 public final class BookImport {
 
@@ -18,8 +20,12 @@ public final class BookImport {
     }
 
     public static void main(String[] a) throws Exception {
+        if (a.length == 3 && a[0].equals("sections")) {
+            sections(a[1], a[2]);
+            return;
+        }
         if (a.length != 4 || !a[0].equals("toc")) {
-            System.err.println("usage: BookImport toc <db-file> <book-name> <book-dir>");
+            System.err.println("usage: BookImport toc <db-file> <book-name> <book-dir>  |  BookImport sections <db-file> <book-name>");
             System.exit(2);
         }
         Path dir = Path.of(a[3]).toAbsolutePath().normalize();
@@ -35,5 +41,23 @@ public final class BookImport {
         for (BookOutline.Node n : o.nodes()) byLevel.merge(n.level(), 1, Integer::sum);
         System.out.println("read " + files.size() + " markdown file(s); " + byLevel);
         for (String n : o.notes()) System.out.println("note: " + n);
+    }
+
+    private static void sections(String dbFile, String book) throws Exception {
+        try (BookStore store = new BookStore("jdbc:h2:" + Path.of(dbFile).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+            String d = store.dirOf(book);
+            if (d == null) throw new IllegalArgumentException("no book " + book + "; run toc first");
+            Path dir = Path.of(d);
+            Map<String, String> files = new LinkedHashMap<>();
+            try (var s = Files.walk(dir)) {
+                for (Path p : s.filter(p -> p.toString().endsWith(".md")).sorted().toList()) files.put(dir.relativize(p).toString(), Files.readString(p));
+            }
+            BookSections.Result r = BookSections.split(files, store.outline(book));
+            store.saveSections(book, r.sections());
+            long empty = r.sections().stream().filter(x -> x.text().isEmpty()).count();
+            long spanning = r.sections().stream().filter(x -> x.files().size() > 1).count();
+            System.out.println(r.sections().size() + " section(s); " + empty + " with no text of their own; " + spanning + " spanning more than one file");
+            for (String n : r.notes()) System.out.println("note: " + n);
+        }
     }
 }

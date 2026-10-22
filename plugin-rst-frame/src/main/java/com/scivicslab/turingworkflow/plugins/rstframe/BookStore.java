@@ -14,7 +14,8 @@ import java.util.List;
  * ({@code FrameOntology_261021_oo01}): the steps leave many kinds of intermediate data, too many to keep as files.
  *
  * <p>{@code book}: a book's name and directory. {@code toc_node}: its table of contents, one row per part, chapter,
- * section or subsection, in the book's order.</p>
+ * section or subsection, in the book's order. {@code section_text}: the book's text cut into those nodes, each with
+ * the markdown files it was read from.</p>
  */
 public final class BookStore implements AutoCloseable {
 
@@ -28,6 +29,8 @@ public final class BookStore implements AutoCloseable {
             s.execute("CREATE TABLE IF NOT EXISTS toc_node (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "ordinal INT NOT NULL, level VARCHAR(20) NOT NULL, title VARCHAR(2000) NOT NULL, parent VARCHAR(40), "
                     + "first_file VARCHAR(2000) NOT NULL, PRIMARY KEY (book, number))");
+            s.execute("CREATE TABLE IF NOT EXISTS section_text (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "text CLOB NOT NULL, files CLOB NOT NULL, chars INT NOT NULL, PRIMARY KEY (book, number))");
         }
     }
 
@@ -65,6 +68,60 @@ public final class BookStore implements AutoCloseable {
             throw e;
         } finally {
             db.setAutoCommit(true);
+        }
+    }
+
+    /** Replaces the book's section texts with {@code sections}. */
+    public void saveSections(String book, List<BookSections.Section> sections) throws SQLException {
+        db.setAutoCommit(false);
+        try {
+            try (PreparedStatement d = db.prepareStatement("DELETE FROM section_text WHERE book = ?")) {
+                d.setString(1, book);
+                d.executeUpdate();
+            }
+            try (PreparedStatement i = db.prepareStatement("INSERT INTO section_text (book, number, text, files, chars) VALUES (?, ?, ?, ?, ?)")) {
+                for (BookSections.Section s : sections) {
+                    i.setString(1, book);
+                    i.setString(2, s.number());
+                    i.setString(3, s.text());
+                    i.setString(4, String.join("\n", s.files()));
+                    i.setInt(5, s.text().length());
+                    i.addBatch();
+                }
+                i.executeBatch();
+            }
+            db.commit();
+        } catch (SQLException e) {
+            db.rollback();
+            throw e;
+        } finally {
+            db.setAutoCommit(true);
+        }
+    }
+
+    /** @return the book's section texts, in the order of its table of contents */
+    public List<BookSections.Section> sections(String book) throws SQLException {
+        List<BookSections.Section> out = new ArrayList<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT s.number, s.text, s.files FROM section_text s JOIN toc_node n "
+                + "ON n.book = s.book AND n.number = s.number WHERE s.book = ? ORDER BY n.ordinal")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) {
+                    String files = r.getString(3);
+                    out.add(new BookSections.Section(r.getString(1), r.getString(2), files.isEmpty() ? List.of() : List.of(files.split("\n"))));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** @return the book's directory, or {@code null} when the book is not in the database */
+    public String dirOf(String book) throws SQLException {
+        try (PreparedStatement p = db.prepareStatement("SELECT dir FROM book WHERE name = ?")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                return r.next() ? r.getString(1) : null;
+            }
         }
     }
 
