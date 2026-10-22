@@ -107,7 +107,11 @@ public final class BookRules {
                 name = "nucleus";
                 nuclei++;
             } else if (!RELATIONS.contains(name)) {
-                throw new IllegalArgumentException("sentence " + n + ": '" + name + "' is not a relation");
+                // a name that differs from one relation only in case is that relation ("contrast" for "Contrast")
+                String n0 = name;
+                List<String> sameLetters = RELATIONS.stream().filter(r -> r.equalsIgnoreCase(n0)).toList();
+                if (sameLetters.size() != 1) throw new IllegalArgumentException("sentence " + n + ": '" + name + "' is not a relation");
+                name = sameLetters.get(0);
             }
             out.add(name);
         }
