@@ -10,8 +10,20 @@ import java.util.Map;
  * Reads a book's structure into the H2 database of the intermediate data ({@code FrameOntology_261021_oo01}, getting
  * the concept hierarchy): its table of contents ({@link BookOutline}), then its text cut into those nodes
  * ({@link BookSections}). No LLM is used. Each call opens the database and closes it again; nothing is kept between calls.
+ * The book is read, and the database file checked, through a {@link FileGate}.
  */
 public final class BookStructure {
+
+    private final FileGate files;
+
+    /** Reads and writes through {@link FileGate#open()}. */
+    public BookStructure() {
+        this(FileGate.open());
+    }
+
+    public BookStructure(FileGate files) {
+        this.files = files;
+    }
 
     /**
      * Reads the table of contents of the book under {@code dir} from the headings of its markdown files and stores it
@@ -22,17 +34,18 @@ public final class BookStructure {
      */
     public String readToc(String db, String name, String dir) throws Exception {
         Path root = Path.of(dir).toAbsolutePath().toRealPath();
-        Map<String, String> files = markdown(root);
-        if (files.isEmpty()) throw new IllegalArgumentException("no markdown file under " + root);
-        BookOutline.Outline outline = BookOutline.read(files);
+        Map<String, String> md = markdown(root);
+        if (md.isEmpty()) throw new IllegalArgumentException("no markdown file under " + root);
+        BookOutline.Outline outline = BookOutline.read(md);
         Path dbFile = Path.of(db).toAbsolutePath().normalize();
+        files.mayWrite(dbFile);
         if (dbFile.getParent() != null) Files.createDirectories(dbFile.getParent());
         try (BookStore store = new BookStore(url(dbFile))) {
             store.saveOutline(name, root.toString(), outline);
         }
         Map<String, Integer> byLevel = new LinkedHashMap<>();
         for (BookOutline.Node n : outline.nodes()) byLevel.merge(n.level(), 1, Integer::sum);
-        return "read " + files.size() + " markdown file(s) of " + name + ": " + byLevel
+        return "read " + md.size() + " markdown file(s) of " + name + ": " + byLevel
                 + (outline.notes().isEmpty() ? "" : "; " + String.join("; ", outline.notes()));
     }
 
@@ -43,7 +56,9 @@ public final class BookStructure {
      * @return what was cut, in one line
      */
     public String cutSections(String db, String name) throws Exception {
-        try (BookStore store = new BookStore(url(Path.of(db).toAbsolutePath().normalize()))) {
+        Path dbFile = Path.of(db).toAbsolutePath().normalize();
+        files.mayWrite(dbFile);
+        try (BookStore store = new BookStore(url(dbFile))) {
             String dir = store.dirOf(name);
             if (dir == null) throw new IllegalArgumentException("no book " + name + " in " + db + "; read its table of contents first");
             BookSections.Result result = BookSections.split(markdown(Path.of(dir)), store.outline(name));
@@ -55,13 +70,11 @@ public final class BookStructure {
         }
     }
 
-    /** @return every markdown file under {@code root}, path under it to text, in path order */
-    static Map<String, String> markdown(Path root) throws IOException {
-        Map<String, String> files = new LinkedHashMap<>();
-        try (var walk = Files.walk(root)) {
-            for (Path p : walk.filter(p -> p.toString().endsWith(".md")).sorted().toList()) files.put(root.relativize(p).toString(), Files.readString(p));
-        }
-        return files;
+    /** @return every markdown file under {@code root}, path under it to text, in path order, read through the gate */
+    Map<String, String> markdown(Path root) throws IOException {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (Path p : files.list(root, ".md", Integer.MAX_VALUE)) out.put(root.relativize(p).toString(), files.read(p));
+        return out;
     }
 
     private static String url(Path dbFile) {

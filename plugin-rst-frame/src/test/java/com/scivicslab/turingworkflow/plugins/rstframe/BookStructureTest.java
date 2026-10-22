@@ -55,4 +55,30 @@ class BookStructureTest {
             system.terminate();
         }
     }
+
+    @Test
+    void aFilesActorDecidesWhatTheBooksActorMayRead(@TempDir Path dir) throws Exception {
+        Path allowed = dir.resolve("allowed");
+        Path book = book(dir);
+        // a gate that refuses everything outside 'allowed'
+        FileGate open = FileGate.open();
+        FileGate fenced = new FileGate() {
+            void check(Path p) { if (!p.toAbsolutePath().normalize().startsWith(allowed)) throw new SecurityException("outside: " + p); }
+            public String read(Path f) throws java.io.IOException { check(f); return open.read(f); }
+            public void write(Path f, String t) throws java.io.IOException { check(f); open.write(f, t); }
+            public java.util.List<Path> list(Path d, String s, int depth) throws java.io.IOException { check(d); return open.list(d, s, depth); }
+            public void mayWrite(Path f) { check(f); }
+        };
+        IIActorSystem system = new IIActorSystem("files-test");
+        try {
+            system.addIIActor(new com.scivicslab.turingworkflow.workflow.IIActorRef<FileGate>(FileGate.ACTOR, fenced, system) { });
+            BookStructureIIAR books = new BookStructureIIAR("books", system);
+            ActionResult refused = books.callByActionName("toc",
+                    new JSONObject().put("db", allowed.resolve("db/books").toString()).put("name", "core").put("book", book.toString()).toString());
+            assertFalse(refused.isSuccess());
+            assertTrue(refused.getResult().contains("outside"), refused.getResult());
+        } finally {
+            system.terminate();
+        }
+    }
 }

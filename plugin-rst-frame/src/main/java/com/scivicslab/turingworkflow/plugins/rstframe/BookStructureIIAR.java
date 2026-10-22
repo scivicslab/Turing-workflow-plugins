@@ -23,7 +23,8 @@ import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 public class BookStructureIIAR extends IIActorRef<BookStructure> {
 
     public BookStructureIIAR(String actorName, IIActorSystem system) {
-        super(actorName, new BookStructure(), system);
+        // the gate of the program's files actor, when it has one: what the workflow may read and write is the program's to decide
+        super(actorName, new BookStructure(FileGate.of(system)), system);
     }
 
     /** Reads a book's table of contents into the database. Args: {@code {db, name, book}}; the message says what was read. */
