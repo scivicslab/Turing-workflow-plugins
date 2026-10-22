@@ -127,7 +127,12 @@ public final class FrameExamples {
         List<Example> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         if (hasEdges(frame)) {
-            for (String seg : segments) {
+            // edges name rules, and a rule's name may hold "/" (flow/what): the blank's own prefixes first, longest first
+            List<String> candidates = new ArrayList<>();
+            String[] parts = blank.split("/");
+            for (int i = parts.length; i >= 1; i--) candidates.add(String.join("/", java.util.Arrays.copyOf(parts, i)));
+            for (String seg : segments) if (!candidates.contains(seg)) candidates.add(seg);
+            for (String seg : candidates) {
                 End at = new End(frame, seg);
                 if (!edges.containsKey(at)) continue;
                 List<End> concrete = new ArrayList<>();

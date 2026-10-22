@@ -146,6 +146,14 @@ class FrameExamplesTest {
     }
 
     @Test
+    void anEdgeToARuleWhoseNameHoldsASlashIsFoundFromTheBlanksPrefixes() {
+        List<String> links = List.of("explanation/explain.lisp\tflow/what\tsubject/b/ipv4.lisp\tp-what\tintegrates\n");
+        FrameExamples fx = new FrameExamples(framesWithIpv4Sample(), links, WORKS::get);
+        assertEquals(List.of("subject/b/ipv4.lisp / p-what"),
+                fx.forBlank("explanation/explain.lisp", "flow/what/n", 5).stream().map(FrameExamples.Example::source).toList());
+    }
+
+    @Test
     void withAnEdgeListTheRolesTableIsNotRead() {
         FrameExamples fx = new FrameExamples(FRAMES, LINKS, WORKS::get);
         assertTrue(fx.forBlank("explanation/explain.lisp", "p-prev", 5).isEmpty(), "p-prev is in the roles table but has no edge");
