@@ -38,6 +38,9 @@ public final class BookStore implements AutoCloseable {
                     + "name VARCHAR(200) NOT NULL, text CLOB NOT NULL, PRIMARY KEY (book, number, name))");
             s.execute("CREATE TABLE IF NOT EXISTS section_concept (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "ordinal INT NOT NULL, concept VARCHAR(1000) NOT NULL, PRIMARY KEY (book, number, ordinal))");
+            // step 5: whether a concept is kept, and why; null until judged
+            s.execute("ALTER TABLE section_concept ADD COLUMN IF NOT EXISTS kept BOOLEAN");
+            s.execute("ALTER TABLE section_concept ADD COLUMN IF NOT EXISTS reason VARCHAR(1000)");
         }
     }
 
@@ -239,6 +242,47 @@ public final class BookStore implements AutoCloseable {
             p.setString(1, book);
             try (ResultSet r = p.executeQuery()) {
                 while (r.next()) out.computeIfAbsent(r.getString(1), k -> new ArrayList<>()).add(r.getString(2));
+            }
+        }
+        return out;
+    }
+
+    /** One concept of a section, whether step 5 kept it ({@code null} until judged), and why. */
+    public record JudgedConcept(String concept, Boolean kept, String reason) {
+    }
+
+    /** Records step 5's judgement of one section's concepts, in the order they were listed. */
+    public synchronized void saveJudgement(String book, String number, List<JudgedConcept> judged) throws SQLException {
+        db.setAutoCommit(false);
+        try (PreparedStatement u = db.prepareStatement("UPDATE section_concept SET kept = ?, reason = ? WHERE book = ? AND number = ? AND ordinal = ?")) {
+            for (int n = 0; n < judged.size(); n++) {
+                u.setObject(1, judged.get(n).kept());
+                u.setString(2, judged.get(n).reason());
+                u.setString(3, book);
+                u.setString(4, number);
+                u.setInt(5, n);
+                u.addBatch();
+            }
+            u.executeBatch();
+            db.commit();
+        } catch (SQLException e) {
+            db.rollback();
+            throw e;
+        } finally {
+            db.setAutoCommit(true);
+        }
+    }
+
+    /** @return each section's concepts with step 5's judgement, by section number */
+    public synchronized java.util.Map<String, List<JudgedConcept>> judgedConcepts(String book) throws SQLException {
+        java.util.Map<String, List<JudgedConcept>> out = new java.util.LinkedHashMap<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT number, concept, kept, reason FROM section_concept WHERE book = ? ORDER BY number, ordinal")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) {
+                    out.computeIfAbsent(r.getString(1), k -> new ArrayList<>())
+                       .add(new JudgedConcept(r.getString(2), (Boolean) r.getObject(3), r.getString(4)));
+                }
             }
         }
         return out;
