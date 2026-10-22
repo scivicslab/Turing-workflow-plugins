@@ -25,6 +25,12 @@
             <artifactId>turing-workflow</artifactId>
         </dependency>
         <dependency>
+            <!-- Common Lisp on the JVM: concept classes are CLOS classes, and their inheritance is computed by CLOS -->
+            <groupId>org.abcl</groupId>
+            <artifactId>abcl</artifactId>
+            <version>1.9.2</version>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
