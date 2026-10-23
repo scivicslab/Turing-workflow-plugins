@@ -9,7 +9,8 @@ import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
  * The workflow actions of {@link BookStructure}: {@code toc} and {@code sections}, then {@code rules}, {@code concepts},
- * {@code judge}, {@code relations} and {@code review}, one per step. A workflow creates it with
+ * {@code judge}, {@code relations} and {@code review}, one per step; then {@code collect} and {@code prune} for each
+ * section's concrete frame. A workflow creates it with
  * {@code loader.createChild} and calls it by name, so a sub-workflow called with {@code this.call} can call it too.
  *
  * <pre>{@code
@@ -99,6 +100,22 @@ public class BookStructureIIAR extends IIActorRef<BookStructure> {
     public ActionResult review(String args) {
         return step(args, "could not review the relations", (b, a) -> b.review(a.getString("db"), a.getString("name"), a.getString("url"),
                 a.getString("model"), parallel(a), sections(a)));
+    }
+
+    /** A concrete frame's material: the rules that say each listed concept's properties and behaviors. Args: {@code {db, name, url, model, parallel, sections}}. */
+    @Action("collect")
+    public ActionResult collect(String args) {
+        return step(args, "could not collect the rules", (b, a) -> b.collect(a.getString("db"), a.getString("name"), a.getString("url"),
+                a.getString("model"), parallel(a), sections(a)));
+    }
+
+    /** Takes off the list a concept that got fewer than {@code min} rules (2 when not given); no model. Args: {@code {db, name, min}}. */
+    @Action("prune")
+    public ActionResult prune(String args) {
+        return step(args, "could not review the list", (b, a) -> {
+            String m = a.isNull("min") ? "" : a.get("min").toString().strip();
+            return b.prune(a.getString("db"), a.getString("name"), m.isEmpty() ? 2 : Integer.parseInt(m));
+        });
     }
 
     /** One step of the book, through this actor's mailbox; an exception becomes a failure naming its reason. */

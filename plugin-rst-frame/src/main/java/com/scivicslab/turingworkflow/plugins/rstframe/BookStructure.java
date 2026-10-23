@@ -117,6 +117,20 @@ public final class BookStructure {
         return ask(db, name, url, model, 400, parallel, only, SectionReview::reviewAll);
     }
 
+    /** The concrete frame's material: for each concept on the section's list, the rules that say its properties and behaviors ({@link FrameMaterial}). */
+    public String collect(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
+        return ask(db, name, url, model, 800, parallel, only, FrameMaterial::collectAll);
+    }
+
+    /** Takes off each section's list a concept that got fewer than {@code min} rules. No model is asked. */
+    public String prune(String db, String name, int min) throws Exception {
+        Path dbFile = Path.of(db).toAbsolutePath().normalize();
+        files.mayWrite(dbFile);
+        try (BookStore store = new BookStore(url(dbFile))) {
+            return FrameMaterial.pruneAll(store, name, min);
+        }
+    }
+
     private String ask(String db, String name, String url, String model, int maxTokens, int parallel, List<String> only, Batch batch)
             throws Exception {
         if (url == null || url.isBlank() || model == null || model.isBlank()) throw new IllegalArgumentException("url and model are required");

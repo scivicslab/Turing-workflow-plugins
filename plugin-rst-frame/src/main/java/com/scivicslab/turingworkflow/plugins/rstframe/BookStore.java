@@ -49,6 +49,12 @@ public final class BookStore implements AutoCloseable {
                     + "sentences VARCHAR(1000), PRIMARY KEY (book, number, ordinal))");
             // step 7: what the review made of each relation: keep, is-a, part-of, feature, reverse or drop; null until reviewed
             s.execute("ALTER TABLE section_relation ADD COLUMN IF NOT EXISTS review VARCHAR(20)");
+            // the material of a section's concrete frame: the rules that say a concept's properties and behaviors
+            s.execute("CREATE TABLE IF NOT EXISTS frame_concept (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "ordinal INT NOT NULL, concept VARCHAR(1000) NOT NULL, kept BOOLEAN, PRIMARY KEY (book, number, ordinal))");
+            s.execute("CREATE TABLE IF NOT EXISTS frame_rule (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "concept VARCHAR(1000) NOT NULL, ordinal INT NOT NULL, kind VARCHAR(20) NOT NULL, rule VARCHAR(400) NOT NULL, "
+                    + "text CLOB NOT NULL, PRIMARY KEY (book, number, concept, ordinal))");
         }
     }
 
@@ -96,7 +102,7 @@ public final class BookStore implements AutoCloseable {
     public synchronized void saveSections(String book, List<BookSections.Section> sections) throws SQLException {
         db.setAutoCommit(false);
         try {
-            for (String table : List.of("section_text", "section_rules", "section_code", "section_concept", "section_relation")) {
+            for (String table : List.of("section_text", "section_rules", "section_code", "section_concept", "section_relation", "frame_concept", "frame_rule")) {
                 try (PreparedStatement d = db.prepareStatement("DELETE FROM " + table + " WHERE book = ?")) {
                     d.setString(1, book);
                     d.executeUpdate();
@@ -352,6 +358,91 @@ public final class BookStore implements AutoCloseable {
         } finally {
             db.setAutoCommit(true);
         }
+    }
+
+    /** One rule of a section's rule file that says a property of a concept or a behavior of it. */
+    public record FrameRule(String kind, String rule, String text) {
+        public static final String PROPERTY = "property";
+        public static final String BEHAVIOR = "behavior";
+    }
+
+    /**
+     * One concept of a section's concrete frame: the rules collected for it, and whether it stays on the list
+     * ({@code null} until the list is reviewed).
+     */
+    public record FrameConcept(String concept, List<FrameRule> rules, Boolean kept) {
+    }
+
+    /** Replaces the concepts of one section's concrete frame and the rules collected for each. */
+    public synchronized void saveFrameConcepts(String book, String number, List<FrameConcept> concepts) throws SQLException {
+        db.setAutoCommit(false);
+        try {
+            for (String table : List.of("frame_concept", "frame_rule")) {
+                try (PreparedStatement d = db.prepareStatement("DELETE FROM " + table + " WHERE book = ? AND number = ?")) {
+                    d.setString(1, book);
+                    d.setString(2, number);
+                    d.executeUpdate();
+                }
+            }
+            try (PreparedStatement c = db.prepareStatement("INSERT INTO frame_concept (book, number, ordinal, concept, kept) VALUES (?, ?, ?, ?, ?)");
+                 PreparedStatement r = db.prepareStatement(
+                         "INSERT INTO frame_rule (book, number, concept, ordinal, kind, rule, text) VALUES (?, ?, ?, ?, ?, ?, ?)")) {
+                for (int n = 0; n < concepts.size(); n++) {
+                    FrameConcept fc = concepts.get(n);
+                    c.setString(1, book);
+                    c.setString(2, number);
+                    c.setInt(3, n);
+                    c.setString(4, fc.concept());
+                    c.setObject(5, fc.kept());
+                    c.addBatch();
+                    for (int k = 0; k < fc.rules().size(); k++) {
+                        FrameRule fr = fc.rules().get(k);
+                        r.setString(1, book);
+                        r.setString(2, number);
+                        r.setString(3, fc.concept());
+                        r.setInt(4, k);
+                        r.setString(5, fr.kind());
+                        r.setString(6, fr.rule());
+                        r.setString(7, fr.text());
+                        r.addBatch();
+                    }
+                }
+                c.executeBatch();
+                r.executeBatch();
+            }
+            db.commit();
+        } catch (SQLException e) {
+            db.rollback();
+            throw e;
+        } finally {
+            db.setAutoCommit(true);
+        }
+    }
+
+    /** @return each section's concrete-frame concepts with their rules, by section number, in list order */
+    public synchronized java.util.Map<String, List<FrameConcept>> frameConcepts(String book) throws SQLException {
+        java.util.Map<String, java.util.Map<String, List<FrameRule>>> rules = new java.util.HashMap<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT number, concept, kind, rule, text FROM frame_rule WHERE book = ? ORDER BY number, concept, ordinal")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) {
+                    rules.computeIfAbsent(r.getString(1), k -> new java.util.HashMap<>()).computeIfAbsent(r.getString(2), k -> new ArrayList<>())
+                         .add(new FrameRule(r.getString(3), r.getString(4), r.getString(5)));
+                }
+            }
+        }
+        java.util.Map<String, List<FrameConcept>> out = new java.util.LinkedHashMap<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT number, concept, kept FROM frame_concept WHERE book = ? ORDER BY number, ordinal")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) {
+                    String number = r.getString(1);
+                    List<FrameRule> rs = rules.getOrDefault(number, java.util.Map.of()).getOrDefault(r.getString(2), List.of());
+                    out.computeIfAbsent(number, k -> new ArrayList<>()).add(new FrameConcept(r.getString(2), rs, (Boolean) r.getObject(3)));
+                }
+            }
+        }
+        return out;
     }
 
     /** Records step 7's verdict on each of one section's relations, in the order {@link #relations} gives them. */

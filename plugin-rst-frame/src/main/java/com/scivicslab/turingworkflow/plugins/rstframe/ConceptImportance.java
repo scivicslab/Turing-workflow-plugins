@@ -33,8 +33,11 @@ public final class ConceptImportance {
     private ConceptImportance() {
     }
 
-    /** One sentence (or list item, or code block) of a rule file and its role. */
-    public record Unit(String role, String text) {
+    /** One sentence (or list item, or code block) of a rule file, its role, and the name of the rule that holds it. */
+    public record Unit(String role, String text, String rule) {
+        public Unit(String role, String text) {
+            this(role, text, null);
+        }
     }
 
     /**
@@ -117,12 +120,12 @@ public final class ConceptImportance {
         for (RuleFile.Rule r : f.rules()) {
             if (r.attr(":file") != null) {
                 String text = code.get(r.attr(":file"));
-                if (text != null) out.add(new Unit("code", text));
+                if (text != null) out.add(new Unit("code", text, r.name()));
                 continue;
             }
             String role = roleOf.get(r.name());
             if (role == null) continue;
-            for (RuleFile.Token t : r.items()) if (t.kind() == RuleFile.Token.Kind.STRING) out.add(new Unit(role, t.value()));
+            for (RuleFile.Token t : r.items()) if (t.kind() == RuleFile.Token.Kind.STRING) out.add(new Unit(role, t.value(), r.name()));
         }
         return out;
     }
