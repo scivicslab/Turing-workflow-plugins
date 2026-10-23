@@ -43,6 +43,10 @@ public final class BookStore implements AutoCloseable {
             s.execute("ALTER TABLE section_concept ADD COLUMN IF NOT EXISTS reason VARCHAR(1000)");
             // step 4: the numbers of the sentences that explain the concept, comma separated; null when listed without them
             s.execute("ALTER TABLE section_concept ADD COLUMN IF NOT EXISTS sentences VARCHAR(1000)");
+            // step 6: how the concepts of one section relate: is-a, part-of, feature
+            s.execute("CREATE TABLE IF NOT EXISTS section_relation (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "ordinal INT NOT NULL, kind VARCHAR(20) NOT NULL, child VARCHAR(1000) NOT NULL, parent VARCHAR(1000) NOT NULL, "
+                    + "sentences VARCHAR(1000), PRIMARY KEY (book, number, ordinal))");
         }
     }
 
@@ -90,7 +94,7 @@ public final class BookStore implements AutoCloseable {
     public synchronized void saveSections(String book, List<BookSections.Section> sections) throws SQLException {
         db.setAutoCommit(false);
         try {
-            for (String table : List.of("section_text", "section_rules", "section_code", "section_concept")) {
+            for (String table : List.of("section_text", "section_rules", "section_code", "section_concept", "section_relation")) {
                 try (PreparedStatement d = db.prepareStatement("DELETE FROM " + table + " WHERE book = ?")) {
                     d.setString(1, book);
                     d.executeUpdate();
@@ -276,6 +280,72 @@ public final class BookStore implements AutoCloseable {
                         for (String x : at.split(",")) if (!x.isBlank()) sentences.add(Integer.parseInt(x.strip()));
                     }
                     out.computeIfAbsent(r.getString(1), k -> new ArrayList<>()).add(new ListedConcept(r.getString(2), sentences));
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * One relation between two concepts of a section (step 6): {@code child} is a kind of {@code parent}
+     * ({@link #IS_A}), a part of it ({@link #PART_OF}), or a feature of it ({@link #FEATURE}), as the sentences numbered
+     * say.
+     */
+    public record Relation(String kind, String child, String parent, List<Integer> sentences) {
+        public static final String IS_A = "is-a";
+        public static final String PART_OF = "part-of";
+        public static final String FEATURE = "feature";
+    }
+
+    /** Replaces the relations between one section's concepts; an empty list records that it was asked and none was found. */
+    public synchronized void saveRelations(String book, String number, List<Relation> relations) throws SQLException {
+        db.setAutoCommit(false);
+        try {
+            try (PreparedStatement d = db.prepareStatement("DELETE FROM section_relation WHERE book = ? AND number = ?")) {
+                d.setString(1, book);
+                d.setString(2, number);
+                d.executeUpdate();
+            }
+            try (PreparedStatement i = db.prepareStatement(
+                    "INSERT INTO section_relation (book, number, ordinal, kind, child, parent, sentences) VALUES (?, ?, ?, ?, ?, ?, ?)")) {
+                // a section asked with no relation found is kept as ordinal -1, so a run started again does not ask it twice
+                List<Relation> rows = relations.isEmpty() ? List.of(new Relation("", "", "", null)) : relations;
+                for (int n = 0; n < rows.size(); n++) {
+                    Relation r = rows.get(n);
+                    i.setString(1, book);
+                    i.setString(2, number);
+                    i.setInt(3, relations.isEmpty() ? -1 : n);
+                    i.setString(4, r.kind());
+                    i.setString(5, r.child());
+                    i.setString(6, r.parent());
+                    i.setString(7, r.sentences() == null ? null : String.join(",", r.sentences().stream().map(String::valueOf).toList()));
+                    i.addBatch();
+                }
+                i.executeBatch();
+            }
+            db.commit();
+        } catch (SQLException e) {
+            db.rollback();
+            throw e;
+        } finally {
+            db.setAutoCommit(true);
+        }
+    }
+
+    /** @return the relations between each section's concepts, by section number; a section asked with none found has an empty list */
+    public synchronized java.util.Map<String, List<Relation>> relations(String book) throws SQLException {
+        java.util.Map<String, List<Relation>> out = new java.util.LinkedHashMap<>();
+        try (PreparedStatement p = db.prepareStatement(
+                "SELECT number, ordinal, kind, child, parent, sentences FROM section_relation WHERE book = ? ORDER BY number, ordinal")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) {
+                    List<Relation> list = out.computeIfAbsent(r.getString(1), k -> new ArrayList<>());
+                    if (r.getInt(2) < 0) continue;
+                    String at = r.getString(6);
+                    List<Integer> sentences = new ArrayList<>();
+                    if (at != null) for (String x : at.split(",")) if (!x.isBlank()) sentences.add(Integer.parseInt(x.strip()));
+                    list.add(new Relation(r.getString(3), r.getString(4), r.getString(5), sentences));
                 }
             }
         }
