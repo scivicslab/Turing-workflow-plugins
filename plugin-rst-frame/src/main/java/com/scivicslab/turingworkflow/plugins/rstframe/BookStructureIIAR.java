@@ -103,7 +103,7 @@ public class BookStructureIIAR extends IIActorRef<BookStructure> {
                 a.getString("model"), parallel(a), sections(a)));
     }
 
-    /** How each section lays out its blocks: sequence, structure or partition. Args: {@code {db, name, url, model, parallel, sections}}. */
+    /** How each section explains its main concept: sequence, structure, partition or aspects. Args: {@code {db, name, url, model, parallel, sections}}. */
     @Action("patterns")
     public ActionResult patterns(String args) {
         return step(args, "could not ask the patterns", (b, a) -> b.patterns(a.getString("db"), a.getString("name"), a.getString("url"),

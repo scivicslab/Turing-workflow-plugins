@@ -57,8 +57,8 @@ public final class BookStore implements AutoCloseable {
             s.execute("CREATE TABLE IF NOT EXISTS frame_rule (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "concept VARCHAR(1000) NOT NULL, ordinal INT NOT NULL, kind VARCHAR(20) NOT NULL, rule VARCHAR(400) NOT NULL, "
                     + "text CLOB NOT NULL, PRIMARY KEY (book, number, concept, ordinal))");
-            // how a section explains its main concept: sequence, structure or partition; the blocks that are the concept's
-            // steps, parts or kinds, one "block<TAB>name" line each
+            // how a section explains its main concept: sequence, structure, partition or aspects; the blocks that are the concept's
+            // steps, parts, kinds or aspects, one "block<TAB>name" line each
             s.execute("CREATE TABLE IF NOT EXISTS section_pattern (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "concept VARCHAR(1000) NOT NULL, pattern VARCHAR(20) NOT NULL, members CLOB, PRIMARY KEY (book, number))");
         }

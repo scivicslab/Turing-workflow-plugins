@@ -112,7 +112,7 @@ public final class BookStructure {
         return ask(db, name, url, model, 600, parallel, only, SectionRelations::relateAll);
     }
 
-    /** How each section lays out its blocks: sequence, structure or partition ({@link SectionPattern}). */
+    /** How each section explains its main concept: sequence, structure, partition or aspects ({@link SectionPattern}). */
     public String patterns(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
         return ask(db, name, url, model, 600, parallel, only, SectionPattern::askAll);
     }

@@ -45,7 +45,7 @@ class SectionPatternTest {
         assertTrue(q.contains("[b1] Comments in Java"));
         assertTrue(q.contains("[b4] Finally, a third kind"));
         assertTrue(q.contains("uses to explain \"comment\""));
-        assertTrue(q.contains("You must choose one of the three"));
+        assertTrue(q.contains("You must choose one of the four"));
         assertTrue(q.contains("the order is the text's, not the concept's"));
     }
 
@@ -75,6 +75,14 @@ class SectionPatternTest {
         assertEquals("comment", SectionPattern.mainConcept(judged, frame));
         assertEquals("compiler", SectionPattern.mainConcept(List.of(), frame));
         assertNull(SectionPattern.mainConcept(judged, List.of()));
+    }
+
+    @Test
+    void anAspectReplyNamesEachBlocksAspect() {
+        SectionPattern.Layout l = SectionPattern.read("pattern: aspect\nb1 | definition: a value that cannot change\nb3 | usage: class constants",
+                "constant", SectionPattern.blocks(COMMENTS, Map.of()));
+        assertEquals(SectionPattern.ASPECTS, l.pattern());
+        assertEquals("definition: a value that cannot change", l.members().get(0).name());
     }
 
     @Test
