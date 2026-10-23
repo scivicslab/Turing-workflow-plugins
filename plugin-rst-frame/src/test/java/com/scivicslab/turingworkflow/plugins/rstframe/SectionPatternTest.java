@@ -46,6 +46,7 @@ class SectionPatternTest {
         assertTrue(q.contains("[b4] Finally, a third kind"));
         assertTrue(q.contains("uses to explain \"comment\""));
         assertTrue(q.contains("You must choose one of the three"));
+        assertTrue(q.contains("the order is the text's, not the concept's"));
     }
 
     @Test

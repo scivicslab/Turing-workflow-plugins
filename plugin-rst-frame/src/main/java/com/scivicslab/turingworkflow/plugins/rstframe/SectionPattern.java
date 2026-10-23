@@ -120,7 +120,10 @@ public final class SectionPattern {
         return "Below is one section of a textbook, \"" + node.number() + ". " + node.title() + "\", its blocks named b1, b2, ...\n\n"
                 + text
                 + "The section's main concept is \"" + concept + "\". A textbook explains a concept in one of three ways:\n"
-                + "sequence    the blocks go through its steps in order: a procedure, a process, what happens first and what next.\n"
+                + "sequence    the concept itself is a procedure or a process that runs in time, and the blocks go through its "
+                + "steps in the order they happen (compiling then running a program; a loop testing its condition, running its "
+                + "body, testing again). A section that only takes up one topic after another (what the concept is, its syntax, "
+                + "how it is used, what to watch out for) is not a sequence: the order is the text's, not the concept's.\n"
                 + "structure   the blocks take it apart, as anatomy does: each block explains one part or component of it and how "
                 + "that part fits with the others.\n"
                 + "partition   the blocks divide it, a set, into its kinds: each block explains one kind, and the kinds together "
