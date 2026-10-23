@@ -135,6 +135,21 @@ public final class BookStructure {
     }
 
     /** The concrete frame's material: for each concept on the section's list, the rules that say its properties and behaviors ({@link FrameMaterial}). */
+    /** Recognizes the concepts of the book across its sections ({@link GeneralFrames#identifyAll}). */
+    public String identify(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
+        return ask(db, name, url, model, 400, parallel, only, GeneralFrames::identifyAll);
+    }
+
+    /** The items of each concept of the book found in several sections, over its material put together ({@link GeneralFrames#mergeAll}). */
+    public String merge(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
+        return ask(db, name, url, model, 2500, parallel, only, GeneralFrames::mergeAll);
+    }
+
+    /** The generalized concepts and their items, one level up the concept tree ({@link GeneralFrames#generalizeAll}). */
+    public String generalize(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
+        return ask(db, name, url, model, 2500, parallel, only, GeneralFrames::generalizeAll);
+    }
+
     /** The items of each concept's concrete frame: the questions its gathered rules answer ({@link FrameItems}). */
     public String items(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
         return ask(db, name, url, model, 1000, parallel, only, FrameItems::askAll);

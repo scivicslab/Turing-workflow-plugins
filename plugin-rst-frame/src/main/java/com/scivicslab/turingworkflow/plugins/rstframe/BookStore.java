@@ -64,6 +64,13 @@ public final class BookStore implements AutoCloseable {
             s.execute("CREATE TABLE IF NOT EXISTS frame_item (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "concept VARCHAR(1000) NOT NULL, ordinal INT NOT NULL, question VARCHAR(2000) NOT NULL, rules VARCHAR(4000) NOT NULL, "
                     + "PRIMARY KEY (book, number, concept, ordinal))");
+            // the concepts of the book (one per concept, recognized across sections) and the generalized concepts above
+            // them; members are "number<TAB>concept" lines, children the ids of a generalized concept's kinds
+            s.execute("CREATE TABLE IF NOT EXISTS concept_entity (book VARCHAR(200) NOT NULL, id VARCHAR(1000) NOT NULL, "
+                    + "name VARCHAR(1000) NOT NULL, level VARCHAR(20) NOT NULL, members CLOB, children CLOB, PRIMARY KEY (book, id))");
+            // the items of a concept of the book: the questions, each with the sentences ("number:rule") that answer it
+            s.execute("CREATE TABLE IF NOT EXISTS concept_entity_item (book VARCHAR(200) NOT NULL, id VARCHAR(1000) NOT NULL, "
+                    + "ordinal INT NOT NULL, question VARCHAR(2000) NOT NULL, rules CLOB NOT NULL, PRIMARY KEY (book, id, ordinal))");
             s.execute("CREATE TABLE IF NOT EXISTS section_pattern (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "concept VARCHAR(1000) NOT NULL, pattern VARCHAR(20) NOT NULL, members CLOB, PRIMARY KEY (book, number))");
         }
@@ -461,6 +468,126 @@ public final class BookStore implements AutoCloseable {
                     out.computeIfAbsent(number, k -> new ArrayList<>())
                        .add(new FrameConcept(r.getString(2), rs, (Boolean) r.getObject(3), f == null ? List.of() : List.of(f.split("\n"))));
                 }
+            }
+        }
+        return out;
+    }
+
+    /** One appearance of a concept: the section and the name it has there. */
+    public record Occurrence(String number, String concept) {
+    }
+
+    /**
+     * A concept of the book: recognized across the sections it appears in ({@link #CONCEPT}), or a generalized concept
+     * above its kinds ({@link #GENERAL}).
+     *
+     * @param members  the appearances whose material it has
+     * @param children the ids of a generalized concept's kinds; empty for a concept
+     */
+    public record Entity(String id, String name, String level, List<Occurrence> members, List<String> children) {
+        public static final String CONCEPT = "concept";
+        public static final String GENERAL = "general";
+    }
+
+    /** Replaces the concepts of the book of one level, and drops the items of those it had. */
+    public synchronized void saveEntities(String book, String level, List<Entity> entities) throws SQLException {
+        db.setAutoCommit(false);
+        try {
+            try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_entity_item WHERE book = ? AND id IN "
+                    + "(SELECT id FROM concept_entity WHERE book = ? AND level = ?)")) {
+                d.setString(1, book);
+                d.setString(2, book);
+                d.setString(3, level);
+                d.executeUpdate();
+            }
+            try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_entity WHERE book = ? AND level = ?")) {
+                d.setString(1, book);
+                d.setString(2, level);
+                d.executeUpdate();
+            }
+            try (PreparedStatement p = db.prepareStatement("INSERT INTO concept_entity (book, id, name, level, members, children) VALUES (?, ?, ?, ?, ?, ?)")) {
+                for (Entity e : entities) {
+                    StringBuilder m = new StringBuilder();
+                    for (Occurrence o : e.members()) m.append(o.number()).append('\t').append(o.concept()).append('\n');
+                    p.setString(1, book);
+                    p.setString(2, e.id());
+                    p.setString(3, e.name());
+                    p.setString(4, level);
+                    p.setString(5, m.toString());
+                    p.setString(6, String.join("\n", e.children()));
+                    p.addBatch();
+                }
+                p.executeBatch();
+            }
+            db.commit();
+        } catch (SQLException e) {
+            db.rollback();
+            throw e;
+        } finally {
+            db.setAutoCommit(true);
+        }
+    }
+
+    /** @return the concepts of the book, concepts first, in the order stored */
+    public synchronized List<Entity> entities(String book) throws SQLException {
+        List<Entity> out = new ArrayList<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT id, name, level, members, children FROM concept_entity WHERE book = ? ORDER BY level, id")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) {
+                    List<Occurrence> members = new ArrayList<>();
+                    String m = r.getString(4);
+                    if (m != null) {
+                        for (String line : m.split("\n")) {
+                            int tab = line.indexOf('\t');
+                            if (tab > 0) members.add(new Occurrence(line.substring(0, tab), line.substring(tab + 1)));
+                        }
+                    }
+                    String c = r.getString(5);
+                    out.add(new Entity(r.getString(1), r.getString(2), r.getString(3), members,
+                            c == null || c.isBlank() ? List.of() : List.of(c.split("\n"))));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Replaces the items of one concept of the book. */
+    public synchronized void saveEntityItems(String book, String id, List<FrameItem> items) throws SQLException {
+        db.setAutoCommit(false);
+        try {
+            try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_entity_item WHERE book = ? AND id = ?")) {
+                d.setString(1, book);
+                d.setString(2, id);
+                d.executeUpdate();
+            }
+            try (PreparedStatement p = db.prepareStatement("INSERT INTO concept_entity_item (book, id, ordinal, question, rules) VALUES (?, ?, ?, ?, ?)")) {
+                for (int n = 0; n < items.size(); n++) {
+                    p.setString(1, book);
+                    p.setString(2, id);
+                    p.setInt(3, n);
+                    p.setString(4, items.get(n).question());
+                    p.setString(5, String.join(",", items.get(n).rules()));
+                    p.addBatch();
+                }
+                p.executeBatch();
+            }
+            db.commit();
+        } catch (SQLException e) {
+            db.rollback();
+            throw e;
+        } finally {
+            db.setAutoCommit(true);
+        }
+    }
+
+    /** @return the items of each concept of the book that has them, by id */
+    public synchronized java.util.Map<String, List<FrameItem>> entityItems(String book) throws SQLException {
+        java.util.Map<String, List<FrameItem>> out = new java.util.LinkedHashMap<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT id, question, rules FROM concept_entity_item WHERE book = ? ORDER BY id, ordinal")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) out.computeIfAbsent(r.getString(1), k -> new ArrayList<>()).add(new FrameItem(r.getString(2), List.of(r.getString(3).split(","))));
             }
         }
         return out;

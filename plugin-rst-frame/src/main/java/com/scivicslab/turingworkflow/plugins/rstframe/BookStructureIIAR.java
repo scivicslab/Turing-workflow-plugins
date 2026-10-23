@@ -127,6 +127,27 @@ public class BookStructureIIAR extends IIActorRef<BookStructure> {
                 a.getString("model"), parallel(a), sections(a)));
     }
 
+    /** Recognizes the concepts of the book across its sections. Args: {@code {db, name, url, model, parallel}}. */
+    @Action("identify")
+    public ActionResult identify(String args) {
+        return step(args, "could not recognize the concepts", (b, a) -> b.identify(a.getString("db"), a.getString("name"), a.getString("url"),
+                a.getString("model"), parallel(a), sections(a)));
+    }
+
+    /** The items of each concept found in several sections, over its material put together. Args: {@code {db, name, url, model, parallel, sections}}. */
+    @Action("merge")
+    public ActionResult merge(String args) {
+        return step(args, "could not merge the concepts", (b, a) -> b.merge(a.getString("db"), a.getString("name"), a.getString("url"),
+                a.getString("model"), parallel(a), sections(a)));
+    }
+
+    /** The generalized concepts, one level up the concept tree, and their items. Args: {@code {db, name, url, model, parallel, sections}}. */
+    @Action("generalize")
+    public ActionResult generalize(String args) {
+        return step(args, "could not generalize the concepts", (b, a) -> b.generalize(a.getString("db"), a.getString("name"), a.getString("url"),
+                a.getString("model"), parallel(a), sections(a)));
+    }
+
     /** Takes off the list a concept that got fewer than {@code min} rules (2 when not given); no model. Args: {@code {db, name, min}}. */
     @Action("prune")
     public ActionResult prune(String args) {
