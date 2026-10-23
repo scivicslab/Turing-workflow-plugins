@@ -59,6 +59,11 @@ public final class BookStore implements AutoCloseable {
                     + "text CLOB NOT NULL, PRIMARY KEY (book, number, concept, ordinal))");
             // how a section explains its main concept: sequence, structure, partition or aspects; the blocks that are the concept's
             // steps, parts, kinds or aspects, one "block<TAB>relation<TAB>name" line each
+            // the items of a concept's concrete frame: the questions its explanation answers, each with the rules that
+            // answer it, comma separated
+            s.execute("CREATE TABLE IF NOT EXISTS frame_item (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "concept VARCHAR(1000) NOT NULL, ordinal INT NOT NULL, question VARCHAR(2000) NOT NULL, rules VARCHAR(4000) NOT NULL, "
+                    + "PRIMARY KEY (book, number, concept, ordinal))");
             s.execute("CREATE TABLE IF NOT EXISTS section_pattern (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "concept VARCHAR(1000) NOT NULL, pattern VARCHAR(20) NOT NULL, members CLOB, PRIMARY KEY (book, number))");
         }
@@ -455,6 +460,56 @@ public final class BookStore implements AutoCloseable {
                     String f = r.getString(4);
                     out.computeIfAbsent(number, k -> new ArrayList<>())
                        .add(new FrameConcept(r.getString(2), rs, (Boolean) r.getObject(3), f == null ? List.of() : List.of(f.split("\n"))));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** One item of a concept's concrete frame: a question its explanation answers, and the rules that answer it. */
+    public record FrameItem(String question, List<String> rules) {
+    }
+
+    /** Replaces the items of one concept of one section. */
+    public synchronized void saveFrameItems(String book, String number, String concept, List<FrameItem> items) throws SQLException {
+        db.setAutoCommit(false);
+        try {
+            try (PreparedStatement d = db.prepareStatement("DELETE FROM frame_item WHERE book = ? AND number = ? AND concept = ?")) {
+                d.setString(1, book);
+                d.setString(2, number);
+                d.setString(3, concept);
+                d.executeUpdate();
+            }
+            try (PreparedStatement p = db.prepareStatement("INSERT INTO frame_item (book, number, concept, ordinal, question, rules) VALUES (?, ?, ?, ?, ?, ?)")) {
+                for (int n = 0; n < items.size(); n++) {
+                    p.setString(1, book);
+                    p.setString(2, number);
+                    p.setString(3, concept);
+                    p.setInt(4, n);
+                    p.setString(5, items.get(n).question());
+                    p.setString(6, String.join(",", items.get(n).rules()));
+                    p.addBatch();
+                }
+                p.executeBatch();
+            }
+            db.commit();
+        } catch (SQLException e) {
+            db.rollback();
+            throw e;
+        } finally {
+            db.setAutoCommit(true);
+        }
+    }
+
+    /** @return the items of each concept, by section number and concept, in order */
+    public synchronized java.util.Map<String, java.util.Map<String, List<FrameItem>>> frameItems(String book) throws SQLException {
+        java.util.Map<String, java.util.Map<String, List<FrameItem>>> out = new java.util.LinkedHashMap<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT number, concept, question, rules FROM frame_item WHERE book = ? ORDER BY number, concept, ordinal")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) {
+                    out.computeIfAbsent(r.getString(1), k -> new java.util.LinkedHashMap<>()).computeIfAbsent(r.getString(2), k -> new ArrayList<>())
+                       .add(new FrameItem(r.getString(3), List.of(r.getString(4).split(","))));
                 }
             }
         }

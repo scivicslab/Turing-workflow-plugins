@@ -135,6 +135,11 @@ public final class BookStructure {
     }
 
     /** The concrete frame's material: for each concept on the section's list, the rules that say its properties and behaviors ({@link FrameMaterial}). */
+    /** The items of each concept's concrete frame: the questions its gathered rules answer ({@link FrameItems}). */
+    public String items(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
+        return ask(db, name, url, model, 1000, parallel, only, FrameItems::askAll);
+    }
+
     public String collect(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
         return ask(db, name, url, model, 800, parallel, only, FrameMaterial::collectAll);
     }

@@ -120,6 +120,13 @@ public class BookStructureIIAR extends IIActorRef<BookStructure> {
                 a.getString("model"), parallel(a), sections(a)));
     }
 
+    /** The items of each concept's concrete frame, from the rules collected for it. Args: {@code {db, name, url, model, parallel, sections}}. */
+    @Action("items")
+    public ActionResult items(String args) {
+        return step(args, "could not ask the items", (b, a) -> b.items(a.getString("db"), a.getString("name"), a.getString("url"),
+                a.getString("model"), parallel(a), sections(a)));
+    }
+
     /** Takes off the list a concept that got fewer than {@code min} rules (2 when not given); no model. Args: {@code {db, name, min}}. */
     @Action("prune")
     public ActionResult prune(String args) {

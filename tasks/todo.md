@@ -25,3 +25,9 @@
       `quarkus-chat-ui`・`quarkus-chat-ui3` は別の変更として、それぞれの判断で追随する。
 - [ ] 段階 3: `ensureSession`/`ensureJobSession` のように、引くつもりで呼ぶと作るメソッドを、引くものと作るものに分ける。
       `ChatUiActorSystem.hasChat` は、アプリ側の `chats` ではなく `ActorSystem` の登録簿に問い合わせる。
+
+## Lesson (2026-10-24): the gathered frame material is a result in itself
+
+Each concept's rst-on-lisp rules, gathered from the whole section (properties and behaviors), is a key result: material
+scattered over the book now sits in one place. The next step builds on it: name the questions a concept's explanation
+answers (the items) and assign each rule to one.

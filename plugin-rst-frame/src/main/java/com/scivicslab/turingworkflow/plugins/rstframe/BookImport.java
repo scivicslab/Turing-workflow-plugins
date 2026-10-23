@@ -16,6 +16,7 @@ import java.util.Map;
  * java ... BookImport relations &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
  * java ... BookImport review &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
  * java ... BookImport patterns &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
+ * java ... BookImport items &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
  * java ... BookImport collect &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
  * java ... BookImport prune &lt;db-file&gt; &lt;book-name&gt; &lt;min-rules&gt;</pre>
  * {@code toc}: reads the table of contents from the headings of every markdown file under the book's directory, in path
@@ -69,6 +70,14 @@ public final class BookImport {
         if (a.length == 4 && a[0].equals("prune")) {
             try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 System.out.println(FrameMaterial.pruneAll(store, a[2], Integer.parseInt(a[3])));
+            }
+            return;
+        }
+        if (a.length >= 6 && a[0].equals("items")) {
+            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+                java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
+                System.out.println(FrameItems.askAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 1000), Integer.parseInt(a[5]),
+                        line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
             }
             return;
         }
