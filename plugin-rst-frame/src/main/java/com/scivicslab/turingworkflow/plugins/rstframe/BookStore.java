@@ -41,6 +41,8 @@ public final class BookStore implements AutoCloseable {
             // step 5: whether a concept is kept, and why; null until judged
             s.execute("ALTER TABLE section_concept ADD COLUMN IF NOT EXISTS kept BOOLEAN");
             s.execute("ALTER TABLE section_concept ADD COLUMN IF NOT EXISTS reason VARCHAR(1000)");
+            // step 4: the numbers of the sentences that explain the concept, comma separated; null when listed without them
+            s.execute("ALTER TABLE section_concept ADD COLUMN IF NOT EXISTS sentences VARCHAR(1000)");
         }
     }
 
@@ -207,8 +209,19 @@ public final class BookStore implements AutoCloseable {
         return out;
     }
 
-    /** Replaces the concepts one section explains. */
-    public synchronized void saveConcepts(String book, String number, List<String> concepts) throws SQLException {
+    /** One concept a section explains, and the numbers of its sentences that explain it ({@link ConceptImportance#units}). */
+    public record ListedConcept(String concept, List<Integer> sentences) {
+    }
+
+    /** Replaces the concepts one section explains, listed without the sentences that explain them. */
+    public void saveConcepts(String book, String number, List<String> concepts) throws SQLException {
+        List<ListedConcept> listed = new ArrayList<>();
+        for (String c : concepts) listed.add(new ListedConcept(c, null));
+        saveListedConcepts(book, number, listed);
+    }
+
+    /** Replaces the concepts one section explains, each with the sentences that explain it. */
+    public synchronized void saveListedConcepts(String book, String number, List<ListedConcept> concepts) throws SQLException {
         db.setAutoCommit(false);
         try {
             try (PreparedStatement d = db.prepareStatement("DELETE FROM section_concept WHERE book = ? AND number = ?")) {
@@ -216,12 +229,14 @@ public final class BookStore implements AutoCloseable {
                 d.setString(2, number);
                 d.executeUpdate();
             }
-            try (PreparedStatement i = db.prepareStatement("INSERT INTO section_concept (book, number, ordinal, concept) VALUES (?, ?, ?, ?)")) {
+            try (PreparedStatement i = db.prepareStatement("INSERT INTO section_concept (book, number, ordinal, concept, sentences) VALUES (?, ?, ?, ?, ?)")) {
                 for (int n = 0; n < concepts.size(); n++) {
+                    List<Integer> at = concepts.get(n).sentences();
                     i.setString(1, book);
                     i.setString(2, number);
                     i.setInt(3, n);
-                    i.setString(4, concepts.get(n));
+                    i.setString(4, concepts.get(n).concept());
+                    i.setString(5, at == null ? null : String.join(",", at.stream().map(String::valueOf).toList()));
                     i.addBatch();
                 }
                 i.executeBatch();
@@ -242,6 +257,26 @@ public final class BookStore implements AutoCloseable {
             p.setString(1, book);
             try (ResultSet r = p.executeQuery()) {
                 while (r.next()) out.computeIfAbsent(r.getString(1), k -> new ArrayList<>()).add(r.getString(2));
+            }
+        }
+        return out;
+    }
+
+    /** @return each section's concepts with the sentences that explain them ({@code null} when listed without), by section number */
+    public synchronized java.util.Map<String, List<ListedConcept>> listedConcepts(String book) throws SQLException {
+        java.util.Map<String, List<ListedConcept>> out = new java.util.LinkedHashMap<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT number, concept, sentences FROM section_concept WHERE book = ? ORDER BY number, ordinal")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) {
+                    String at = r.getString(3);
+                    List<Integer> sentences = null;
+                    if (at != null) {
+                        sentences = new ArrayList<>();
+                        for (String x : at.split(",")) if (!x.isBlank()) sentences.add(Integer.parseInt(x.strip()));
+                    }
+                    out.computeIfAbsent(r.getString(1), k -> new ArrayList<>()).add(new ListedConcept(r.getString(2), sentences));
+                }
             }
         }
         return out;

@@ -44,4 +44,24 @@ class ConceptImportanceTest {
                 new BookStore.JudgedConcept("Employee", false, "only in code"),
                 new BookStore.JudgedConcept("Information hiding", true, "not found in the text: kept as the writer named it")), j);
     }
+
+    /** Step 4 says which sentences explain each concept; their roles decide, whatever words they use. */
+    @Test
+    void aConceptIsJudgedByTheSentencesStep4PointedTo() {
+        List<ConceptImportance.Unit> units = ConceptImportance.units(RULES, Map.of("b4.txt", "Employee harry = new Employee();"));
+        assertEquals(List.of("nucleus", "analogy", "definition", "nucleus", "example", "dispatch", "list item", "list item", "code"),
+                units.stream().map(ConceptImportance.Unit::role).toList(), "numbered in the file's order");
+        List<BookStore.JudgedConcept> j = ConceptImportance.judgeListed("Classes", RULES, Map.of("b4.txt", "Employee harry = new Employee();"), List.of(
+                new BookStore.ListedConcept("Information hiding", List.of(3)),
+                new BookStore.ListedConcept("Mental model of a class", List.of(2)),
+                new BookStore.ListedConcept("Object construction", List.of(5, 9)),
+                new BookStore.ListedConcept("Lost", List.of(42)),
+                new BookStore.ListedConcept("Object", null)));
+        assertEquals(List.of(
+                new BookStore.JudgedConcept("Information hiding", true, "in a definition (sentences 3)"),
+                new BookStore.JudgedConcept("Mental model of a class", false, "only in analogy (sentences 2)"),
+                new BookStore.JudgedConcept("Object construction", false, "only in example, code (sentences 5, 9)"),
+                new BookStore.JudgedConcept("Lost", true, "its sentences are not in the rule file: kept"),
+                new BookStore.JudgedConcept("Object", true, "in a nucleus")), j);
+    }
 }
