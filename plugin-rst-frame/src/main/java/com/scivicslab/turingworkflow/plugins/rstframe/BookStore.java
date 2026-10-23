@@ -57,6 +57,10 @@ public final class BookStore implements AutoCloseable {
             s.execute("CREATE TABLE IF NOT EXISTS frame_rule (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "concept VARCHAR(1000) NOT NULL, ordinal INT NOT NULL, kind VARCHAR(20) NOT NULL, rule VARCHAR(400) NOT NULL, "
                     + "text CLOB NOT NULL, PRIMARY KEY (book, number, concept, ordinal))");
+            // how a section explains its main concept: sequence, structure or partition; the blocks that are the concept's
+            // steps, parts or kinds, one "block<TAB>name" line each
+            s.execute("CREATE TABLE IF NOT EXISTS section_pattern (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "concept VARCHAR(1000) NOT NULL, pattern VARCHAR(20) NOT NULL, members CLOB, PRIMARY KEY (book, number))");
         }
     }
 
@@ -451,6 +455,43 @@ public final class BookStore implements AutoCloseable {
                     String f = r.getString(4);
                     out.computeIfAbsent(number, k -> new ArrayList<>())
                        .add(new FrameConcept(r.getString(2), rs, (Boolean) r.getObject(3), f == null ? List.of() : List.of(f.split("\n"))));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Replaces how one section explains its main concept. */
+    public synchronized void savePattern(String book, String number, SectionPattern.Layout layout) throws SQLException {
+        StringBuilder members = new StringBuilder();
+        for (SectionPattern.Member m : layout.members()) members.append(m.block()).append('\t').append(m.name().replace('\n', ' ')).append('\n');
+        try (PreparedStatement p = db.prepareStatement("MERGE INTO section_pattern (book, number, concept, pattern, members) KEY (book, number) "
+                + "VALUES (?, ?, ?, ?, ?)")) {
+            p.setString(1, book);
+            p.setString(2, number);
+            p.setString(3, layout.concept());
+            p.setString(4, layout.pattern());
+            p.setString(5, members.toString());
+            p.executeUpdate();
+        }
+    }
+
+    /** @return how each section that has been asked explains its main concept, by section number */
+    public synchronized java.util.Map<String, SectionPattern.Layout> patterns(String book) throws SQLException {
+        java.util.Map<String, SectionPattern.Layout> out = new java.util.LinkedHashMap<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT number, concept, pattern, members FROM section_pattern WHERE book = ?")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) {
+                    List<SectionPattern.Member> members = new ArrayList<>();
+                    String text = r.getString(4);
+                    if (text != null) {
+                        for (String line : text.split("\n")) {
+                            int tab = line.indexOf('\t');
+                            if (tab > 0) members.add(new SectionPattern.Member(line.substring(0, tab), line.substring(tab + 1)));
+                        }
+                    }
+                    out.put(r.getString(1), new SectionPattern.Layout(r.getString(2), r.getString(3), members));
                 }
             }
         }

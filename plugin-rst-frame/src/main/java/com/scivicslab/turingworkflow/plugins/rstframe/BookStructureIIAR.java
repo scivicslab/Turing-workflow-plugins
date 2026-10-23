@@ -9,7 +9,8 @@ import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
  * The workflow actions of {@link BookStructure}: {@code toc} and {@code sections}, then {@code rules}, {@code concepts},
- * {@code judge}, {@code relations} and {@code review}, one per step; then {@code collect} and {@code prune} for each
+ * {@code judge}, {@code relations} and {@code review}, one per step; {@code patterns}, how each section lays out its
+ * blocks; then {@code collect} and {@code prune} for each
  * section's concrete frame. A workflow creates it with
  * {@code loader.createChild} and calls it by name, so a sub-workflow called with {@code this.call} can call it too.
  *
@@ -99,6 +100,13 @@ public class BookStructureIIAR extends IIActorRef<BookStructure> {
     @Action("review")
     public ActionResult review(String args) {
         return step(args, "could not review the relations", (b, a) -> b.review(a.getString("db"), a.getString("name"), a.getString("url"),
+                a.getString("model"), parallel(a), sections(a)));
+    }
+
+    /** How each section lays out its blocks: sequence, structure or partition. Args: {@code {db, name, url, model, parallel, sections}}. */
+    @Action("patterns")
+    public ActionResult patterns(String args) {
+        return step(args, "could not ask the patterns", (b, a) -> b.patterns(a.getString("db"), a.getString("name"), a.getString("url"),
                 a.getString("model"), parallel(a), sections(a)));
     }
 

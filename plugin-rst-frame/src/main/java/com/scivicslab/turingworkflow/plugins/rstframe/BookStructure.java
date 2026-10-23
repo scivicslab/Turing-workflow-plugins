@@ -112,6 +112,11 @@ public final class BookStructure {
         return ask(db, name, url, model, 600, parallel, only, SectionRelations::relateAll);
     }
 
+    /** How each section lays out its blocks: sequence, structure or partition ({@link SectionPattern}). */
+    public String patterns(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
+        return ask(db, name, url, model, 600, parallel, only, SectionPattern::askAll);
+    }
+
     /** Step 7: reviews step 6's relations: keep, another kind, reverse or drop ({@link SectionReview}). */
     public String review(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
         return ask(db, name, url, model, 400, parallel, only, SectionReview::reviewAll);
