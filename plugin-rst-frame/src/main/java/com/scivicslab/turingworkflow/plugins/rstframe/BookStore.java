@@ -52,6 +52,8 @@ public final class BookStore implements AutoCloseable {
             // the material of a section's concrete frame: the rules that say a concept's properties and behaviors
             s.execute("CREATE TABLE IF NOT EXISTS frame_concept (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "ordinal INT NOT NULL, concept VARCHAR(1000) NOT NULL, kept BOOLEAN, PRIMARY KEY (book, number, ordinal))");
+            // the features and parts of a concept folded into it: their rules are collected as the concept's own
+            s.execute("ALTER TABLE frame_concept ADD COLUMN IF NOT EXISTS folded VARCHAR(4000)");
             s.execute("CREATE TABLE IF NOT EXISTS frame_rule (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "concept VARCHAR(1000) NOT NULL, ordinal INT NOT NULL, kind VARCHAR(20) NOT NULL, rule VARCHAR(400) NOT NULL, "
                     + "text CLOB NOT NULL, PRIMARY KEY (book, number, concept, ordinal))");
@@ -367,10 +369,13 @@ public final class BookStore implements AutoCloseable {
     }
 
     /**
-     * One concept of a section's concrete frame: the rules collected for it, and whether it stays on the list
-     * ({@code null} until the list is reviewed).
+     * One concept of a section's concrete frame: the rules collected for it, whether it stays on the list
+     * ({@code null} until the list is reviewed), and the features and parts folded into it, whose rules are its own.
      */
-    public record FrameConcept(String concept, List<FrameRule> rules, Boolean kept) {
+    public record FrameConcept(String concept, List<FrameRule> rules, Boolean kept, List<String> folded) {
+        public FrameConcept(String concept, List<FrameRule> rules, Boolean kept) {
+            this(concept, rules, kept, List.of());
+        }
     }
 
     /** Replaces the concepts of one section's concrete frame and the rules collected for each. */
@@ -384,7 +389,7 @@ public final class BookStore implements AutoCloseable {
                     d.executeUpdate();
                 }
             }
-            try (PreparedStatement c = db.prepareStatement("INSERT INTO frame_concept (book, number, ordinal, concept, kept) VALUES (?, ?, ?, ?, ?)");
+            try (PreparedStatement c = db.prepareStatement("INSERT INTO frame_concept (book, number, ordinal, concept, kept, folded) VALUES (?, ?, ?, ?, ?, ?)");
                  PreparedStatement r = db.prepareStatement(
                          "INSERT INTO frame_rule (book, number, concept, ordinal, kind, rule, text) VALUES (?, ?, ?, ?, ?, ?, ?)")) {
                 for (int n = 0; n < concepts.size(); n++) {
@@ -394,6 +399,7 @@ public final class BookStore implements AutoCloseable {
                     c.setInt(3, n);
                     c.setString(4, fc.concept());
                     c.setObject(5, fc.kept());
+                    c.setString(6, fc.folded() == null || fc.folded().isEmpty() ? null : String.join("\n", fc.folded()));
                     c.addBatch();
                     for (int k = 0; k < fc.rules().size(); k++) {
                         FrameRule fr = fc.rules().get(k);
@@ -432,13 +438,15 @@ public final class BookStore implements AutoCloseable {
             }
         }
         java.util.Map<String, List<FrameConcept>> out = new java.util.LinkedHashMap<>();
-        try (PreparedStatement p = db.prepareStatement("SELECT number, concept, kept FROM frame_concept WHERE book = ? ORDER BY number, ordinal")) {
+        try (PreparedStatement p = db.prepareStatement("SELECT number, concept, kept, folded FROM frame_concept WHERE book = ? ORDER BY number, ordinal")) {
             p.setString(1, book);
             try (ResultSet r = p.executeQuery()) {
                 while (r.next()) {
                     String number = r.getString(1);
                     List<FrameRule> rs = rules.getOrDefault(number, java.util.Map.of()).getOrDefault(r.getString(2), List.of());
-                    out.computeIfAbsent(number, k -> new ArrayList<>()).add(new FrameConcept(r.getString(2), rs, (Boolean) r.getObject(3)));
+                    String f = r.getString(4);
+                    out.computeIfAbsent(number, k -> new ArrayList<>())
+                       .add(new FrameConcept(r.getString(2), rs, (Boolean) r.getObject(3), f == null ? List.of() : List.of(f.split("\n"))));
                 }
             }
         }

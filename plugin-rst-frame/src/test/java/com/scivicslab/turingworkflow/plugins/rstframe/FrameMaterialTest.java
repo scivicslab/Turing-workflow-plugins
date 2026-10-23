@@ -37,8 +37,34 @@ class FrameMaterialTest {
         List<BookStore.Relation> rel = List.of(
                 new BookStore.Relation("is-a", "String literal", "String", List.of(4)),
                 new BookStore.Relation("feature", "UTF-8 encoding", "String literal", List.of(1), "drop"));
-        assertEquals(List.of("String", "String literal"), FrameMaterial.candidates(judged(), rel),
+        assertEquals(Map.of("String", List.of(), "String literal", List.of()), FrameMaterial.candidates(judged(), rel),
                 "a concept only in a dropped relation, one in none, and one step 5 dropped are not listed");
+    }
+
+    /** A feature or a part is folded into its owner, up to the first owner listed; one whose owner is not listed is listed itself. */
+    @Test
+    void aFeatureOrAPartIsFoldedIntoItsOwner() {
+        List<BookStore.JudgedConcept> j = List.of(new BookStore.JudgedConcept("String", true, "in the title"),
+                new BookStore.JudgedConcept("String.length", true, "in a nucleus"),
+                new BookStore.JudgedConcept("String.charAt", true, "in a nucleus"),
+                new BookStore.JudgedConcept("code unit", true, "in a nucleus"),
+                new BookStore.JudgedConcept("char", true, "in a nucleus"),
+                new BookStore.JudgedConcept("index", true, "in a nucleus"),
+                new BookStore.JudgedConcept("offset", true, "in a nucleus"));
+        List<BookStore.Relation> rel = List.of(
+                new BookStore.Relation("feature", "String.length", "String", List.of(1)),
+                new BookStore.Relation("feature", "String.charAt", "String", List.of(2)),
+                new BookStore.Relation("part-of", "code unit", "char", List.of(3)),
+                new BookStore.Relation("part-of", "char", "String", List.of(3)),
+                new BookStore.Relation("is-a", "char", "primitive type", List.of(3)),
+                new BookStore.Relation("feature", "offset", "index", List.of(4)),
+                new BookStore.Relation("part-of", "index", "position", List.of(4), "drop"));
+        java.util.Map<String, List<String>> c = FrameMaterial.candidates(j, rel);
+        assertEquals(List.of("String", "char", "index"), List.copyOf(c.keySet()),
+                "char is listed on its own account (an is-a child and a parent); index is a parent; the rest are folded");
+        assertEquals(List.of("String.length", "String.charAt"), c.get("String"));
+        assertEquals(List.of("code unit"), c.get("char"));
+        assertEquals(List.of("offset"), c.get("index"));
     }
 
     @Test
@@ -71,6 +97,7 @@ class FrameMaterialTest {
                     q -> { asked.add(q); return "String | property | 1, 2\nString | behavior | 3\nString literal | property | 4"; }, 2, line -> { });
             assertEquals("1 section(s) of core asked, 4 rule(s) collected, 0 failed", summary);
             assertTrue(asked.get(0).contains("- String\n- String literal\n"), asked.get(0));
+            assertEquals(List.of(), store.frameConcepts("core").get("3.6").get(0).folded());
             assertEquals("1 section(s) of core: 1 concept(s) stay, 1 taken off (fewer than 2 rule(s))", FrameMaterial.pruneAll(store, "core", 2));
             List<BookStore.FrameConcept> list = store.frameConcepts("core").get("3.6");
             assertEquals(List.of("String", "String literal"), list.stream().map(BookStore.FrameConcept::concept).toList());
