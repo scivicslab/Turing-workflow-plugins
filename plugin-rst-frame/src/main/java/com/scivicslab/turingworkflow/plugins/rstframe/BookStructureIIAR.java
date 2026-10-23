@@ -8,7 +8,8 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * The workflow actions of {@link BookStructure}: {@code toc} and {@code sections}. A workflow creates it with
+ * The workflow actions of {@link BookStructure}: {@code toc} and {@code sections}, then {@code rules}, {@code concepts},
+ * {@code judge}, {@code relations} and {@code review}, one per step. A workflow creates it with
  * {@code loader.createChild} and calls it by name, so a sub-workflow called with {@code this.call} can call it too.
  *
  * <pre>{@code
@@ -64,6 +65,72 @@ public class BookStructureIIAR extends IIActorRef<BookStructure> {
         } catch (Exception e) {
             return new ActionResult(false, "could not cut the book into sections: " + reason(e));
         }
+    }
+
+    /** Step 3: each section as an rst-on-lisp rule file. Args: {@code {db, name, url, model, parallel, sections}}. */
+    @Action("rules")
+    public ActionResult rules(String args) {
+        return step(args, "could not make the rule files", (b, a) -> b.rules(a.getString("db"), a.getString("name"), a.getString("url"),
+                a.getString("model"), parallel(a), sections(a)));
+    }
+
+    /** Step 4: the concepts each section explains. Args: {@code {db, name, url, model, parallel, sections}}. */
+    @Action("concepts")
+    public ActionResult concepts(String args) {
+        return step(args, "could not list the concepts", (b, a) -> b.concepts(a.getString("db"), a.getString("name"), a.getString("url"),
+                a.getString("model"), parallel(a), sections(a)));
+    }
+
+    /** Step 5: which concepts to keep, by the role of their sentences; no model. Args: {@code {db, name}}. */
+    @Action("judge")
+    public ActionResult judge(String args) {
+        return step(args, "could not judge the concepts", (b, a) -> b.judge(a.getString("db"), a.getString("name")));
+    }
+
+    /** Step 6: how each section's concepts relate. Args: {@code {db, name, url, model, parallel, sections}}. */
+    @Action("relations")
+    public ActionResult relations(String args) {
+        return step(args, "could not relate the concepts", (b, a) -> b.relations(a.getString("db"), a.getString("name"), a.getString("url"),
+                a.getString("model"), parallel(a), sections(a)));
+    }
+
+    /** Step 7: a review of step 6's relations. Args: {@code {db, name, url, model, parallel, sections}}. */
+    @Action("review")
+    public ActionResult review(String args) {
+        return step(args, "could not review the relations", (b, a) -> b.review(a.getString("db"), a.getString("name"), a.getString("url"),
+                a.getString("model"), parallel(a), sections(a)));
+    }
+
+    /** One step of the book, through this actor's mailbox; an exception becomes a failure naming its reason. */
+    private ActionResult step(String args, String failure, Step s) {
+        try {
+            JSONObject a = new JSONObject(args);
+            return new ActionResult(true, ask(b -> {
+                try {
+                    return s.on(b, a);
+                } catch (Exception e) {
+                    throw new IllegalStateException(e.getMessage(), e);
+                }
+            }).get());
+        } catch (Exception e) {
+            return new ActionResult(false, failure + ": " + reason(e));
+        }
+    }
+
+    private interface Step {
+        String on(BookStructure books, JSONObject args) throws Exception;
+    }
+
+    /** @return how many sections are asked at once; 8 when not given */
+    private static int parallel(JSONObject a) {
+        String p = a.isNull("parallel") ? "" : a.get("parallel").toString().strip();
+        return p.isEmpty() ? 8 : Integer.parseInt(p);
+    }
+
+    /** @return the sections named, separated by spaces or commas; none for every section not done yet */
+    private static java.util.List<String> sections(JSONObject a) {
+        String s = a.isNull("sections") ? "" : a.get("sections").toString().strip();
+        return s.isEmpty() ? java.util.List.of() : java.util.List.of(s.split("[\\s,]+"));
     }
 
     private static String reason(Throwable e) {

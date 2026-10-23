@@ -13,7 +13,8 @@ import java.util.Map;
  * java ... BookImport rules &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
  * java ... BookImport concepts &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
  * java ... BookImport judge &lt;db-file&gt; &lt;book-name&gt;
- * java ... BookImport relations &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]</pre>
+ * java ... BookImport relations &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
+ * java ... BookImport review &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]</pre>
  * {@code toc}: reads the table of contents from the headings of every markdown file under the book's directory, in path
  * order, and replaces the book's rows of {@code toc_node}. {@code sections}: cuts the book's text into the nodes
  * {@code toc} stored, and replaces the book's rows of {@code section_text}. {@code rules}: makes each section without a
@@ -50,6 +51,14 @@ public final class BookImport {
             try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
                 System.out.println(SectionRelations.relateAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 600), Integer.parseInt(a[5]),
+                        line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
+            }
+            return;
+        }
+        if (a.length >= 6 && a[0].equals("review")) {
+            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+                java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
+                System.out.println(SectionReview.reviewAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 400), Integer.parseInt(a[5]),
                         line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
             }
             return;

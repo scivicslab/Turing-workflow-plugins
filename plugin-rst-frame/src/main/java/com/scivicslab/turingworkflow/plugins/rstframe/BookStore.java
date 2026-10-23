@@ -47,6 +47,8 @@ public final class BookStore implements AutoCloseable {
             s.execute("CREATE TABLE IF NOT EXISTS section_relation (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "ordinal INT NOT NULL, kind VARCHAR(20) NOT NULL, child VARCHAR(1000) NOT NULL, parent VARCHAR(1000) NOT NULL, "
                     + "sentences VARCHAR(1000), PRIMARY KEY (book, number, ordinal))");
+            // step 7: what the review made of each relation: keep, is-a, part-of, feature, reverse or drop; null until reviewed
+            s.execute("ALTER TABLE section_relation ADD COLUMN IF NOT EXISTS review VARCHAR(20)");
         }
     }
 
@@ -291,10 +293,30 @@ public final class BookStore implements AutoCloseable {
      * ({@link #IS_A}), a part of it ({@link #PART_OF}), or a feature of it ({@link #FEATURE}), as the sentences numbered
      * say.
      */
-    public record Relation(String kind, String child, String parent, List<Integer> sentences) {
+    public record Relation(String kind, String child, String parent, List<Integer> sentences, String review) {
         public static final String IS_A = "is-a";
         public static final String PART_OF = "part-of";
         public static final String FEATURE = "feature";
+        /** Step 7's verdicts besides a kind: the relation stands, it runs the other way, or it is wrong. */
+        public static final String KEEP = "keep";
+        public static final String REVERSE = "reverse";
+        public static final String DROP = "drop";
+
+        /** A relation step 6 found, not reviewed yet. */
+        public Relation(String kind, String child, String parent, List<Integer> sentences) {
+            this(kind, child, parent, sentences, null);
+        }
+
+        /**
+         * @return the relation as step 7 left it: the same when kept or not reviewed, with its kind changed, its two
+         *         concepts swapped, or {@code null} when dropped
+         */
+        public Relation reviewed() {
+            if (review == null || review.equals(KEEP)) return this;
+            if (review.equals(DROP)) return null;
+            if (review.equals(REVERSE)) return new Relation(kind, parent, child, sentences, review);
+            return new Relation(review, child, parent, sentences, review);
+        }
     }
 
     /** Replaces the relations between one section's concepts; an empty list records that it was asked and none was found. */
@@ -332,11 +354,32 @@ public final class BookStore implements AutoCloseable {
         }
     }
 
+    /** Records step 7's verdict on each of one section's relations, in the order {@link #relations} gives them. */
+    public synchronized void saveReview(String book, String number, List<String> verdicts) throws SQLException {
+        db.setAutoCommit(false);
+        try (PreparedStatement u = db.prepareStatement("UPDATE section_relation SET review = ? WHERE book = ? AND number = ? AND ordinal = ?")) {
+            for (int n = 0; n < verdicts.size(); n++) {
+                u.setString(1, verdicts.get(n));
+                u.setString(2, book);
+                u.setString(3, number);
+                u.setInt(4, n);
+                u.addBatch();
+            }
+            u.executeBatch();
+            db.commit();
+        } catch (SQLException e) {
+            db.rollback();
+            throw e;
+        } finally {
+            db.setAutoCommit(true);
+        }
+    }
+
     /** @return the relations between each section's concepts, by section number; a section asked with none found has an empty list */
     public synchronized java.util.Map<String, List<Relation>> relations(String book) throws SQLException {
         java.util.Map<String, List<Relation>> out = new java.util.LinkedHashMap<>();
         try (PreparedStatement p = db.prepareStatement(
-                "SELECT number, ordinal, kind, child, parent, sentences FROM section_relation WHERE book = ? ORDER BY number, ordinal")) {
+                "SELECT number, ordinal, kind, child, parent, sentences, review FROM section_relation WHERE book = ? ORDER BY number, ordinal")) {
             p.setString(1, book);
             try (ResultSet r = p.executeQuery()) {
                 while (r.next()) {
@@ -345,7 +388,7 @@ public final class BookStore implements AutoCloseable {
                     String at = r.getString(6);
                     List<Integer> sentences = new ArrayList<>();
                     if (at != null) for (String x : at.split(",")) if (!x.isBlank()) sentences.add(Integer.parseInt(x.strip()));
-                    list.add(new Relation(r.getString(3), r.getString(4), r.getString(5), sentences));
+                    list.add(new Relation(r.getString(3), r.getString(4), r.getString(5), sentences, r.getString(7)));
                 }
             }
         }
