@@ -41,23 +41,24 @@ class SectionPatternTest {
 
     @Test
     void theQuestionShowsEveryBlockByName() {
-        String q = SectionPattern.question(new BookOutline.Node("3.2", "section", "Comments", "3", "f.md"), "comment", SectionPattern.blocks(COMMENTS, Map.of()));
+        String q = SectionPattern.question(new BookOutline.Node("3.2", "section", "Comments", "3", "f.md"), SectionPattern.blocks(COMMENTS, Map.of()));
         assertTrue(q.contains("[b1] Comments in Java"));
         assertTrue(q.contains("[b4] Finally, a third kind"));
-        assertTrue(q.contains("The section's main concept is \"comment\""));
-        assertTrue(q.contains("you can say \"X is a comment\""));
+        assertTrue(q.contains("First name the section's main concept C"));
+        assertTrue(q.contains("you can say \"X is a C\""));
     }
 
     @Test
     void thePatternIsTheRelationMostBlocksBearAndTheMembersAreInBlockOrder() {
         List<SectionPattern.Block> blocks = SectionPattern.blocks(COMMENTS, Map.of());
         SectionPattern.Layout l = SectionPattern.read("""
+                **concept:** comment
                 b4 | kind | documentation comment (/** */)
                 b1 | **kind** | end-of-line comment (//)
                 [b3] | kind | block comment (/* */)
                 b2 | aspect | usage
                 b9 | kind | no such block
-                """, "comment", blocks);
+                """, blocks);
         assertEquals(SectionPattern.PARTITION, l.pattern());
         assertEquals("comment", l.concept());
         assertEquals(List.of(new SectionPattern.Member("b1", "kind", "end-of-line comment (//)"), new SectionPattern.Member("b2", "aspect", "usage"),
@@ -66,26 +67,20 @@ class SectionPatternTest {
     }
 
     @Test
-    void aspectsWhenMostBlocksAreAspectsAndATieGoesToKind() {
+    void aspectsWhenMostBlocksAreAspectsATieGoesToKindAndOneKindIsNoPartition() {
         List<SectionPattern.Block> blocks = SectionPattern.blocks(COMMENTS, Map.of());
-        assertEquals(SectionPattern.ASPECTS, SectionPattern.read("b1 | aspect | definition\nb3 | aspect | usage\nb4 | part | x", "constant", blocks).pattern());
-        assertEquals(SectionPattern.PARTITION, SectionPattern.read("b1 | aspect | definition\nb3 | kind | x", "constant", blocks).pattern());
-    }
-
-    @Test
-    void theMainConceptIsTheTitleConceptWithTheMostRulesElseTheConceptWithTheMostRules() {
-        BookStore.FrameRule r = new BookStore.FrameRule(BookStore.FrameRule.PROPERTY, "b1/1", "x");
-        List<BookStore.FrameConcept> frame = List.of(new BookStore.FrameConcept("compiler", List.of(r, r, r), true),
-                new BookStore.FrameConcept("comment", List.of(r, r), true), new BookStore.FrameConcept("Javadoc", List.of(r), true));
-        List<BookStore.JudgedConcept> judged = List.of(new BookStore.JudgedConcept("comment", true, "in the title"),
-                new BookStore.JudgedConcept("compiler", true, "nucleus"));
-        assertEquals("comment", SectionPattern.mainConcept(judged, frame));
-        assertEquals("compiler", SectionPattern.mainConcept(List.of(), frame));
-        assertNull(SectionPattern.mainConcept(judged, List.of()));
+        assertEquals(SectionPattern.ASPECTS, SectionPattern.read("concept: constant\nb1 | aspect | definition\nb3 | aspect | usage\nb4 | part | x", blocks).pattern());
+        assertEquals(SectionPattern.PARTITION, SectionPattern.read("concept: constant\nb1 | aspect | definition\nb2 | aspect | usage\nb3 | kind | x\nb4 | kind | y", blocks).pattern());
+        assertEquals(SectionPattern.ASPECTS, SectionPattern.read("concept: constant\nb1 | aspect | definition\nb3 | kind | x", blocks).pattern(),
+                "one kind does not divide a set");
+        SectionPattern.Layout table = SectionPattern.read("concept: process\nb1 | kind | Process\nb1 | kind | ProcessBuilder\nb2 | aspect | usage", blocks);
+        assertEquals(SectionPattern.PARTITION, table.pattern(), "one block that takes up two kinds");
+        assertEquals(List.of("Process", "ProcessBuilder", "usage"), table.members().stream().map(SectionPattern.Member::name).toList());
     }
 
     @Test
     void aReplyNamingNoneOfTheThreeHasNoPattern() {
-        assertNull(SectionPattern.read("pattern: partition\nb1 | comparison | x", "comment", SectionPattern.blocks(COMMENTS, Map.of())).pattern());
+        assertNull(SectionPattern.read("concept: comment\nb1 | comparison | x", SectionPattern.blocks(COMMENTS, Map.of())).pattern());
+        assertNull(SectionPattern.read("b1 | kind | x", SectionPattern.blocks(COMMENTS, Map.of())).pattern(), "no concept named");
     }
 }
