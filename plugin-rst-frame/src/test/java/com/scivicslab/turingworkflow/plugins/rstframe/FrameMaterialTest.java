@@ -105,4 +105,18 @@ class FrameMaterialTest {
             assertEquals(3, list.get(0).rules().size(), "the rules stay with a concept taken off too");
         }
     }
+
+    /** A concept related another way (a way of doing the parent) is listed on its own, not folded into the parent. */
+    @Test
+    void aConceptRelatedAnotherWayIsListedOnItsOwn() {
+        List<BookStore.JudgedConcept> j = List.of(new BookStore.JudgedConcept("string concatenation", true, "in the title"),
+                new BookStore.JudgedConcept("String.join", true, "in a nucleus"),
+                new BookStore.JudgedConcept("operator precedence", true, "in a nucleus"));
+        List<BookStore.Relation> rel = List.of(
+                new BookStore.Relation("other", "String.join", "string concatenation", List.of(21)),
+                new BookStore.Relation("feature", "operator precedence", "string concatenation", List.of(13)));
+        java.util.Map<String, List<String>> c = FrameMaterial.candidates(j, rel);
+        assertEquals(List.of("string concatenation", "String.join"), List.copyOf(c.keySet()));
+        assertEquals(List.of("operator precedence"), c.get("string concatenation"));
+    }
 }

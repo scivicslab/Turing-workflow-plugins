@@ -21,6 +21,7 @@ class SectionReviewTest {
                 SectionReview.read("R1 | is-a\nR2 | drop\nR4: reverse\nR5 | unsure\nR9 | drop\n", 5),
                 "a verdict not one of the six, and a number past the relations, leave the relation kept");
         assertEquals(List.of("part-of"), SectionReview.read("- R1 | part of", 1));
+        assertEquals(List.of("other"), SectionReview.read("R1 | other", 1));
     }
 
     @Test

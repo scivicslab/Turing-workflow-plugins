@@ -19,13 +19,15 @@ import java.util.regex.Pattern;
 /**
  * How the concepts of one section relate ({@code FrameOntology_261021_oo01}, step 6): one question per section,
  * showing its sentences numbered as its rule file has them and the concepts step 5 kept, asking which is a kind of
- * which ({@code is-a}), a part of which ({@code part-of}), and a feature of which ({@code feature}), one per line as
+ * which ({@code is-a}), a part of which ({@code part-of}), a feature of which ({@code feature}), and which are related
+ * in another way ({@code other}, so that no relation is forced into the first three), one per line as
  * {@code concept | relation | concept | sentence numbers}. Only the concepts listed are taken, by their names as
  * listed; a line naming any other is dropped.
  */
 public final class SectionRelations {
 
-    private static final List<String> KINDS = List.of(BookStore.Relation.IS_A, BookStore.Relation.PART_OF, BookStore.Relation.FEATURE);
+    private static final List<String> KINDS = List.of(BookStore.Relation.IS_A, BookStore.Relation.PART_OF, BookStore.Relation.FEATURE,
+            BookStore.Relation.OTHER);
 
     private SectionRelations() {
     }
@@ -46,10 +48,13 @@ public final class SectionRelations {
         for (String c : concepts) list.append("- ").append(c).append('\n');
         return "Below is one section of a textbook, \"" + node.number() + ". " + node.title() + "\", its sentences numbered.\n\n"
                 + text + "\nThe concepts it explains are:\n" + list + "\n"
-                + "Say how these concepts relate to one another, as the section says. Write one line for each relation, in one of three forms:\n"
+                + "Say how these concepts relate to one another, as the section says. Write one line for each relation, in one of four forms:\n"
                 + "A | is-a | B       when A is a kind of B (\"String literal | is-a | String\")\n"
                 + "A | part-of | B    when A is a part or a component of B (\"Escape sequence | part-of | String\")\n"
                 + "A | feature | B    when A is a property or an attribute of B (\"UTF-8 encoding | feature | String\")\n"
+                + "A | other | B      when A and B are related in some other way: A is a way of doing B, a use of B, a rule about B "
+                + "(\"String.join | other | string concatenation\")\n"
+                + "Do not force a relation into is-a, part-of or feature when it is none of them; write other.\n"
                 + "After each line write \" | \" and the numbers of the sentences that say it, for example "
                 + "\"String literal | is-a | String | 5, 8\". Use only the concepts listed, written exactly as listed. "
                 + "Leave out a pair the section does not relate. Write nothing else.";

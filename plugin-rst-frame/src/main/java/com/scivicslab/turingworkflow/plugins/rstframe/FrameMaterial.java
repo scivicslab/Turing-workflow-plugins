@@ -35,7 +35,7 @@ public final class FrameMaterial {
     /**
      * @return the concepts of one section to collect rules for, without their hierarchy, in the order step 4 listed
      *         them, each with the concepts folded into it: those step 5 kept that are in the title, a parent of a
-     *         relation standing after step 7, or a kind of another (is-a). A feature or a part of a concept is folded
+     *         relation standing after step 7, a kind of another (is-a), or related to another in some other way. A feature or a part of a concept is folded
      *         into it, and what the section says of it is collected as its owner's, unless it is listed on its own
      *         account; folded into an owner that is not listed, it is listed itself.
      */
@@ -46,7 +46,9 @@ public final class FrameMaterial {
             BookStore.Relation after = r.reviewed();
             if (after == null) continue;
             own.add(after.parent());
-            if (after.kind().equals(BookStore.Relation.IS_A)) own.add(after.child());
+            // a kind, or a concept related another way (a way of doing the parent, a use of it), is a concept of its own;
+            // only a feature or a part is the parent's
+            if (after.kind().equals(BookStore.Relation.IS_A) || after.kind().equals(BookStore.Relation.OTHER)) own.add(after.child());
             else ownerOf.putIfAbsent(after.child(), after.parent());
         }
         Set<String> kept = new LinkedHashSet<>();

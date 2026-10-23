@@ -298,13 +298,15 @@ public final class BookStore implements AutoCloseable {
 
     /**
      * One relation between two concepts of a section (step 6): {@code child} is a kind of {@code parent}
-     * ({@link #IS_A}), a part of it ({@link #PART_OF}), or a feature of it ({@link #FEATURE}), as the sentences numbered
-     * say.
+     * ({@link #IS_A}), a part of it ({@link #PART_OF}), a feature of it ({@link #FEATURE}), or related to it in another
+     * way ({@link #OTHER}), as the sentences numbered say.
      */
     public record Relation(String kind, String child, String parent, List<Integer> sentences, String review) {
         public static final String IS_A = "is-a";
         public static final String PART_OF = "part-of";
         public static final String FEATURE = "feature";
+        /** Related, but not as a kind, a part or a feature: a way of doing the other, a use of it, a rule about it. */
+        public static final String OTHER = "other";
         /** Step 7's verdicts besides a kind: the relation stands, it runs the other way, or it is wrong. */
         public static final String KEEP = "keep";
         public static final String REVERSE = "reverse";

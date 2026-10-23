@@ -27,14 +27,16 @@ class SectionRelationsTest {
                 String | is-a | String | 1
                 String literal | is-a | String | 9
                 String literal | inherits | String | 9
+                Escape sequence | other | UTF-8 encoding | 12
                 """;
         assertEquals(List.of(
                 new BookStore.Relation("is-a", "String literal", "String", List.of(5, 8)),
                 new BookStore.Relation("part-of", "Unicode character", "String", List.of(1, 2, 3)),
                 new BookStore.Relation("part-of", "Escape sequence", "String", List.of(11)),
-                new BookStore.Relation("feature", "UTF-8 encoding", "String", List.of(9, 10))),
+                new BookStore.Relation("feature", "UTF-8 encoding", "String", List.of(9, 10)),
+                new BookStore.Relation("other", "Escape sequence", "UTF-8 encoding", List.of(12))),
                 SectionRelations.read(reply, CONCEPTS, 12),
-                "a concept not listed, a concept related to itself, a repeat and a relation not one of the three are dropped");
+                "a concept not listed, a concept related to itself, a repeat and a relation not one of the four are dropped");
     }
 
     @Test
