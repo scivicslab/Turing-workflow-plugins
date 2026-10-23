@@ -47,6 +47,8 @@ public final class SectionPattern {
         public static final String PART = "part";
         public static final String STEP = "step";
         public static final String ASPECT = "aspect";
+        /** A method or an operation that acts on the concept: what can be done with it, one of its aspects. */
+        public static final String OPERATION = "operation";
     }
 
     /** How the section explains {@code concept}: the pattern, and the blocks that are the concept's steps, parts or kinds. */
@@ -110,18 +112,23 @@ public final class SectionPattern {
                 + "text. When the title names a group of things (\"Efficient Maps, Sets, and Queues\", \"Relationships between "
                 + "Classes\"), C is the group (\"concurrent collection\", \"relationship between classes\"), not one of its members. "
                 + "Write \"concept: \" and C.\n"
-                + "Then, for each block, say what the thing it takes up is to C, with one of these four words:\n"
+                + "Then, for each block, say what the thing it takes up is to C, with one of these five words:\n"
                 + "kind     the thing is a kind of C: you can say \"X is a C\" (\"the byte type is an integer type\", \"the // "
-                + "comment is a comment\"). A method or a member of C is not a kind of it.\n"
+                + "comment is a comment\"). A method, a constructor or an operation of C is not a kind of it; it is an operation.\n"
                 + "part     the thing is a part or a component of C (\"its state is a part of an object\", \"a field is a part of "
                 + "a class\").\n"
                 + "step     C is a procedure or a process that runs in time, and the thing is one of its steps (\"compiling is a "
                 + "step of building a program\").\n"
                 + "aspect   the thing is something said of the whole of C: what it is, why it is needed, its syntax, how it "
                 + "behaves, how it is used, what to watch out for.\n"
+                + "operation  the thing is a method, a constructor or an operation that acts on C or is called on it. \"add\" and "
+                + "\"offer\" are operations of a blocking queue, not kinds of it; \"readln\" and \"Integer.parseInt\" are operations "
+                + "of reading input; \"sqrt\" and \"pow\" are operations of the Math class.\n"
                 + "A block that introduces C and then takes up one kind, part or step of it is that kind, part or step.\n"
                 + "Write one line for each block, and one line for each thing when a block takes up two or more (a table of the "
-                + "kinds, a list of the parts): the block's name, \" | \", the word, \" | \", and what the thing is, in a few words; "
+                + "kinds, a list of the parts): write each row of a table, each item of a list, and each of several things named in one "
+                + "sentence (\"ConcurrentHashMap, ConcurrentSkipListMap and ConcurrentLinkedQueue\") on a line of its own. Each "
+                + "line is the block's name, \" | \", the word, \" | \", and what the thing is, in a few words; "
                 + "for an aspect, the aspect's name (definition, motivation, syntax, behavior, usage, caveat, or another). Leave out a "
                 + "block that only supports another (an example, a listing, a note). For example, for section \"Comments\"\n"
                 + "concept: comment\nb1 | kind | end-of-line comment (//)\nb3 | kind | block comment (/* */)\nb4 | kind | documentation "
@@ -152,7 +159,7 @@ public final class SectionPattern {
         String concept = c.find() ? c.group(1).replaceAll("^[\\s*_`\"]+|[\\s*_`\".]+$", "") : null;
         List<String> names = blocks.stream().map(Block::name).toList();
         Map<String, List<Member>> members = new LinkedHashMap<>();
-        Matcher m = Pattern.compile("(?im)^\\W*\\[?([a-z][\\w/]*)\\]?\\s*\\|\\s*\\W*(kind|part|step|aspect)s?\\W*\\|\\s*(.+)$").matcher(reply);
+        Matcher m = Pattern.compile("(?im)^\\W*\\[?([a-z][\\w/]*)\\]?\\s*\\|\\s*\\W*(kind|part|step|aspect|operation)s?\\W*\\|\\s*(.+)$").matcher(reply);
         while (m.find()) {
             String b = m.group(1);
             if (names.contains(b)) members.computeIfAbsent(b, k -> new ArrayList<>()).add(new Member(b, m.group(2).toLowerCase(Locale.ROOT), m.group(3).strip()));
@@ -162,7 +169,9 @@ public final class SectionPattern {
         String pattern = null;
         long most = 0;
         for (Map.Entry<String, String> e : PATTERN_OF.entrySet()) {
-            long n = out.stream().filter(x -> x.relation().equals(e.getKey())).count();
+            // an operation is what can be done with the concept: something said of the whole of it, as an aspect is
+            long n = out.stream().filter(x -> x.relation().equals(e.getKey())
+                    || e.getKey().equals(Member.ASPECT) && x.relation().equals(Member.OPERATION)).count();
             // one kind does not divide a set, one part does not take a thing apart, one step is no sequence; a block
             // that takes up two kinds (a table of them) counts twice
             if (n < 2 && !e.getKey().equals(Member.ASPECT)) continue;

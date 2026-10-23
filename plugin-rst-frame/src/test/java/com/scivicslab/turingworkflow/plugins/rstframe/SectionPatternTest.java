@@ -76,6 +76,9 @@ class SectionPatternTest {
         SectionPattern.Layout table = SectionPattern.read("concept: process\nb1 | kind | Process\nb1 | kind | ProcessBuilder\nb2 | aspect | usage", blocks);
         assertEquals(SectionPattern.PARTITION, table.pattern(), "one block that takes up two kinds");
         assertEquals(List.of("Process", "ProcessBuilder", "usage"), table.members().stream().map(SectionPattern.Member::name).toList());
+        SectionPattern.Layout ops = SectionPattern.read("concept: blocking queue\nb1 | aspect | motivation\nb4 | operation | add\nb4 | operation | offer\nb5 | kind | x\nb6 | kind | y", blocks);
+        assertEquals(SectionPattern.ASPECTS, ops.pattern(), "operations count with aspects: three against two kinds");
+        assertEquals("operation", ops.members().get(1).relation());
     }
 
     @Test
