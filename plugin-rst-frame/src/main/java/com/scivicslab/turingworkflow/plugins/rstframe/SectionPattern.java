@@ -97,6 +97,15 @@ public final class SectionPattern {
 
     /** @return the question for one section */
     public static String question(BookOutline.Node node, List<Block> blocks) {
+        return question(node, blocks, "");
+    }
+
+    /**
+     * @param examples worked examples of the cases that are easy to get wrong (how a section's blocks should be answered,
+     *                 and why), put before the closing instruction; none when blank
+     * @return the question for one section
+     */
+    public static String question(BookOutline.Node node, List<Block> blocks, String examples) {
         StringBuilder text = new StringBuilder();
         for (Block b : blocks) {
             String one = b.text().length() > 1500 ? b.text().substring(0, 1500) + " ..." : b.text();
@@ -135,6 +144,7 @@ public final class SectionPattern {
                 + "comment (/** */)\n"
                 + "and for section \"Constants\"\n"
                 + "concept: constant\nb1 | aspect | definition\nb3 | aspect | behavior\nb4 | aspect | usage\n"
+                + (examples == null || examples.isBlank() ? "" : "\n" + examples.strip() + "\n\n")
                 + "Write nothing else.";
     }
 
@@ -162,6 +172,9 @@ public final class SectionPattern {
         Matcher m = Pattern.compile("(?im)^\\W*\\[?([a-z][\\w/]*)\\]?\\s*\\|\\s*\\W*(kind|part|step|aspect|operation)s?\\W*\\|\\s*(.+)$").matcher(reply);
         while (m.find()) {
             String b = m.group(1);
+            String rel = m.group(2).toLowerCase(Locale.ROOT);
+            // C itself is not a kind of C
+            if (rel.equals(Member.KIND) && concept != null && sameName(m.group(3), concept)) continue;
             if (names.contains(b)) members.computeIfAbsent(b, k -> new ArrayList<>()).add(new Member(b, m.group(2).toLowerCase(Locale.ROOT), m.group(3).strip()));
         }
         List<Member> out = new ArrayList<>();
@@ -183,6 +196,18 @@ public final class SectionPattern {
         return new Layout(concept, concept == null ? null : pattern, out);
     }
 
+    private static boolean sameName(String a, String b) {
+        String x = a.strip().toLowerCase(Locale.ROOT).replaceAll("\\s*\\(.*\\)$", "").replaceAll("s$", "");
+        String y = b.strip().toLowerCase(Locale.ROOT).replaceAll("s$", "");
+        return x.equals(y);
+    }
+
+    /** As {@link #askAll(BookStore, String, List, Function, int, Consumer, String)}, with no examples. */
+    public static String askAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
+            Consumer<String> log) throws Exception {
+        return askAll(store, book, only, writer, parallel, log, "");
+    }
+
     /**
      * Asks the pattern of every section of two blocks or more that has none yet ({@code only} empty), or of the
      * sections named, {@code parallel} at a time, and stores each as soon as it is read. A section that fails, or
@@ -191,7 +216,7 @@ public final class SectionPattern {
      * @return how many sections were asked and how many took each pattern, in one line
      */
     public static String askAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
-            Consumer<String> log) throws Exception {
+            Consumer<String> log, String examples) throws Exception {
         Map<String, BookOutline.Node> nodes = new LinkedHashMap<>();
         for (BookOutline.Node n : store.outline(book)) nodes.put(n.number(), n);
         Map<String, Layout> have = store.patterns(book);
@@ -220,7 +245,7 @@ public final class SectionPattern {
                 String number = e.getKey();
                 fs.add(pool.submit(() -> {
                     try {
-                        Layout l = read(writer.apply(question(nodes.get(number), e.getValue())), e.getValue());
+                        Layout l = read(writer.apply(question(nodes.get(number), e.getValue(), examples)), e.getValue());
                         if (l.pattern() == null) throw new IllegalStateException("the reply names no concept or relates no block to it");
                         store.savePattern(book, number, l);
                         tally.computeIfAbsent(l.pattern(), k -> new AtomicInteger()).incrementAndGet();

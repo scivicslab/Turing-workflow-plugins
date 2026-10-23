@@ -75,8 +75,11 @@ public final class BookImport {
         if (a.length >= 6 && a[0].equals("patterns")) {
             try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
+                // worked examples of the cases that are easy to get wrong: -Drstframe.patternExamples=<file>
+                String ex = System.getProperty("rstframe.patternExamples", "");
                 System.out.println(SectionPattern.askAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 600), Integer.parseInt(a[5]),
-                        line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
+                        line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line),
+                        ex.isBlank() ? "" : Files.readString(Path.of(ex))));
             }
             return;
         }

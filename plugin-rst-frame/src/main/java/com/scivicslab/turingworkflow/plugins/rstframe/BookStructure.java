@@ -114,7 +114,19 @@ public final class BookStructure {
 
     /** How each section explains its main concept: sequence, structure, partition or aspects ({@link SectionPattern}). */
     public String patterns(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
-        return ask(db, name, url, model, 600, parallel, only, SectionPattern::askAll);
+        return patterns(db, name, url, model, parallel, only, null);
+    }
+
+    /**
+     * As {@link #patterns(String, String, String, String, int, List)}, with worked examples of the cases that are easy
+     * to get wrong put into every question.
+     *
+     * @param examples a file of worked examples, read through the gate; none when {@code null} or blank
+     */
+    public String patterns(String db, String name, String url, String model, int parallel, List<String> only, String examples)
+            throws Exception {
+        String text = examples == null || examples.isBlank() ? "" : files.read(Path.of(examples).toAbsolutePath().normalize());
+        return ask(db, name, url, model, 600, parallel, only, (s, b, o, w, p, l) -> SectionPattern.askAll(s, b, o, w, p, l, text));
     }
 
     /** Step 7: reviews step 6's relations: keep, another kind, reverse or drop ({@link SectionReview}). */

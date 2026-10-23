@@ -46,6 +46,16 @@ class SectionPatternTest {
         assertTrue(q.contains("[b4] Finally, a third kind"));
         assertTrue(q.contains("First name the section's main concept C"));
         assertTrue(q.contains("you can say \"X is a C\""));
+        String withExamples = SectionPattern.question(new BookOutline.Node("3.2", "section", "Comments", "3", "f.md"),
+                SectionPattern.blocks(COMMENTS, Map.of()), "Examples of how to answer.\nb2 | part | state");
+        assertTrue(withExamples.contains("b2 | part | state\n\nWrite nothing else."), withExamples);
+    }
+
+    @Test
+    void cItselfIsNotAKindOfC() {
+        SectionPattern.Layout l = SectionPattern.read("concept: integer type\nb1 | kind | integer types\nb3 | kind | byte\nb3 | kind | short",
+                SectionPattern.blocks(COMMENTS, Map.of()));
+        assertEquals(List.of("byte", "short"), l.members().stream().map(SectionPattern.Member::name).toList());
     }
 
     @Test
@@ -73,7 +83,7 @@ class SectionPatternTest {
         assertEquals(SectionPattern.PARTITION, SectionPattern.read("concept: constant\nb1 | aspect | definition\nb2 | aspect | usage\nb3 | kind | x\nb4 | kind | y", blocks).pattern());
         assertEquals(SectionPattern.ASPECTS, SectionPattern.read("concept: constant\nb1 | aspect | definition\nb3 | kind | x", blocks).pattern(),
                 "one kind does not divide a set");
-        SectionPattern.Layout table = SectionPattern.read("concept: process\nb1 | kind | Process\nb1 | kind | ProcessBuilder\nb2 | aspect | usage", blocks);
+        SectionPattern.Layout table = SectionPattern.read("concept: process API\nb1 | kind | Process\nb1 | kind | ProcessBuilder\nb2 | aspect | usage", blocks);
         assertEquals(SectionPattern.PARTITION, table.pattern(), "one block that takes up two kinds");
         assertEquals(List.of("Process", "ProcessBuilder", "usage"), table.members().stream().map(SectionPattern.Member::name).toList());
         SectionPattern.Layout ops = SectionPattern.read("concept: blocking queue\nb1 | aspect | motivation\nb4 | operation | add\nb4 | operation | offer\nb5 | kind | x\nb6 | kind | y", blocks);
