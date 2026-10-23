@@ -56,6 +56,7 @@ class SectionReviewTest {
             String summary = SectionReview.reviewAll(store, "core", List.of(), q -> { asked.add(q); return "R1 | is-a\nR2 | drop"; }, 2, line -> { });
             assertEquals("1 section(s) of core reviewed: {drop=1, is-a=1}, 0 failed", summary);
             assertTrue(asked.get(0).contains("R1: multithreading | part-of | concurrent programming   (sentences 1)"), asked.get(0));
+            assertTrue(asked.get(0).contains("Check a relation marked other hardest"), "the review is told to turn an other into its kind: " + asked.get(0));
             List<BookStore.Relation> after = store.relations("core").get("10.1.1");
             assertEquals(List.of("is-a", "drop"), after.stream().map(BookStore.Relation::review).toList());
             assertEquals("is-a", after.get(0).reviewed().kind());

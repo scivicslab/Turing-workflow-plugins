@@ -19,7 +19,9 @@ import java.util.regex.Pattern;
  * A simple review of step 6 ({@code FrameOntology_261021_oo01}, step 7): one question per section, showing its
  * sentences numbered, its concepts, and the relations step 6 found, numbered {@code R1}, {@code R2}, ..., asking for
  * each whether it stands ({@code keep}), is of another kind ({@code is-a}, {@code part-of}, {@code feature}, {@code operation}, {@code other}), runs the
- * other way ({@code reverse}), or is wrong ({@code drop}). A relation the reply says nothing of is kept.
+ * other way ({@code reverse}), or is wrong ({@code drop}). A relation marked {@code other} is checked hardest, to be
+ * turned into one of the four kinds it is (an operation marked other is the commonest), or dropped when its two concepts
+ * are one thing under two names. A relation the reply says nothing of is kept.
  */
 public final class SectionReview {
 
@@ -64,6 +66,12 @@ public final class SectionReview {
                 + "is-a, part-of, feature, operation or other   the two concepts are related, but in that way instead; other when it is none of the four\n"
                 + "reverse   the relation is right but runs the other way (B is the kind, part or feature of A)\n"
                 + "drop      the two concepts are not related so, or one does not belong to the other at all\n"
+                + "Check a relation marked other hardest: keep it other only when it is none of the four. When A is a kind or a "
+                + "form of B, write is-a (\"Int conversion | other | binary operand conversion\" is is-a); a part or a component, part-of; "
+                + "a property, a rule or a variant of B's use, feature (\"snippet replacement | other | code snippets\" is feature); "
+                + "an operation, a method or a constructor that acts on B or is called on it, operation (\"BigInteger constructor | other | "
+                + "BigInteger\" and \"Scanner.hasNextInt | other | console input\" are operation). When A and B are the same thing under "
+                + "two names (\"casting\" and \"cast\"), write drop.\n"
                 + "For example \"R1 | keep\", \"R2 | is-a\", \"R3 | drop\". Write nothing else.";
     }
 
