@@ -17,16 +17,16 @@ import java.util.regex.Pattern;
 
 /**
  * How a section explains its main concept, by the blocks of its heading rule ({@code (defrule s1 -> b1 b2 b3 b4 :heading ...)},
- * whose items are only listed): one question per section of two blocks or more, showing the blocks by name, asking which
- * of four ways of explaining the section takes. The model must choose one of the four.
+ * whose items are only listed): one question per section of two blocks or more, showing the blocks by name, asking for
+ * each block what the thing it takes up is to the concept: a kind of it (is-a), a part of it, a step of it, or an aspect
+ * of it. The relation most blocks bear gives the section's pattern:
  * <ul>
- * <li>{@code sequence}: the blocks go through steps in order;</li>
- * <li>{@code structure}: the blocks take one thing apart into its parts;</li>
- * <li>{@code partition}: the blocks divide a set into its kinds, which together make up the set;</li>
- * <li>{@code aspects}: the blocks take up one aspect of the concept after another (what it is, its syntax, how it is
- * used, what to watch out for): the slots of the concept's frame.</li>
+ * <li>{@code partition}: most blocks take up a kind of it; they divide it, a set, into its kinds;</li>
+ * <li>{@code structure}: most take up a part of it; they take it apart;</li>
+ * <li>{@code sequence}: most take up a step of it, a process; they go through its steps in order;</li>
+ * <li>{@code aspects}: most take up an aspect of it (what it is, its syntax, how it is used, what to watch out for):
+ * the slots of the concept's frame.</li>
  * </ul>
- * The reply also says, for each block that is a step, a part, a kind or an aspect of the concept, what it is.
  *
  * <p>The main concept ({@link #mainConcept}) is the one in the section's title that got the most rules for its concrete
  * frame; in a section whose title names none, the one that got the most rules.
@@ -38,8 +38,16 @@ public final class SectionPattern {
     public static final String PARTITION = "partition";
     public static final String ASPECTS = "aspects";
 
-    /** One block of the section that is a step, a part or a kind: the block's rule name and what it is. */
-    public record Member(String block, String name) {}
+    /**
+     * One block of the section and what the thing it takes up is to the concept: a kind of it, a part of it, a step of
+     * it, or an aspect of it.
+     */
+    public record Member(String block, String relation, String name) {
+        public static final String KIND = "kind";
+        public static final String PART = "part";
+        public static final String STEP = "step";
+        public static final String ASPECT = "aspect";
+    }
 
     /** How the section explains {@code concept}: the pattern, and the blocks that are the concept's steps, parts or kinds. */
     public record Layout(String concept, String pattern, List<Member> members) {}
@@ -120,52 +128,67 @@ public final class SectionPattern {
                 break;
             }
         }
+        String c = "\"" + concept + "\"";
         return "Below is one section of a textbook, \"" + node.number() + ". " + node.title() + "\", its blocks named b1, b2, ...\n\n"
                 + text
-                + "The section's main concept is \"" + concept + "\". A textbook explains a concept in one of four ways:\n"
-                + "sequence    the concept itself is a procedure or a process that runs in time, and the blocks go through its "
-                + "steps in the order they happen (compiling then running a program; a loop testing its condition, running its "
-                + "body, testing again). A section that only takes up one topic after another (what the concept is, its syntax, "
-                + "how it is used, what to watch out for) is not a sequence: the order is the text's, not the concept's; it is aspects.\n"
-                + "structure   the blocks take it apart, as anatomy does: each block explains one part or component of it and how "
-                + "that part fits with the others.\n"
-                + "partition   the blocks divide it, a set, into its kinds: each block explains one kind, and the kinds together "
-                + "make up the set (a section on comments explains the // comment, the /* */ comment and the /** */ comment: three "
-                + "kinds of comment).\n"
-                + "aspects     the blocks take up one aspect of it after another: what it is, why it is needed, its syntax, how "
-                + "it behaves, how it is used, what to watch out for. The concept is not taken apart into parts or divided into "
-                + "kinds; each block says something else about the whole of it.\n"
-                + "Say which of the four this section uses to explain \"" + concept + "\". You must choose one of the four, the one "
-                + "it is closest to, even when none fits well.\n"
-                + "Write first \"pattern: \" and the word; then one line for each block that is a step, a part, a kind or an aspect "
-                + "of it: the block's name, \" | \", and what that step, part, kind or aspect is, in a few words; for an aspect, "
-                + "begin with the aspect's name (definition, motivation, syntax, behavior, usage, caveat, or another) and a colon. Leave out a block that only supports "
-                + "another (an example, a listing, a note). For example, for \"comment\"\n"
-                + "pattern: partition\nb1 | end-of-line comment (//)\nb3 | block comment (/* */)\nb4 | documentation comment (/** */)\n"
+                + "The section's main concept is " + c + ". For each block, say what the thing it takes up is to " + c + ", "
+                + "with one of these four words:\n"
+                + "kind     the thing is a kind of " + c + ": you can say \"X is a " + concept + "\" (\"the byte type is an integer "
+                + "type\", \"the // comment is a comment\"). A method or a member of " + c + " is not a kind of it.\n"
+                + "part     the thing is a part or a component of " + c + " (\"its state is a part of an object\", \"a field is a "
+                + "part of a class\").\n"
+                + "step     " + c + " is a procedure or a process that runs in time, and the thing is one of its steps (\"compiling "
+                + "is a step of building a program\").\n"
+                + "aspect   the thing is something said of the whole of " + c + ": what it is, why it is needed, its syntax, how it "
+                + "behaves, how it is used, what to watch out for.\n"
+                + "Write one line for each block: the block's name, \" | \", the word, \" | \", and what the thing is, in a few words; "
+                + "for an aspect, the aspect's name (definition, motivation, syntax, behavior, usage, caveat, or another). Leave out a "
+                + "block that only supports another (an example, a listing, a note). For example, for \"comment\"\n"
+                + "b1 | kind | end-of-line comment (//)\nb3 | kind | block comment (/* */)\nb4 | kind | documentation comment (/** */)\n"
+                + "and for \"constant\"\n"
+                + "b1 | aspect | definition\nb3 | aspect | behavior\nb4 | aspect | usage\n"
                 + "Write nothing else.";
     }
 
-    /** @return what the reply says; the pattern is {@code null} when the reply names none of the four */
+    /** The pattern each relation makes when most blocks bear it, in the order a tie is settled. */
+    private static final Map<String, String> PATTERN_OF = new LinkedHashMap<>();
+    static {
+        PATTERN_OF.put(Member.KIND, PARTITION);
+        PATTERN_OF.put(Member.PART, STRUCTURE);
+        PATTERN_OF.put(Member.STEP, SEQUENCE);
+        PATTERN_OF.put(Member.ASPECT, ASPECTS);
+    }
+
+    /**
+     * @return what the reply says: the blocks with their relation to the concept, and the pattern of the relation most
+     *         of them bear (a tie goes to kind, then part, then step); the pattern is {@code null} when no block has one
+     */
     public static Layout read(String reply, String concept, List<Block> blocks) {
-        String pattern = null;
-        Matcher p = Pattern.compile("(?im)^\\W*pattern\\W*[:=]\\s*\\W*(sequence|structure|partition|aspects?)\\b").matcher(reply);
-        if (p.find()) pattern = p.group(1).toLowerCase(Locale.ROOT).replaceAll("^aspect$", ASPECTS);
         List<String> names = blocks.stream().map(Block::name).toList();
-        Map<String, String> members = new LinkedHashMap<>();
-        Matcher m = Pattern.compile("(?im)^\\W*\\[?([a-z][\\w/]*)\\]?\\s*[|:\\-]+\\s*(.+)$").matcher(reply);
+        Map<String, Member> members = new LinkedHashMap<>();
+        Matcher m = Pattern.compile("(?im)^\\W*\\[?([a-z][\\w/]*)\\]?\\s*\\|\\s*\\W*(kind|part|step|aspect)s?\\W*\\|\\s*(.+)$").matcher(reply);
         while (m.find()) {
             String b = m.group(1);
-            if (names.contains(b)) members.putIfAbsent(b, m.group(2).strip());
+            if (names.contains(b)) members.putIfAbsent(b, new Member(b, m.group(2).toLowerCase(Locale.ROOT), m.group(3).strip()));
         }
         List<Member> out = new ArrayList<>();
-        for (String b : names) if (members.containsKey(b)) out.add(new Member(b, members.get(b)));
+        for (String b : names) if (members.containsKey(b)) out.add(members.get(b));
+        String pattern = null;
+        long most = 0;
+        for (Map.Entry<String, String> e : PATTERN_OF.entrySet()) {
+            long n = out.stream().filter(x -> x.relation().equals(e.getKey())).count();
+            if (n > most) {
+                most = n;
+                pattern = e.getValue();
+            }
+        }
         return new Layout(concept, pattern, out);
     }
 
     /**
      * Asks the pattern of every section of two blocks or more and a main concept that has none yet ({@code only} empty), or of the
      * sections named, {@code parallel} at a time, and stores each as soon as it is read. A section that fails, or
-     * whose reply names none of the four, is reported and left out, so a run started again goes on with it.
+     * whose reply relates no block to the concept, is reported and left out, so a run started again goes on with it.
      *
      * @return how many sections were asked and how many took each pattern, in one line
      */
@@ -212,7 +235,7 @@ public final class SectionPattern {
                     try {
                         String concept = main.get(number);
                         Layout l = read(writer.apply(question(nodes.get(number), concept, e.getValue())), concept, e.getValue());
-                        if (l.pattern() == null) throw new IllegalStateException("the reply names none of the four patterns");
+                        if (l.pattern() == null) throw new IllegalStateException("the reply relates no block to the concept");
                         store.savePattern(book, number, l);
                         tally.computeIfAbsent(l.pattern(), k -> new AtomicInteger()).incrementAndGet();
                         log.accept("done " + done.incrementAndGet() + "/" + todo.size() + " " + number + ": " + concept + " by " + l.pattern() + ", " + l.members().size() + " member(s)");

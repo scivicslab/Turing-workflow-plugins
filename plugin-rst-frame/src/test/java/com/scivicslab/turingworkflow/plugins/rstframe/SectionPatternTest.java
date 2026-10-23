@@ -44,25 +44,32 @@ class SectionPatternTest {
         String q = SectionPattern.question(new BookOutline.Node("3.2", "section", "Comments", "3", "f.md"), "comment", SectionPattern.blocks(COMMENTS, Map.of()));
         assertTrue(q.contains("[b1] Comments in Java"));
         assertTrue(q.contains("[b4] Finally, a third kind"));
-        assertTrue(q.contains("uses to explain \"comment\""));
-        assertTrue(q.contains("You must choose one of the four"));
-        assertTrue(q.contains("the order is the text's, not the concept's"));
+        assertTrue(q.contains("The section's main concept is \"comment\""));
+        assertTrue(q.contains("you can say \"X is a comment\""));
     }
 
     @Test
-    void theReplyGivesThePatternTheWholeAndTheMembersInBlockOrder() {
+    void thePatternIsTheRelationMostBlocksBearAndTheMembersAreInBlockOrder() {
         List<SectionPattern.Block> blocks = SectionPattern.blocks(COMMENTS, Map.of());
         SectionPattern.Layout l = SectionPattern.read("""
-                **pattern:** Partition
-                b4 | documentation comment (/** */)
-                b1 | end-of-line comment (//)
-                [b3] | block comment (/* */)
-                b9 | no such block
+                b4 | kind | documentation comment (/** */)
+                b1 | **kind** | end-of-line comment (//)
+                [b3] | kind | block comment (/* */)
+                b2 | aspect | usage
+                b9 | kind | no such block
                 """, "comment", blocks);
         assertEquals(SectionPattern.PARTITION, l.pattern());
         assertEquals("comment", l.concept());
-        assertEquals(List.of(new SectionPattern.Member("b1", "end-of-line comment (//)"), new SectionPattern.Member("b3", "block comment (/* */)"),
-                new SectionPattern.Member("b4", "documentation comment (/** */)")), l.members());
+        assertEquals(List.of(new SectionPattern.Member("b1", "kind", "end-of-line comment (//)"), new SectionPattern.Member("b2", "aspect", "usage"),
+                new SectionPattern.Member("b3", "kind", "block comment (/* */)"), new SectionPattern.Member("b4", "kind", "documentation comment (/** */)")),
+                l.members());
+    }
+
+    @Test
+    void aspectsWhenMostBlocksAreAspectsAndATieGoesToKind() {
+        List<SectionPattern.Block> blocks = SectionPattern.blocks(COMMENTS, Map.of());
+        assertEquals(SectionPattern.ASPECTS, SectionPattern.read("b1 | aspect | definition\nb3 | aspect | usage\nb4 | part | x", "constant", blocks).pattern());
+        assertEquals(SectionPattern.PARTITION, SectionPattern.read("b1 | aspect | definition\nb3 | kind | x", "constant", blocks).pattern());
     }
 
     @Test
@@ -78,15 +85,7 @@ class SectionPatternTest {
     }
 
     @Test
-    void anAspectReplyNamesEachBlocksAspect() {
-        SectionPattern.Layout l = SectionPattern.read("pattern: aspect\nb1 | definition: a value that cannot change\nb3 | usage: class constants",
-                "constant", SectionPattern.blocks(COMMENTS, Map.of()));
-        assertEquals(SectionPattern.ASPECTS, l.pattern());
-        assertEquals("definition: a value that cannot change", l.members().get(0).name());
-    }
-
-    @Test
     void aReplyNamingNoneOfTheThreeHasNoPattern() {
-        assertNull(SectionPattern.read("pattern: comparison", "comment", SectionPattern.blocks(COMMENTS, Map.of())).pattern());
+        assertNull(SectionPattern.read("pattern: partition\nb1 | comparison | x", "comment", SectionPattern.blocks(COMMENTS, Map.of())).pattern());
     }
 }

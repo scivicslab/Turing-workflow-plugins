@@ -58,7 +58,7 @@ public final class BookStore implements AutoCloseable {
                     + "concept VARCHAR(1000) NOT NULL, ordinal INT NOT NULL, kind VARCHAR(20) NOT NULL, rule VARCHAR(400) NOT NULL, "
                     + "text CLOB NOT NULL, PRIMARY KEY (book, number, concept, ordinal))");
             // how a section explains its main concept: sequence, structure, partition or aspects; the blocks that are the concept's
-            // steps, parts, kinds or aspects, one "block<TAB>name" line each
+            // steps, parts, kinds or aspects, one "block<TAB>relation<TAB>name" line each
             s.execute("CREATE TABLE IF NOT EXISTS section_pattern (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "concept VARCHAR(1000) NOT NULL, pattern VARCHAR(20) NOT NULL, members CLOB, PRIMARY KEY (book, number))");
         }
@@ -464,7 +464,7 @@ public final class BookStore implements AutoCloseable {
     /** Replaces how one section explains its main concept. */
     public synchronized void savePattern(String book, String number, SectionPattern.Layout layout) throws SQLException {
         StringBuilder members = new StringBuilder();
-        for (SectionPattern.Member m : layout.members()) members.append(m.block()).append('\t').append(m.name().replace('\n', ' ')).append('\n');
+        for (SectionPattern.Member m : layout.members()) members.append(m.block()).append('\t').append(m.relation()).append('\t').append(m.name().replace('\n', ' ')).append('\n');
         try (PreparedStatement p = db.prepareStatement("MERGE INTO section_pattern (book, number, concept, pattern, members) KEY (book, number) "
                 + "VALUES (?, ?, ?, ?, ?)")) {
             p.setString(1, book);
@@ -487,8 +487,8 @@ public final class BookStore implements AutoCloseable {
                     String text = r.getString(4);
                     if (text != null) {
                         for (String line : text.split("\n")) {
-                            int tab = line.indexOf('\t');
-                            if (tab > 0) members.add(new SectionPattern.Member(line.substring(0, tab), line.substring(tab + 1)));
+                            String[] f = line.split("\t", 3);
+                            if (f.length == 3) members.add(new SectionPattern.Member(f[0], f[1], f[2]));
                         }
                     }
                     out.put(r.getString(1), new SectionPattern.Layout(r.getString(2), r.getString(3), members));
