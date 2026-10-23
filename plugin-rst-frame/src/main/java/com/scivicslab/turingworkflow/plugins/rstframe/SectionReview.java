@@ -18,13 +18,13 @@ import java.util.regex.Pattern;
 /**
  * A simple review of step 6 ({@code FrameOntology_261021_oo01}, step 7): one question per section, showing its
  * sentences numbered, its concepts, and the relations step 6 found, numbered {@code R1}, {@code R2}, ..., asking for
- * each whether it stands ({@code keep}), is of another kind ({@code is-a}, {@code part-of}, {@code feature}, {@code other}), runs the
+ * each whether it stands ({@code keep}), is of another kind ({@code is-a}, {@code part-of}, {@code feature}, {@code operation}, {@code other}), runs the
  * other way ({@code reverse}), or is wrong ({@code drop}). A relation the reply says nothing of is kept.
  */
 public final class SectionReview {
 
     private static final Set<String> VERDICTS = Set.of(BookStore.Relation.KEEP, BookStore.Relation.IS_A, BookStore.Relation.PART_OF,
-            BookStore.Relation.FEATURE, BookStore.Relation.OTHER, BookStore.Relation.REVERSE, BookStore.Relation.DROP);
+            BookStore.Relation.FEATURE, BookStore.Relation.OPERATION, BookStore.Relation.OTHER, BookStore.Relation.REVERSE, BookStore.Relation.DROP);
 
     private SectionReview() {
     }
@@ -55,12 +55,13 @@ public final class SectionReview {
                 + text + "\nThe concepts it explains are: " + String.join("; ", concepts) + "\n\n"
                 + "Someone read the section and wrote these relations between its concepts. \"A | is-a | B\" says A is a kind of B; "
                 + "\"A | part-of | B\" says A is a part or a component of B; \"A | feature | B\" says A is a property or an attribute of B; "
+                + "\"A | operation | B\" says A is an operation or a method that acts on B; "
                 + "\"A | other | B\" says they are related in another way (A is a way of doing B, a use of B, a rule about B).\n"
                 + rel + "\n"
                 + "Check each relation against the section and against what the terms mean. For each, write one line: its number, \" | \", "
                 + "and one of these words:\n"
                 + "keep      the relation is right\n"
-                + "is-a, part-of, feature or other   the two concepts are related, but in that way instead; other when it is none of the three\n"
+                + "is-a, part-of, feature, operation or other   the two concepts are related, but in that way instead; other when it is none of the four\n"
                 + "reverse   the relation is right but runs the other way (B is the kind, part or feature of A)\n"
                 + "drop      the two concepts are not related so, or one does not belong to the other at all\n"
                 + "For example \"R1 | keep\", \"R2 | is-a\", \"R3 | drop\". Write nothing else.";

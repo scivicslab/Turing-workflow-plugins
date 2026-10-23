@@ -35,7 +35,7 @@ public final class FrameMaterial {
     /**
      * @return the concepts of one section to collect rules for, without their hierarchy, in the order step 4 listed
      *         them, each with the concepts folded into it: those step 5 kept that are in the title, a parent of a
-     *         relation standing after step 7, a kind of another (is-a), or related to another in some other way. A feature or a part of a concept is folded
+     *         relation standing after step 7, a kind of another (is-a), or related to another in some other way. A feature, a part or an operation of a concept is folded
      *         into it, and what the section says of it is collected as its owner's, unless it is listed on its own
      *         account; folded into an owner that is not listed, it is listed itself.
      */
@@ -47,7 +47,7 @@ public final class FrameMaterial {
             if (after == null) continue;
             own.add(after.parent());
             // a kind, or a concept related another way (a way of doing the parent, a use of it), is a concept of its own;
-            // only a feature or a part is the parent's
+            // a feature, a part or an operation is the parent's
             if (after.kind().equals(BookStore.Relation.IS_A) || after.kind().equals(BookStore.Relation.OTHER)) own.add(after.child());
             else ownerOf.putIfAbsent(after.child(), after.parent());
         }
@@ -86,12 +86,12 @@ public final class FrameMaterial {
         StringBuilder list = new StringBuilder();
         for (Map.Entry<String, List<String>> c : concepts.entrySet()) {
             list.append("- ").append(c.getKey());
-            if (!c.getValue().isEmpty()) list.append("   (with its features and parts: ").append(String.join(", ", c.getValue())).append(')');
+            if (!c.getValue().isEmpty()) list.append("   (with its features, parts and operations: ").append(String.join(", ", c.getValue())).append(')');
             list.append('\n');
         }
         return "Below is one section of a textbook, \"" + node.number() + ". " + node.title() + "\", its sentences numbered.\n\n"
                 + text + "\nThe concepts it explains are:\n" + list + "\n"
-                + "A sentence about a feature or a part listed with a concept tells about that concept: \"The length method yields the "
+                + "A sentence about a feature, a part or an operation listed with a concept tells about that concept: \"The length method yields the "
                 + "number of char values\" tells a behavior of String when String is listed with String.length.\n"
                 + "For each concept, find the sentences that tell the reader about it, and say for each whether it tells\n"
                 + "property   what the concept is or has: its definition, its parts, its values, its rules (\"A string is a sequence of Unicode characters.\")\n"

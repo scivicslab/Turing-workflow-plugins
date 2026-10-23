@@ -111,12 +111,14 @@ class FrameMaterialTest {
     void aConceptRelatedAnotherWayIsListedOnItsOwn() {
         List<BookStore.JudgedConcept> j = List.of(new BookStore.JudgedConcept("string concatenation", true, "in the title"),
                 new BookStore.JudgedConcept("String.join", true, "in a nucleus"),
-                new BookStore.JudgedConcept("operator precedence", true, "in a nucleus"));
+                new BookStore.JudgedConcept("operator precedence", true, "in a nucleus"),
+                new BookStore.JudgedConcept("String.repeat", true, "in a nucleus"));
         List<BookStore.Relation> rel = List.of(
                 new BookStore.Relation("other", "String.join", "string concatenation", List.of(21)),
-                new BookStore.Relation("feature", "operator precedence", "string concatenation", List.of(13)));
+                new BookStore.Relation("feature", "operator precedence", "string concatenation", List.of(13)),
+                new BookStore.Relation("operation", "String.repeat", "string concatenation", List.of(23)));
         java.util.Map<String, List<String>> c = FrameMaterial.candidates(j, rel);
         assertEquals(List.of("string concatenation", "String.join"), List.copyOf(c.keySet()));
-        assertEquals(List.of("operator precedence"), c.get("string concatenation"));
+        assertEquals(List.of("operator precedence", "String.repeat"), c.get("string concatenation"), "an operation is folded like a feature");
     }
 }
