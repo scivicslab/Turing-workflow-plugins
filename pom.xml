@@ -67,8 +67,8 @@
         <actionSchemas.skip>false</actionSchemas.skip>
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <pojo-actor.version>4.5.0</pojo-actor.version>
-        <turing-workflow.version>4.5.0</turing-workflow.version>
+        <pojo-actor.version>4.6.0-SNAPSHOT</pojo-actor.version>
+        <turing-workflow.version>4.6.0-SNAPSHOT</turing-workflow.version>
     </properties>
 
     <dependencyManagement>
