@@ -94,6 +94,20 @@ public final class RuleFile {
         return new RuleFile(out);
     }
 
+    /**
+     * @return the {@code defrule} form of the rule named {@code name} as the rule file writes it, or {@code null} when the
+     *         file has no such rule
+     */
+    public static String formOf(String text, String name) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\(defrule\\s+" + java.util.regex.Pattern.quote(name) + "\\s").matcher(text);
+        if (!m.find()) return null;
+        try {
+            return text.substring(m.start(), endOfForm(text, m.start()));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     /** @return the index just past the form that starts at {@code start} */
     private static int endOfForm(String text, int start) {
         int depth = 0;
