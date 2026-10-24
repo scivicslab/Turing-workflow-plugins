@@ -129,6 +129,21 @@ public final class BookStructure {
         return ask(db, name, url, model, 600, parallel, only, (s, b, o, w, p, l) -> SectionPattern.askAll(s, b, o, w, p, l, text));
     }
 
+    /** Frame data step 1: splits each section's blocks into groups, each with its type and main concept ({@link SectionGroups}). */
+    public String groups(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
+        return ask(db, name, url, model, 800, parallel, only, SectionGroups::askAll);
+    }
+
+    /** Frame data step 2: the causes and motives of each group's main concept ({@link ConceptCauses}). */
+    public String causes(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
+        return ask(db, name, url, model, 1200, parallel, only, ConceptCauses::askAll);
+    }
+
+    /** Frame data step 3: the properties of each group's main concept, what it is, has and does ({@link ConceptProperties}). */
+    public String properties(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
+        return ask(db, name, url, model, 1200, parallel, only, ConceptProperties::askAll);
+    }
+
     /** Step 7: reviews step 6's relations: keep, another kind, reverse or drop ({@link SectionReview}). */
     public String review(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
         return ask(db, name, url, model, 400, parallel, only, SectionReview::reviewAll);

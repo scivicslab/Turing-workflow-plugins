@@ -113,6 +113,27 @@ public class BookStructureIIAR extends IIActorRef<BookStructure> {
                 a.getString("model"), parallel(a), sections(a), a.optString("examples", "")));
     }
 
+    /** Frame data step 1: each section's blocks split into groups, each with its type and main concept. Args: {@code {db, name, url, model, parallel, sections}}. */
+    @Action("groups")
+    public ActionResult groups(String args) {
+        return step(args, "could not group the sections", (b, a) -> b.groups(a.getString("db"), a.getString("name"), a.getString("url"),
+                a.getString("model"), parallel(a), sections(a)));
+    }
+
+    /** Frame data step 2: the causes and motives of each group's main concept. Args: {@code {db, name, url, model, parallel, sections}}. */
+    @Action("causes")
+    public ActionResult causes(String args) {
+        return step(args, "could not ask the causes", (b, a) -> b.causes(a.getString("db"), a.getString("name"), a.getString("url"),
+                a.getString("model"), parallel(a), sections(a)));
+    }
+
+    /** Frame data step 3: the properties of each group's main concept. Args: {@code {db, name, url, model, parallel, sections}}. */
+    @Action("properties")
+    public ActionResult properties(String args) {
+        return step(args, "could not ask the properties", (b, a) -> b.properties(a.getString("db"), a.getString("name"), a.getString("url"),
+                a.getString("model"), parallel(a), sections(a)));
+    }
+
     /** A concrete frame's material: the rules that say each listed concept's properties and behaviors. Args: {@code {db, name, url, model, parallel, sections}}. */
     @Action("collect")
     public ActionResult collect(String args) {
