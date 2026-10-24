@@ -82,6 +82,10 @@ public final class BookStore implements AutoCloseable {
             s.execute("CREATE TABLE IF NOT EXISTS frame_relation (from_id VARCHAR(40) NOT NULL, kind VARCHAR(20) NOT NULL, "
                     + "to_id VARCHAR(40) NOT NULL, book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "PRIMARY KEY (from_id, kind, to_id, book, number))");
+            // the lookups the viewer makes of one frame: its concrete frames, its kinds, the relations that point to it
+            s.execute("CREATE INDEX IF NOT EXISTS frame_registry_member_id ON frame_registry_member (id)");
+            s.execute("CREATE INDEX IF NOT EXISTS frame_registry_parent ON frame_registry (parent)");
+            s.execute("CREATE INDEX IF NOT EXISTS frame_relation_to ON frame_relation (to_id)");
             s.execute("CREATE TABLE IF NOT EXISTS frame_registry_item (id VARCHAR(40) NOT NULL, ordinal INT NOT NULL, "
                     + "question VARCHAR(2000) NOT NULL, rules CLOB NOT NULL, PRIMARY KEY (id, ordinal))");
             s.execute("CREATE TABLE IF NOT EXISTS section_pattern (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
@@ -456,6 +460,35 @@ public final class BookStore implements AutoCloseable {
         } finally {
             db.setAutoCommit(true);
         }
+    }
+
+    /**
+     * @return one concrete-frame concept of one section with its rules, or {@code null}: read by the keys, for a view of
+     *         one frame, not the whole book
+     */
+    public synchronized FrameConcept frameConcept(String book, String number, String concept) throws SQLException {
+        Boolean kept;
+        String folded;
+        try (PreparedStatement p = db.prepareStatement("SELECT kept, folded FROM frame_concept WHERE book = ? AND number = ? AND concept = ?")) {
+            p.setString(1, book);
+            p.setString(2, number);
+            p.setString(3, concept);
+            try (ResultSet r = p.executeQuery()) {
+                if (!r.next()) return null;
+                kept = (Boolean) r.getObject(1);
+                folded = r.getString(2);
+            }
+        }
+        List<FrameRule> rules = new ArrayList<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT kind, rule, text FROM frame_rule WHERE book = ? AND number = ? AND concept = ? ORDER BY ordinal")) {
+            p.setString(1, book);
+            p.setString(2, number);
+            p.setString(3, concept);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) rules.add(new FrameRule(r.getString(1), r.getString(2), r.getString(3)));
+            }
+        }
+        return new FrameConcept(concept, rules, kept, folded == null ? List.of() : List.of(folded.split("\n")));
     }
 
     /** @return each section's concrete-frame concepts with their rules, by section number, in list order */
