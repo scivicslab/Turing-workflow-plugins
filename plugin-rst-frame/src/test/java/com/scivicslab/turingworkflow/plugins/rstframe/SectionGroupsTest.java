@@ -42,8 +42,13 @@ class SectionGroupsTest {
         assertEquals(2, g.size());
         assertEquals("set", g.get(1).type());
         assertEquals(List.of("b2", "b3"), g.get(1).blocks().stream().map(SectionGroups.Member::block).toList());
-        assertEquals(List.of(), SectionGroups.readGroups("b2-b3 | set\nb1 | one\n", b), "a range that runs backwards");
-        assertEquals(List.of(), SectionGroups.readGroups("b3-b2 | set\n", b));
+        assertEquals(List.of("b2-b3"), SectionGroups.readGroups("b2-b3 | set\nb1 | one\nb3 | one\n", b).stream().map(x -> x.first() + "-" + x.last()).toList(),
+                "a line starting inside a range already read is skipped");
+        assertEquals(List.of(), SectionGroups.readGroups("b3-b2 | set\n", b), "a range that runs backwards");
+        List<SectionGroups.Group> past = SectionGroups.readGroups("b1 | one\nb2-b9 | set\nb11-b12 | sequence\n", b);
+        assertEquals(List.of("b2", "b3", "b4"), past.get(1).blocks().stream().map(SectionGroups.Member::block).toList(),
+                "a range past the last block stops at it; a line starting at no block is skipped");
+        assertEquals(2, past.size());
     }
 
     @Test

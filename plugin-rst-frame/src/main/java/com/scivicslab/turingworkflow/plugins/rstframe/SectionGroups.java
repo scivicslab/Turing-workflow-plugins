@@ -163,8 +163,9 @@ public final class SectionGroups {
 
     /**
      * @return the groups the reply makes, in block order, each a range of consecutive blocks with its type and with its
-     *         blocks named only by their rule names; empty when the reply covers no block or its ranges overlap or run
-     *         backwards; the blocks it says none of are in no group
+     *         blocks named only by their rule names; empty when the reply covers no block; the blocks it says none of are
+     *         in no group; a line that starts at no block of the section, runs backwards, or starts inside a range
+     *         already read is skipped, and a range that ends past the last block stops at it
      */
     public static List<Group> readGroups(String reply, List<Block> blocks) {
         List<String> names = blocks.stream().map(Block::name).toList();
@@ -173,7 +174,11 @@ public final class SectionGroups {
         int next = 0;
         while (m.find()) {
             int a = names.indexOf(m.group(1)), b = m.group(2) == null ? a : names.indexOf(m.group(2));
-            if (a < 0 || b < a || a < next) return List.of();
+            // a line naming no block of the section is skipped; a range running past the last block stops at it
+            if (a < 0) continue;
+            if (b < 0) b = names.size() - 1;
+            // a range that runs backwards, or starts inside one already read, is skipped
+            if (b < a || a < next) continue;
             next = b + 1;
             String type = m.group(3).toLowerCase(Locale.ROOT);
             if (type.equals("none")) continue;
@@ -268,7 +273,10 @@ public final class SectionGroups {
                 fs.add(pool.submit(() -> {
                     try {
                         BookOutline.Node node = nodes.get(number);
-                        List<Group> groups = readGroups(writer.apply(groupQuestion(node, e.getValue())), e.getValue());
+                        // a section of one block is one group of one block; only its concept is asked
+                        List<Group> groups = e.getValue().size() == 1
+                                ? List.of(new Group(1, ONE, null, List.of(new Member(e.getValue().get(0).name(), null))))
+                                : readGroups(writer.apply(groupQuestion(node, e.getValue())), e.getValue());
                         if (groups.isEmpty()) throw new IllegalStateException("the reply makes no group of the blocks");
                         groups = readNames(writer.apply(nameQuestion(node, e.getValue(), groups)), groups);
                         store.saveGroups(book, number, groups);
