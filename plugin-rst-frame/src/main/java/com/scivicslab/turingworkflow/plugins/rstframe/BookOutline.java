@@ -49,6 +49,27 @@ public final class BookOutline {
      * @param files the book's markdown files, path to text, in the order they are to be read (the caller sorts them)
      */
     public static Outline read(Map<String, String> files) {
+        // a book whose chapters are not headed "Chapter N: ..." (Globus Toolkit, Aho, Tanenbaum) is read by its numbers
+        boolean headedChapters = false;
+        for (String text : files.values()) {
+            for (BookText.Block b : BookText.read(text)) {
+                if (b.kind() == BookText.Kind.HEADING && CHAPTER.matcher(clean(b.text())).matches()) {
+                    headedChapters = true;
+                    break;
+                }
+            }
+            if (headedChapters) break;
+        }
+        if (!headedChapters) {
+            // a book cut into one directory per section ("1.1. Linux Versus Other Unix-Like Kernels _ <book>_p001-005")
+            long numberedDirs = files.keySet().stream().filter(k -> DIR_NUMBERED.matcher(dirOf(k)).matches()).count();
+            if (numberedDirs * 2 > files.size()) return readByDirectories(files);
+            // a book cut into one directory per chapter ("CHAPTER 1_ Introduction _ <book>_p001-005"), its sections unnumbered
+            long chapterDirs = files.keySet().stream().filter(k -> DIR_CHAPTER.matcher(dirOf(k)).find()).count();
+            Outline numbered = readNumbered(files);
+            if (chapterDirs * 2 > files.size() && numbered.nodes().stream().noneMatch(n -> !n.level().equals("chapter"))) return readByChapterDirectories(files);
+            return numbered;
+        }
         Map<String, Node> nodes = new LinkedHashMap<>();
         List<String> notes = new ArrayList<>();
         String part = null;
@@ -73,6 +94,132 @@ public final class BookOutline {
                     notes.add(h.number() + " comes before its parent " + h.parent() + " in " + f.getKey());
                 }
                 nodes.put(h.number(), new Node(h.number(), h.level(), h.title(), h.parent(), f.getKey()));
+            }
+        }
+        if (repeated > 0) notes.add(repeated + " heading(s) seen again were not added");
+        return new Outline(inBookOrder(List.copyOf(nodes.values())), notes);
+    }
+
+    /** A directory named by its section's number and title: "1.1. Linux Versus Other Unix-Like Kernels _ <book>_p001-005". */
+    private static final Pattern DIR_NUMBERED = Pattern.compile("^(\\d{1,2}(?:\\.\\d{1,2})*)\\.\\s+(.+?)\\s+_\\s.*$");
+    /** A directory of one chapter: "CHAPTER 1_ Introduction _ <book>_p001-005", "APPENDIX C_ Glossary _ <book>_p011-015". */
+    private static final Pattern DIR_CHAPTER = Pattern.compile("(?i)^(?:chapter\\s+(\\d{1,2})|appendix\\s+([A-Z]))_\\s*(.+?)\\s+_\\s");
+    /** A heading that reads as a section's title: it starts with a capital letter and does not end as a sentence or a label does. */
+    private static final Pattern TITLE_LIKE = Pattern.compile("^[A-Z][^\\[\\]{}();=#]{2,80}$");
+
+    /** @return the name of the directory a file is in, the file's own name when it is in none */
+    static String dirOf(String path) {
+        String p = path.replace('\\', '/');
+        int slash = p.lastIndexOf('/');
+        String dir = slash < 0 ? p : p.substring(0, slash);
+        int up = dir.lastIndexOf('/');
+        return up < 0 ? dir : dir.substring(up + 1);
+    }
+
+    /**
+     * Reads a book cut into one directory per section, named by the section's number and title: the number's depth makes
+     * a chapter, a section or a subsection; deeper ones are left out.
+     */
+    static Outline readByDirectories(Map<String, String> files) {
+        Map<String, Node> nodes = new LinkedHashMap<>();
+        List<String> notes = new ArrayList<>();
+        for (String path : files.keySet()) {
+            Matcher m = DIR_NUMBERED.matcher(dirOf(path));
+            if (!m.matches()) continue;
+            String number = m.group(1);
+            if (nodes.containsKey(number)) continue;
+            String[] parts = number.split("\\.");
+            if (parts.length > 3) continue;
+            String level = parts.length == 1 ? "chapter" : parts.length == 2 ? "section" : "subsection";
+            String parent = parts.length == 1 ? null : parts.length == 2 ? parts[0] : parts[0] + "." + parts[1];
+            if (parent != null && !nodes.containsKey(parent)) notes.add(number + " comes before its parent " + parent + " in " + path);
+            nodes.put(number, new Node(number, level, m.group(2).replace('_', ':').strip(), parent, path));
+        }
+        return new Outline(inBookOrder(List.copyOf(nodes.values())), notes);
+    }
+
+    /**
+     * Reads a book cut into one directory per chapter whose sections are not numbered: the chapter comes from its
+     * directory's name; each heading in it that reads as a title ("The Network Device", not "Helper methods:" nor a line
+     * of code) is a section, numbered in the order it is met.
+     */
+    static Outline readByChapterDirectories(Map<String, String> files) {
+        Map<String, Node> nodes = new LinkedHashMap<>();
+        Map<String, Integer> next = new LinkedHashMap<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (Map.Entry<String, String> f : files.entrySet()) {
+            Matcher d = DIR_CHAPTER.matcher(dirOf(f.getKey()));
+            if (!d.find()) continue;
+            String chapter = d.group(1) != null ? d.group(1) : d.group(2);
+            if (!nodes.containsKey(chapter)) nodes.put(chapter, new Node(chapter, "chapter", d.group(3).strip(), null, f.getKey()));
+            // the raw lines: a "## " heading is a section's, a "#define" line in code is not a heading at all
+            boolean code = false;
+            for (String line : f.getValue().split("\n")) {
+                if (line.startsWith("```")) code = !code;
+                if (code || !line.startsWith("## ")) continue;
+                String h = clean(line.substring(3));
+                if (!TITLE_LIKE.matcher(h).matches() || h.endsWith(":") || h.endsWith(".") || h.matches("(?i)(chapter|appendix)\\b.*")) continue;
+                // a title seen again in the same chapter (a heading repeated across page files) is one section
+                if (!seen.add(chapter + "\t" + h)) continue;
+                int n = next.merge(chapter, 1, Integer::sum);
+                String number = chapter + "." + n;
+                nodes.put(number, new Node(number, "section", h, chapter, f.getKey()));
+            }
+        }
+        return new Outline(inBookOrder(List.copyOf(nodes.values())), List.of());
+    }
+
+    /** A numbered heading of a book read by its numbers: "24.2.1 The FilesForSale Service", "A.2 Installing the Toolkit". */
+    private static final Pattern NUMBERED_ANY = Pattern.compile("^([A-Z]|\\d{1,2})((?:\\.\\d{1,2})+)\\.?\\s+(\\S.*)$");
+    /** A chapter's own heading in such a book: its number and its title, "2 COMPUTER SYSTEMS ORGANIZATION". */
+    private static final Pattern BARE_CHAPTER = Pattern.compile("^([1-9]\\d?)\\.?\\s+(\\p{L}[\\p{L}\\p{N} ,:&'()-]{2,})$");
+
+    /**
+     * Reads a book whose chapters are not headed "Chapter N: ...": a numbered heading belongs to the chapter of its first
+     * number or letter, which is made when it is first met; a heading of a chapter number and a title gives that chapter
+     * its title. Two numbers make a section, three a subsection; deeper ones, unnumbered headings, and lines of code that
+     * begin with "#" are left out.
+     */
+    static Outline readNumbered(Map<String, String> files) {
+        Map<String, Node> nodes = new LinkedHashMap<>();
+        Map<String, String> titles = new LinkedHashMap<>();
+        List<String> notes = new ArrayList<>();
+        int repeated = 0;
+        // the chapters' titles first, wherever their headings stand
+        for (String text : files.values()) {
+            for (BookText.Block b : BookText.read(text)) {
+                if (b.kind() != BookText.Kind.HEADING) continue;
+                Matcher c = BARE_CHAPTER.matcher(clean(b.text()));
+                if (c.matches()) titles.putIfAbsent(c.group(1), c.group(2).strip());
+            }
+        }
+        for (Map.Entry<String, String> f : files.entrySet()) {
+            for (BookText.Block b : BookText.read(f.getValue())) {
+                if (b.kind() != BookText.Kind.HEADING) continue;
+                String h = clean(b.text());
+                Matcher m = NUMBERED_ANY.matcher(h);
+                if (!m.matches()) {
+                    Matcher c = BARE_CHAPTER.matcher(h);
+                    if (c.matches() && !nodes.containsKey(c.group(1))) {
+                        nodes.put(c.group(1), new Node(c.group(1), "chapter", c.group(2).strip(), null, f.getKey()));
+                    }
+                    continue;
+                }
+                String chapter = m.group(1);
+                String number = chapter + m.group(2);
+                String[] parts = number.split("\\.");
+                if (parts.length > 3) continue;
+                if (!nodes.containsKey(chapter)) {
+                    String title = titles.getOrDefault(chapter, chapter.matches("\\d+") ? "Chapter " + chapter : "Appendix " + chapter);
+                    nodes.put(chapter, new Node(chapter, "chapter", title, null, f.getKey()));
+                }
+                if (nodes.containsKey(number)) {
+                    repeated++;
+                    continue;
+                }
+                String parent = parts.length == 2 ? chapter : parts[0] + "." + parts[1];
+                if (!nodes.containsKey(parent)) notes.add(number + " comes before its parent " + parent + " in " + f.getKey());
+                nodes.put(number, new Node(number, parts.length == 2 ? "section" : "subsection", m.group(3).strip(), parent, f.getKey()));
             }
         }
         if (repeated > 0) notes.add(repeated + " heading(s) seen again were not added");
