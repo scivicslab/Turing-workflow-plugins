@@ -127,6 +127,13 @@ public class BookStructureIIAR extends IIActorRef<BookStructure> {
                 a.getString("model"), parallel(a), sections(a)));
     }
 
+    /** Frame data step 2b: the relations of each unit's concepts to other concepts. Args: {@code {db, name, url, model, parallel, sections}}. */
+    @Action("relationsOfConcepts")
+    public ActionResult relationsOfConcepts(String args) {
+        return step(args, "could not read the relations of the concepts", (b, a) -> b.relationsOfConcepts(a.getString("db"), a.getString("name"),
+                a.getString("url"), a.getString("model"), parallel(a), sections(a)));
+    }
+
     /** Frame data step 3: the properties of each group's main concept. Args: {@code {db, name, url, model, parallel, sections}}. */
     @Action("properties")
     public ActionResult properties(String args) {

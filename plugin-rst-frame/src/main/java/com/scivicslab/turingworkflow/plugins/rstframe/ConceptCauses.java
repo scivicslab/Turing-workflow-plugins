@@ -48,8 +48,13 @@ public final class ConceptCauses {
     private ConceptCauses() {
     }
 
-    /** @return the pairs of the rule file, in file order */
+    /** @return the pairs of cause and motive of the rule file, in file order */
     public static List<Pair> pairs(String rules, Map<String, String> code) {
+        return pairs(rules, code, RELATIONS);
+    }
+
+    /** @return the pairs of the rule file whose satellite is joined to its nucleus by one of {@code relations}, in file order */
+    public static List<Pair> pairs(String rules, Map<String, String> code, Set<String> relations) {
         RuleFile f = RuleFile.parse(rules);
         List<Pair> out = new ArrayList<>();
         for (RuleFile.Rule r : f.rules()) {
@@ -60,7 +65,7 @@ public final class ConceptCauses {
                 RuleFile.Token t = items.get(i);
                 if (t.kind() != RuleFile.Token.Kind.KEYWORD || items.get(i + 1).kind() != RuleFile.Token.Kind.SYMBOL) continue;
                 String rel = t.raw().substring(1);
-                if (!RELATIONS.contains(rel)) continue;
+                if (!relations.contains(rel)) continue;
                 String sat = items.get(i + 1).raw();
                 int slash = r.name().indexOf('/');
                 out.add(new Pair(slash < 0 ? r.name() : r.name().substring(0, slash), rel, nucleus, text(f, nucleus, code), sat, text(f, sat, code)));
@@ -69,7 +74,7 @@ public final class ConceptCauses {
         return out;
     }
 
-    private static String text(RuleFile f, String name, Map<String, String> code) {
+    static String text(RuleFile f, String name, Map<String, String> code) {
         StringBuilder sb = new StringBuilder();
         textOf(f, name, code, sb, 0);
         return sb.toString().strip();

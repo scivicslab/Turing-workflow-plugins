@@ -139,6 +139,11 @@ public final class BookStructure {
         return ask(db, name, url, model, 1200, parallel, only, ConceptCauses::askAll);
     }
 
+    /** Frame data step 2b: the relations of each unit's concepts to other concepts ({@link ConceptRelations}). */
+    public String relationsOfConcepts(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
+        return ask(db, name, url, model, 2000, parallel, only, ConceptRelations::askAll);
+    }
+
     /** Frame data step 3: the properties of each group's main concept, what it is, has and does ({@link ConceptProperties}). */
     public String properties(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
         return ask(db, name, url, model, 1200, parallel, only, ConceptProperties::askAll);

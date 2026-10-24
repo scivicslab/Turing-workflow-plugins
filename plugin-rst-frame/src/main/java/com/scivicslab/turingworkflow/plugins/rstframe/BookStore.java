@@ -97,6 +97,12 @@ public final class BookStore implements AutoCloseable {
                     + "ordinal INT NOT NULL, group_ordinal INT NOT NULL, relation VARCHAR(60) NOT NULL, kind VARCHAR(20) NOT NULL, "
                     + "from_concept VARCHAR(1000) NOT NULL, to_concept VARCHAR(1000) NOT NULL, nucleus_rule VARCHAR(200) NOT NULL, "
                     + "satellite_rule VARCHAR(200) NOT NULL, PRIMARY KEY (book, number, ordinal))");
+            s.execute("CREATE TABLE IF NOT EXISTS concept_relation (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "ordinal INT NOT NULL, group_ordinal INT NOT NULL, source VARCHAR(60) NOT NULL, link VARCHAR(60) NOT NULL, "
+                    + "from_concept VARCHAR(1000) NOT NULL, to_concept VARCHAR(1000) NOT NULL, rule VARCHAR(200) NOT NULL, "
+                    + "PRIMARY KEY (book, number, ordinal))");
+            s.execute("CREATE TABLE IF NOT EXISTS concept_relation_asked (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "PRIMARY KEY (book, number))");
             s.execute("CREATE TABLE IF NOT EXISTS concept_property (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "ordinal INT NOT NULL, group_ordinal INT NOT NULL, concept VARCHAR(1000), kind VARCHAR(20) NOT NULL, "
                     + "property VARCHAR(2000) NOT NULL, rule VARCHAR(200) NOT NULL, PRIMARY KEY (book, number, ordinal))");
@@ -859,6 +865,64 @@ public final class BookStore implements AutoCloseable {
         return out;
     }
 
+    /** Replaces the relations of one section's concepts to other concepts (step 2b of the frame data workflow), and marks it asked. */
+    public synchronized void saveRelationsOfConcepts(String book, String number, List<ConceptRelations.Relation> rels) throws SQLException {
+        try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_relation WHERE book = ? AND number = ?")) {
+            d.setString(1, book);
+            d.setString(2, number);
+            d.executeUpdate();
+        }
+        try (PreparedStatement p = db.prepareStatement("INSERT INTO concept_relation (book, number, ordinal, group_ordinal, source, link, "
+                + "from_concept, to_concept, rule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+            int i = 0;
+            for (ConceptRelations.Relation x : rels) {
+                p.setString(1, book);
+                p.setString(2, number);
+                p.setInt(3, ++i);
+                p.setInt(4, x.group());
+                p.setString(5, x.source());
+                p.setString(6, x.link());
+                p.setString(7, x.from());
+                p.setString(8, x.to());
+                p.setString(9, x.rule());
+                p.executeUpdate();
+            }
+        }
+        try (PreparedStatement p = db.prepareStatement("MERGE INTO concept_relation_asked (book, number) KEY (book, number) VALUES (?, ?)")) {
+            p.setString(1, book);
+            p.setString(2, number);
+            p.executeUpdate();
+        }
+    }
+
+    /** @return the sections whose concepts' relations have been read, even those that had none */
+    public synchronized java.util.Set<String> relationsAsked(String book) throws SQLException {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT number FROM concept_relation_asked WHERE book = ?")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) out.add(r.getString(1));
+            }
+        }
+        return out;
+    }
+
+    /** @return the relations of each section's concepts to other concepts, by section number, in the order they were read */
+    public synchronized java.util.Map<String, List<ConceptRelations.Relation>> relationsOfConcepts(String book) throws SQLException {
+        java.util.Map<String, List<ConceptRelations.Relation>> out = new java.util.LinkedHashMap<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT number, group_ordinal, source, link, from_concept, to_concept, rule FROM concept_relation "
+                + "WHERE book = ? ORDER BY number, ordinal")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) {
+                    out.computeIfAbsent(r.getString(1), k -> new ArrayList<>()).add(new ConceptRelations.Relation(r.getInt(2), r.getString(3),
+                            r.getString(4), r.getString(5), r.getString(6), r.getString(7)));
+                }
+            }
+        }
+        return out;
+    }
+
     /** Replaces the properties of one section's groups' main concepts (step 3 of the frame data workflow), and marks it asked. */
     public synchronized void saveProperties(String book, String number, List<ConceptProperties.Property> props) throws SQLException {
         try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_property WHERE book = ? AND number = ?")) {
@@ -976,12 +1040,13 @@ public final class BookStore implements AutoCloseable {
     }
 
     /**
-     * Replaces the units of one section's blocks (step 1 of the frame data workflow), and forgets the causes and
-     * properties read of the old ones.
+     * Replaces the units of one section's blocks (step 1 of the frame data workflow), and forgets the causes,
+     * properties and relations read of the old ones.
      */
     public synchronized void saveGroups(String book, String number, List<SectionGroups.Group> groups) throws SQLException {
         // what was read of the old groups refers to them by ordinal: it goes with them
-        for (String t : List.of("section_group", "concept_cause", "concept_cause_asked", "concept_property", "concept_property_asked")) {
+        for (String t : List.of("section_group", "concept_cause", "concept_cause_asked", "concept_property", "concept_property_asked",
+                "concept_relation", "concept_relation_asked")) {
             try (PreparedStatement d = db.prepareStatement("DELETE FROM " + t + " WHERE book = ? AND number = ?")) {
                 d.setString(1, book);
                 d.setString(2, number);
