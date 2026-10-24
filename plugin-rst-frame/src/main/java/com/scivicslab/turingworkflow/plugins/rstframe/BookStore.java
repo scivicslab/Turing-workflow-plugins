@@ -103,6 +103,17 @@ public final class BookStore implements AutoCloseable {
                     + "PRIMARY KEY (book, number, ordinal))");
             s.execute("CREATE TABLE IF NOT EXISTS concept_relation_asked (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "PRIMARY KEY (book, number))");
+            // similarity between units is kept apart from the sections' tables, keyed by the criterion it was judged by
+            s.execute("CREATE TABLE IF NOT EXISTS unit_embedding (model VARCHAR(200) NOT NULL, book VARCHAR(200) NOT NULL, "
+                    + "number VARCHAR(40) NOT NULL, ordinal INT NOT NULL, text CLOB NOT NULL, vector VARBINARY(16384) NOT NULL, "
+                    + "PRIMARY KEY (model, book, number, ordinal))");
+            s.execute("CREATE TABLE IF NOT EXISTS concept_similarity (criterion VARCHAR(200) NOT NULL, book VARCHAR(200) NOT NULL, "
+                    + "number VARCHAR(40) NOT NULL, ordinal INT NOT NULL, concept VARCHAR(1000) NOT NULL, other_book VARCHAR(200) NOT NULL, "
+                    + "other_number VARCHAR(40) NOT NULL, other_ordinal INT NOT NULL, other_concept VARCHAR(1000) NOT NULL, "
+                    + "common VARCHAR(1000) NOT NULL, PRIMARY KEY (criterion, book, number, ordinal, other_book, other_number, other_ordinal))");
+            s.execute("CREATE TABLE IF NOT EXISTS concept_similarity_judged (criterion VARCHAR(200) NOT NULL, book VARCHAR(200) NOT NULL, "
+                    + "number VARCHAR(40) NOT NULL, ordinal INT NOT NULL, concept VARCHAR(1000) NOT NULL, "
+                    + "PRIMARY KEY (criterion, book, number, ordinal))");
             s.execute("CREATE TABLE IF NOT EXISTS concept_property (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "ordinal INT NOT NULL, group_ordinal INT NOT NULL, concept VARCHAR(1000), kind VARCHAR(20) NOT NULL, "
                     + "property VARCHAR(2000) NOT NULL, rule VARCHAR(200) NOT NULL, PRIMARY KEY (book, number, ordinal))");
@@ -917,6 +928,107 @@ public final class BookStore implements AutoCloseable {
                 while (r.next()) {
                     out.computeIfAbsent(r.getString(1), k -> new ArrayList<>()).add(new ConceptRelations.Relation(r.getInt(2), r.getString(3),
                             r.getString(4), r.getString(5), r.getString(6), r.getString(7)));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Keeps a unit's embedding by the model that made it, with the text it was made of: the unit's main concept. */
+    public synchronized void saveUnitEmbedding(String model, SimilarConcepts.Unit u, float[] v) throws SQLException {
+        java.nio.ByteBuffer b = java.nio.ByteBuffer.allocate(v.length * 4);
+        for (float f : v) b.putFloat(f);
+        try (PreparedStatement p = db.prepareStatement("MERGE INTO unit_embedding (model, book, number, ordinal, text, vector) KEY (model, book, number, ordinal) "
+                + "VALUES (?, ?, ?, ?, ?, ?)")) {
+            p.setString(1, model);
+            p.setString(2, u.book());
+            p.setString(3, u.number());
+            p.setInt(4, u.ordinal());
+            p.setString(5, u.concept());
+            p.setBytes(6, b.array());
+            p.executeUpdate();
+        }
+    }
+
+    /** @return the embeddings the model made, by "book|number|ordinal TAB text": a unit whose text changed has none */
+    public synchronized java.util.Map<String, float[]> unitEmbeddings(String model) throws SQLException {
+        java.util.Map<String, float[]> out = new java.util.HashMap<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT book, number, ordinal, text, vector FROM unit_embedding WHERE model = ?")) {
+            p.setString(1, model);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) {
+                    java.nio.ByteBuffer b = java.nio.ByteBuffer.wrap(r.getBytes(5));
+                    float[] v = new float[b.capacity() / 4];
+                    for (int i = 0; i < v.length; i++) v[i] = b.getFloat();
+                    out.put(r.getString(1) + "|" + r.getString(2) + "|" + r.getInt(3) + "\t" + r.getString(4), v);
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Replaces what one unit was judged similar to under {@code criterion}, and marks it judged. */
+    public synchronized void saveSimilar(String criterion, SimilarConcepts.Unit u, List<SimilarConcepts.Similar> similar) throws SQLException {
+        try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_similarity WHERE criterion = ? AND book = ? AND number = ? AND ordinal = ?")) {
+            d.setString(1, criterion);
+            d.setString(2, u.book());
+            d.setString(3, u.number());
+            d.setInt(4, u.ordinal());
+            d.executeUpdate();
+        }
+        try (PreparedStatement p = db.prepareStatement("MERGE INTO concept_similarity (criterion, book, number, ordinal, concept, other_book, other_number, "
+                + "other_ordinal, other_concept, common) KEY (criterion, book, number, ordinal, other_book, other_number, other_ordinal) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+            for (SimilarConcepts.Similar x : similar) {
+                p.setString(1, criterion);
+                p.setString(2, u.book());
+                p.setString(3, u.number());
+                p.setInt(4, u.ordinal());
+                p.setString(5, u.concept());
+                p.setString(6, x.other().book());
+                p.setString(7, x.other().number());
+                p.setInt(8, x.other().ordinal());
+                p.setString(9, x.other().concept());
+                p.setString(10, x.common());
+                p.executeUpdate();
+            }
+        }
+        try (PreparedStatement p = db.prepareStatement("MERGE INTO concept_similarity_judged (criterion, book, number, ordinal, concept) "
+                + "KEY (criterion, book, number, ordinal) VALUES (?, ?, ?, ?, ?)")) {
+            p.setString(1, criterion);
+            p.setString(2, u.book());
+            p.setString(3, u.number());
+            p.setInt(4, u.ordinal());
+            p.setString(5, u.concept());
+            p.executeUpdate();
+        }
+    }
+
+    /** @return the units judged under {@code criterion}, as "book|number|ordinal TAB concept": a unit renamed since is not among them */
+    public synchronized java.util.Set<String> similarJudged(String criterion) throws SQLException {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT book, number, ordinal, concept FROM concept_similarity_judged WHERE criterion = ?")) {
+            p.setString(1, criterion);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) out.add(r.getString(1) + "|" + r.getString(2) + "|" + r.getInt(3) + "\t" + r.getString(4));
+            }
+        }
+        return out;
+    }
+
+    /** One judged similarity, as the viewer reads it: the unit, the other unit, both concepts, what they share. */
+    public record SimilarRow(String criterion, String book, String number, int ordinal, String concept, String otherBook, String otherNumber,
+            int otherOrdinal, String otherConcept, String common) {}
+
+    /** @return every similarity judged under any criterion */
+    public synchronized List<SimilarRow> similarities() throws SQLException {
+        List<SimilarRow> out = new ArrayList<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT criterion, book, number, ordinal, concept, other_book, other_number, other_ordinal, "
+                + "other_concept, common FROM concept_similarity ORDER BY book, number, ordinal")) {
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) {
+                    out.add(new SimilarRow(r.getString(1), r.getString(2), r.getString(3), r.getInt(4), r.getString(5), r.getString(6), r.getString(7),
+                            r.getInt(8), r.getString(9), r.getString(10)));
                 }
             }
         }
