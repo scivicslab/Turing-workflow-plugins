@@ -98,7 +98,8 @@ public final class SimilarConcepts {
         for (String t : texts) input.put("query: " + t);
         String body = new JSONObject().put("model", model).put("input", input).toString();
         HttpResponse<String> res = http.send(HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofMinutes(5))
-                .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8)).build(),
+                .header("Content-Type", "application/json").header("X-Job-Priority", "background")
+                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8)).build(),
                 HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         if (res.statusCode() != 200) throw new IllegalStateException("HTTP " + res.statusCode() + ": " + res.body());
         JSONArray data = new JSONObject(res.body()).getJSONArray("data");

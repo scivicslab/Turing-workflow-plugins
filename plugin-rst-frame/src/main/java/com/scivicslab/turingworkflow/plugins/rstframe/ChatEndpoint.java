@@ -13,7 +13,7 @@ import org.json.JSONObject;
 /**
  * One question to a chat-completions endpoint (the GPU broker), one answer back. A reply that carries no text (an
  * error, a model name the broker does not know) is a failure, not an empty answer. A failed request is tried again a
- * few times before it fails.
+ * few times before it fails. Every request is marked as background work, so the broker serves interactive callers first.
  */
 public final class ChatEndpoint implements Function<String, String> {
 
@@ -39,7 +39,8 @@ public final class ChatEndpoint implements Function<String, String> {
         for (int attempt = 0; attempt < 4; attempt++) {
             try {
                 HttpResponse<String> r = HTTP.send(HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofMinutes(10))
-                        .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)).build(),
+                        .header("Content-Type", "application/json").header("X-Job-Priority", "background")
+                        .POST(HttpRequest.BodyPublishers.ofString(body)).build(),
                         HttpResponse.BodyHandlers.ofString());
                 String text = r.statusCode() == 200 ? text(r.body()) : null;
                 if (text != null) return text;
