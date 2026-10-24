@@ -93,6 +93,17 @@ public final class BookStore implements AutoCloseable {
             s.execute("CREATE TABLE IF NOT EXISTS section_group (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "ordinal INT NOT NULL, type VARCHAR(20) NOT NULL, concept VARCHAR(1000), members CLOB NOT NULL, "
                     + "PRIMARY KEY (book, number, ordinal))");
+            s.execute("CREATE TABLE IF NOT EXISTS concept_cause (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "ordinal INT NOT NULL, group_ordinal INT NOT NULL, relation VARCHAR(60) NOT NULL, kind VARCHAR(20) NOT NULL, "
+                    + "from_concept VARCHAR(1000) NOT NULL, to_concept VARCHAR(1000) NOT NULL, nucleus_rule VARCHAR(200) NOT NULL, "
+                    + "satellite_rule VARCHAR(200) NOT NULL, PRIMARY KEY (book, number, ordinal))");
+            s.execute("CREATE TABLE IF NOT EXISTS concept_property (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "ordinal INT NOT NULL, group_ordinal INT NOT NULL, concept VARCHAR(1000), kind VARCHAR(20) NOT NULL, "
+                    + "property VARCHAR(2000) NOT NULL, rule VARCHAR(200) NOT NULL, PRIMARY KEY (book, number, ordinal))");
+            s.execute("CREATE TABLE IF NOT EXISTS concept_property_asked (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "PRIMARY KEY (book, number))");
+            s.execute("CREATE TABLE IF NOT EXISTS concept_cause_asked (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "PRIMARY KEY (book, number))");
         }
     }
 
@@ -842,6 +853,122 @@ public final class BookStore implements AutoCloseable {
                 while (r.next()) {
                     out.computeIfAbsent(r.getString(1), k -> new java.util.LinkedHashMap<>()).computeIfAbsent(r.getString(2), k -> new ArrayList<>())
                        .add(new FrameItem(r.getString(3), List.of(r.getString(4).split(","))));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Replaces the properties of one section's groups' main concepts (step 3 of the frame data workflow), and marks it asked. */
+    public synchronized void saveProperties(String book, String number, List<ConceptProperties.Property> props) throws SQLException {
+        try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_property WHERE book = ? AND number = ?")) {
+            d.setString(1, book);
+            d.setString(2, number);
+            d.executeUpdate();
+        }
+        try (PreparedStatement p = db.prepareStatement("INSERT INTO concept_property (book, number, ordinal, group_ordinal, concept, kind, "
+                + "property, rule) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
+            int i = 0;
+            for (ConceptProperties.Property x : props) {
+                p.setString(1, book);
+                p.setString(2, number);
+                p.setInt(3, ++i);
+                p.setInt(4, x.group());
+                p.setString(5, x.concept());
+                p.setString(6, x.kind());
+                p.setString(7, x.property());
+                p.setString(8, x.rule());
+                p.executeUpdate();
+            }
+        }
+        try (PreparedStatement p = db.prepareStatement("MERGE INTO concept_property_asked (book, number) KEY (book, number) VALUES (?, ?)")) {
+            p.setString(1, book);
+            p.setString(2, number);
+            p.executeUpdate();
+        }
+    }
+
+    /** @return the sections whose groups' properties have been asked, even those that had none */
+    public synchronized java.util.Set<String> propertiesAsked(String book) throws SQLException {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT number FROM concept_property_asked WHERE book = ?")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) out.add(r.getString(1));
+            }
+        }
+        return out;
+    }
+
+    /** @return the properties of each section's groups' main concepts, by section number, in the order they were read */
+    public synchronized java.util.Map<String, List<ConceptProperties.Property>> properties(String book) throws SQLException {
+        java.util.Map<String, List<ConceptProperties.Property>> out = new java.util.LinkedHashMap<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT number, group_ordinal, concept, kind, property, rule FROM concept_property "
+                + "WHERE book = ? ORDER BY number, ordinal")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) {
+                    out.computeIfAbsent(r.getString(1), k -> new ArrayList<>()).add(new ConceptProperties.Property(r.getInt(2), r.getString(3),
+                            r.getString(4), r.getString(5), r.getString(6)));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Replaces the causes and motives of one section's concepts (step 2 of the frame data workflow), and marks it asked. */
+    public synchronized void saveCauses(String book, String number, List<ConceptCauses.Link> links) throws SQLException {
+        try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_cause WHERE book = ? AND number = ?")) {
+            d.setString(1, book);
+            d.setString(2, number);
+            d.executeUpdate();
+        }
+        try (PreparedStatement p = db.prepareStatement("INSERT INTO concept_cause (book, number, ordinal, group_ordinal, relation, kind, "
+                + "from_concept, to_concept, nucleus_rule, satellite_rule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+            int i = 0;
+            for (ConceptCauses.Link l : links) {
+                p.setString(1, book);
+                p.setString(2, number);
+                p.setInt(3, ++i);
+                p.setInt(4, l.group());
+                p.setString(5, l.relation());
+                p.setString(6, l.kind());
+                p.setString(7, l.from());
+                p.setString(8, l.to());
+                p.setString(9, l.nucleusRule());
+                p.setString(10, l.satelliteRule());
+                p.executeUpdate();
+            }
+        }
+        try (PreparedStatement p = db.prepareStatement("MERGE INTO concept_cause_asked (book, number) KEY (book, number) VALUES (?, ?)")) {
+            p.setString(1, book);
+            p.setString(2, number);
+            p.executeUpdate();
+        }
+    }
+
+    /** @return the sections whose causes and motives have been asked, even those that had none */
+    public synchronized java.util.Set<String> causesAsked(String book) throws SQLException {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT number FROM concept_cause_asked WHERE book = ?")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) out.add(r.getString(1));
+            }
+        }
+        return out;
+    }
+
+    /** @return the causes and motives of each section's concepts, by section number, in pair order */
+    public synchronized java.util.Map<String, List<ConceptCauses.Link>> causes(String book) throws SQLException {
+        java.util.Map<String, List<ConceptCauses.Link>> out = new java.util.LinkedHashMap<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT number, group_ordinal, relation, kind, from_concept, to_concept, nucleus_rule, "
+                + "satellite_rule FROM concept_cause WHERE book = ? ORDER BY number, ordinal")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) {
+                    out.computeIfAbsent(r.getString(1), k -> new ArrayList<>()).add(new ConceptCauses.Link(r.getInt(2), r.getString(3), r.getString(4),
+                            r.getString(5), r.getString(6), r.getString(7), r.getString(8)));
                 }
             }
         }
