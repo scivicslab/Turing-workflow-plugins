@@ -114,8 +114,13 @@ public final class BookSections {
                 String title = bare(n.title()), numbered = bare(n.number() + " " + n.title());
                 int found = -1;
                 for (int i = 0; i < lines.length && found < 0; i++) {
+                    if (startAt.containsKey(i)) continue;
                     Matcher m = HEADING.matcher(lines[i]);
-                    if (!m.matches() || startAt.containsKey(i)) continue;
+                    // a title the OCR left as a plain line starts its node only when the line is the title and nothing else
+                    if (!m.matches()) {
+                        if (!title.isEmpty() && bare(lines[i]).equals(title)) found = i;
+                        continue;
+                    }
                     String h = bare(m.group(1));
                     if (!title.isEmpty() && (h.equals(title) || h.equals(numbered) || h.endsWith(title) && h.length() <= title.length() + 12)) found = i;
                 }

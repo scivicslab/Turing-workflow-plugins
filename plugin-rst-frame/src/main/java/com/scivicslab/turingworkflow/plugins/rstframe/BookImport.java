@@ -9,6 +9,7 @@ import java.util.Map;
  * Runs the steps that read a book's structure into the H2 database ({@code FrameOntology_261021_oo01}). No LLM is used.
  *
  * <pre>java ... BookImport toc &lt;db-file&gt; &lt;book-name&gt; &lt;book-dir&gt;
+ * java ... BookImport toc-llm &lt;db-file&gt; &lt;book-name&gt; &lt;book-dir&gt; &lt;chat-url&gt; &lt;model&gt;
  * java ... BookImport sections &lt;db-file&gt; &lt;book-name&gt;
  * java ... BookImport rules &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
  * java ... BookImport concepts &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
@@ -180,6 +181,24 @@ public final class BookImport {
                 System.out.println(SectionTagging.tagAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 2000), Integer.parseInt(a[5]),
                         line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
             }
+            return;
+        }
+        if (a.length == 6 && a[0].equals("toc-llm")) {
+            // toc-llm <db> <book> <book-dir> <chat-url> <model>: the table of contents read by the model
+            Path dir = Path.of(a[3]).toAbsolutePath().normalize();
+            Map<String, String> files = new LinkedHashMap<>();
+            try (var s = Files.walk(dir)) {
+                for (Path p : s.filter(p -> p.toString().endsWith(".md")).sorted().toList()) files.put(dir.relativize(p).toString(), Files.readString(p));
+            }
+            BookOutline.Outline o = OutlineByModel.read(a[2], files, new ChatEndpoint(a[4], a[5], 1500),
+                    line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line));
+            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+                store.saveOutline(a[2], dir.toString(), o);
+            }
+            Map<String, Integer> byLevel = new LinkedHashMap<>();
+            for (BookOutline.Node n : o.nodes()) byLevel.merge(n.level(), 1, Integer::sum);
+            System.out.println("read " + files.size() + " markdown file(s) by the model; " + byLevel);
+            for (String n : o.notes().stream().limit(10).toList()) System.out.println("note: " + n);
             return;
         }
         if (a.length != 4 || !a[0].equals("toc")) {
