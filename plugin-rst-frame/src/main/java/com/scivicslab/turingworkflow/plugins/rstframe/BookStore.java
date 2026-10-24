@@ -90,6 +90,9 @@ public final class BookStore implements AutoCloseable {
                     + "question VARCHAR(2000) NOT NULL, rules CLOB NOT NULL, PRIMARY KEY (id, ordinal))");
             s.execute("CREATE TABLE IF NOT EXISTS section_pattern (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "concept VARCHAR(1000) NOT NULL, pattern VARCHAR(20) NOT NULL, members CLOB, PRIMARY KEY (book, number))");
+            s.execute("CREATE TABLE IF NOT EXISTS section_group (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "ordinal INT NOT NULL, type VARCHAR(20) NOT NULL, concept VARCHAR(1000), members CLOB NOT NULL, "
+                    + "PRIMARY KEY (book, number, ordinal))");
         }
     }
 
@@ -839,6 +842,47 @@ public final class BookStore implements AutoCloseable {
                 while (r.next()) {
                     out.computeIfAbsent(r.getString(1), k -> new java.util.LinkedHashMap<>()).computeIfAbsent(r.getString(2), k -> new ArrayList<>())
                        .add(new FrameItem(r.getString(3), List.of(r.getString(4).split(","))));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Replaces the groups of one section's blocks (step 1 of the frame data workflow). */
+    public synchronized void saveGroups(String book, String number, List<SectionGroups.Group> groups) throws SQLException {
+        try (PreparedStatement d = db.prepareStatement("DELETE FROM section_group WHERE book = ? AND number = ?")) {
+            d.setString(1, book);
+            d.setString(2, number);
+            d.executeUpdate();
+        }
+        try (PreparedStatement p = db.prepareStatement("INSERT INTO section_group (book, number, ordinal, type, concept, members) VALUES (?, ?, ?, ?, ?, ?)")) {
+            for (SectionGroups.Group g : groups) {
+                StringBuilder members = new StringBuilder();
+                for (SectionGroups.Member m : g.blocks()) members.append(m.block()).append('\t').append(m.name() == null ? "" : m.name().replace('\n', ' ')).append('\n');
+                p.setString(1, book);
+                p.setString(2, number);
+                p.setInt(3, g.ordinal());
+                p.setString(4, g.type());
+                p.setString(5, g.concept());
+                p.setString(6, members.toString());
+                p.executeUpdate();
+            }
+        }
+    }
+
+    /** @return the groups of each section that has been split, by section number, in group order */
+    public synchronized java.util.Map<String, List<SectionGroups.Group>> groups(String book) throws SQLException {
+        java.util.Map<String, List<SectionGroups.Group>> out = new java.util.LinkedHashMap<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT number, ordinal, type, concept, members FROM section_group WHERE book = ? ORDER BY number, ordinal")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) {
+                    List<SectionGroups.Member> members = new ArrayList<>();
+                    for (String line : r.getString(5).split("\n")) {
+                        String[] f = line.split("\t", 2);
+                        if (!f[0].isEmpty()) members.add(new SectionGroups.Member(f[0], f.length > 1 ? f[1] : ""));
+                    }
+                    out.computeIfAbsent(r.getString(1), k -> new ArrayList<>()).add(new SectionGroups.Group(r.getInt(2), r.getString(3), r.getString(4), members));
                 }
             }
         }
