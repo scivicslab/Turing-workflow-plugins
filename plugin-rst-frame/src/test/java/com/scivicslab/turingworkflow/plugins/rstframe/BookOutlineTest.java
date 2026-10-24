@@ -114,4 +114,15 @@ class BookOutlineTest {
                 "1.2 section The Socket Buffer", "C chapter Glossary", "C.1 section Glossary Terms"),
                 o.nodes().stream().map(n -> n.number() + " " + n.level() + " " + n.title()).toList());
     }
+
+    @Test
+    void aChapterWithoutNumberedSectionsTakesItsBoldHeadingsAsSections() {
+        var o = BookOutline.read(new java.util.TreeMap<>(java.util.Map.of(
+                "Chap03/p1.md", "## **Chapter 3: Business Continuity Planning**\n\n## **THE TOPICS COVERED INCLUDE:**\n\n## **Planning for Business Continuity**\n\ntext\n\n"
+                        + "## TIPS FOR SELECTING A TEAM\n\n## **Project Scope and Planning**\n\ntext\n",
+                "Chap04/p1.md", "## **Chapter 4: Laws**\n\n## Categories of Laws\n\ntext\n")));
+        org.junit.jupiter.api.Assertions.assertEquals(java.util.List.of("3 chapter Business Continuity Planning", "3.1 section Planning for Business Continuity",
+                "3.2 section Project Scope and Planning", "4 chapter Laws", "4.1 section Categories of Laws"),
+                o.nodes().stream().map(n -> n.number() + " " + n.level() + " " + n.title()).toList(), "a plain heading among bold ones is a sidebar");
+    }
 }

@@ -49,6 +49,60 @@ public final class BookOutline {
      * @param files the book's markdown files, path to text, in the order they are to be read (the caller sorts them)
      */
     public static Outline read(Map<String, String> files) {
+        Outline o = readOutline(files);
+        return new Outline(withHeadingSections(o.nodes(), files), o.notes());
+    }
+
+    /**
+     * Gives each chapter that has no section the title-like "## " headings in its files as sections, numbered in the
+     * order they are met (CISSP, System Design on AWS: their sections are not numbered). When some of a chapter's headings
+     * are bold, only the bold ones are sections: the plain ones are sidebars ("TIPS FOR SELECTING AN EFFECTIVE BCP TEAM").
+     */
+    static List<Node> withHeadingSections(List<Node> nodes, Map<String, String> files) {
+        // a chapter with any node numbered under it has its sections
+        java.util.Set<String> parents = new java.util.HashSet<>();
+        for (Node n : nodes) if (n.number().contains(".")) parents.add(n.number().substring(0, n.number().indexOf('.')));
+        List<String> paths = new ArrayList<>(files.keySet());
+        List<Node> chapters = nodes.stream().filter(n -> n.level().equals("chapter")).toList();
+        List<Node> out = new ArrayList<>();
+        for (Node n : nodes) {
+            out.add(n);
+            if (!n.level().equals("chapter") || parents.contains(n.number())) continue;
+            // the chapter's files: from its first file to the next chapter's first file
+            int from = paths.indexOf(n.firstFile());
+            int to = paths.size();
+            for (Node c : chapters) {
+                int i = paths.indexOf(c.firstFile());
+                if (i > from && i < to) to = i;
+            }
+            if (from < 0) continue;
+            List<String[]> found = new ArrayList<>();
+            boolean anyBold = false;
+            for (int i = from; i < to; i++) {
+                boolean code = false;
+                for (String line : files.get(paths.get(i)).split("\n")) {
+                    if (line.startsWith("```")) code = !code;
+                    if (code || !line.startsWith("## ")) continue;
+                    boolean bold = line.substring(3).strip().startsWith("**");
+                    String h = clean(line.substring(3));
+                    if (!TITLE_LIKE.matcher(h).matches() || NUMBERED_ANY.matcher(h).matches() || h.endsWith(":") || h.endsWith(".") || h.matches("(?i)(chapter|appendix)\\b.*")
+                            || h.equalsIgnoreCase(n.title())) continue;
+                    anyBold |= bold;
+                    found.add(new String[] {h, bold ? "b" : "", paths.get(i)});
+                }
+            }
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            int k = 0;
+            for (String[] h : found) {
+                if (anyBold && h[1].isEmpty() || !seen.add(h[0])) continue;
+                String number = n.number() + "." + (++k);
+                out.add(new Node(number, "section", h[0], n.number(), h[2]));
+            }
+        }
+        return out;
+    }
+
+    private static Outline readOutline(Map<String, String> files) {
         // a book whose chapters are not headed "Chapter N: ..." (Globus Toolkit, Aho, Tanenbaum) is read by its numbers
         boolean headedChapters = false;
         for (String text : files.values()) {
