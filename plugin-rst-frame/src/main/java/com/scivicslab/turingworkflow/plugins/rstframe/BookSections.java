@@ -75,6 +75,101 @@ public final class BookSections {
      * @param outline the book's table of contents, as {@link BookOutline} read it
      */
     public static Result split(Map<String, String> files, List<BookOutline.Node> outline) {
+        Result byHeadings = splitByHeadings(files, outline);
+        long placed = byHeadings.sections().stream().filter(x -> !x.text().isEmpty()).count();
+        // a book whose outline was not read from "Chapter N: ..." headings: its nodes start where the outline found them
+        if (placed * 2 < outline.size()) return splitByOutline(files, outline);
+        return byHeadings;
+    }
+
+    /** A title reduced to its letters and digits, to find it in a heading whatever the marks and spacing around it. */
+    private static String bare(String s) {
+        return BookOutline.clean(s).toLowerCase(java.util.Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]+", "");
+    }
+
+    /**
+     * Cuts the text by the outline itself: each node starts at the first heading of its first file that holds its title;
+     * a node whose first file has no such heading (a book cut into one directory per section, a chapter known only by its
+     * number) starts at the top of that file. A heading met again later ("... (continued)") starts nothing; the text after
+     * it stays with the node it continues.
+     */
+    static Result splitByOutline(Map<String, String> files, List<BookOutline.Node> outline) {
+        Map<String, List<BookOutline.Node>> byFile = new LinkedHashMap<>();
+        for (BookOutline.Node n : outline) byFile.computeIfAbsent(n.firstFile(), k -> new ArrayList<>()).add(n);
+        Map<String, StringBuilder> texts = new LinkedHashMap<>();
+        Map<String, Set<String>> from = new LinkedHashMap<>();
+        Map<String, Integer> unplaced = new LinkedHashMap<>();
+        // the headings that began a node, bare: met again, they begin nothing and are not text
+        Set<String> begun = new java.util.HashSet<>();
+        String current = null;
+        for (Map.Entry<String, String> f : files.entrySet()) {
+            String top = f.getKey().contains("/") ? f.getKey().substring(0, f.getKey().indexOf('/')) : "";
+            String body = FRONT_MATTER.matcher(f.getValue()).replaceFirst("");
+            String[] lines = body.split("\\R", -1);
+            List<BookOutline.Node> pending = new ArrayList<>(byFile.getOrDefault(f.getKey(), List.of()));
+            // the nodes whose heading is in this file start there; the others start at its top
+            Map<Integer, BookOutline.Node> startAt = new LinkedHashMap<>();
+            List<BookOutline.Node> atTop = new ArrayList<>();
+            for (BookOutline.Node n : pending) {
+                String title = bare(n.title()), numbered = bare(n.number() + " " + n.title());
+                int found = -1;
+                for (int i = 0; i < lines.length && found < 0; i++) {
+                    Matcher m = HEADING.matcher(lines[i]);
+                    if (!m.matches() || startAt.containsKey(i)) continue;
+                    String h = bare(m.group(1));
+                    if (!title.isEmpty() && (h.equals(title) || h.equals(numbered) || h.endsWith(title) && h.length() <= title.length() + 12)) found = i;
+                }
+                if (found >= 0) startAt.put(found, n);
+                else atTop.add(n);
+            }
+            for (BookOutline.Node n : atTop) {
+                current = n.number();
+                texts.computeIfAbsent(current, k -> new StringBuilder());
+                from.computeIfAbsent(current, k -> new LinkedHashSet<>()).add(f.getKey());
+            }
+            for (int i = 0; i < lines.length; i++) {
+                String line = lines[i];
+                BookOutline.Node starts = startAt.get(i);
+                if (starts != null) {
+                    begun.add(bare(starts.number() + " " + starts.title()));
+                    begun.add(bare(starts.title()));
+                    current = starts.number();
+                    texts.computeIfAbsent(current, k -> new StringBuilder());
+                    from.computeIfAbsent(current, k -> new LinkedHashSet<>()).add(f.getKey());
+                    continue;
+                }
+                if (current == null) {
+                    if (!line.isBlank()) unplaced.merge(top, 1, Integer::sum);
+                    continue;
+                }
+                // a heading that repeats one already begun ("2.1 Processors (continued)") is dropped as the first one was
+                Matcher again = HEADING.matcher(line);
+                if (again.matches()) {
+                    String h = bare(again.group(1));
+                    if (begun.stream().anyMatch(b -> !b.isEmpty() && h.startsWith(b))) continue;
+                }
+                StringBuilder t = texts.get(current);
+                int n = t.length();
+                if (line.isBlank() && (n == 0 || (n >= 2 && t.charAt(n - 1) == '\n' && t.charAt(n - 2) == '\n'))) continue;
+                t.append(line).append('\n');
+                from.get(current).add(f.getKey());
+            }
+        }
+        List<Section> out = new ArrayList<>();
+        for (BookOutline.Node n : outline) {
+            StringBuilder t = texts.get(n.number());
+            out.add(new Section(n.number(), t == null ? "" : t.toString().strip(),
+                    from.containsKey(n.number()) ? List.copyOf(from.get(n.number())) : List.of()));
+        }
+        List<String> notes = new ArrayList<>();
+        for (Map.Entry<String, Integer> e : unplaced.entrySet()) {
+            notes.add(e.getValue() + " non-blank line(s) in " + (e.getKey().isEmpty() ? "the top directory" : e.getKey()) + " come before any node and belong to none");
+        }
+        return new Result(out, notes);
+    }
+
+    /** Cuts the text by headings classified as {@link BookOutline} classifies a book headed "Chapter N: ...". */
+    static Result splitByHeadings(Map<String, String> files, List<BookOutline.Node> outline) {
         Map<String, BookOutline.Node> nodes = new LinkedHashMap<>();
         for (BookOutline.Node n : outline) nodes.put(n.number(), n);
         Map<String, StringBuilder> texts = new LinkedHashMap<>();

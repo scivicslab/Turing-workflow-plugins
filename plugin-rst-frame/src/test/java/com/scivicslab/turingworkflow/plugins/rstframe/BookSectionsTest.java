@@ -114,4 +114,14 @@ class BookSectionsTest {
         assertEquals("You then supply new methods and instance fields that apply, and nothing else.", by.get("4.1.1"));
         assertEquals("An object has state.\n\n```\ncode at the top of a page\n```", by.get("4.1.2"), "code at a page's top is not joined");
     }
+
+    @Test
+    void aBookReadByItsNumbersIsCutWhereTheOutlineFoundEachNode() {
+        var files = new java.util.TreeMap<String, String>(java.util.Map.of(
+                "Chap02/p1.md", "## 2 COMPUTER SYSTEMS\n\nIntro text.\n\n## *2.1 Processors*\n\nProcessor text.\n",
+                "Chap02/p2.md", "## 2.1 Processors (continued)\n\nMore processor text.\n\n## 2.2 Memory\n\nMemory text.\n"));
+        var r = BookSections.split(files, BookOutline.read(files).nodes());
+        org.junit.jupiter.api.Assertions.assertEquals(java.util.List.of("2|Intro text.", "2.1|Processor text.\n\nMore processor text.", "2.2|Memory text."),
+                r.sections().stream().map(x -> x.number() + "|" + x.text()).toList(), "a heading met again continues its node");
+    }
 }
