@@ -38,14 +38,14 @@ class SectionGroupsTest {
     @Test
     void theGroupsAreRangesOfConsecutiveBlocksAndNoneIsLeftOut() {
         List<SectionGroups.Block> b = SectionGroups.blocks(RULES, Map.of());
-        List<SectionGroups.Group> g = SectionGroups.readGroups("b1 | one\n**b2-b3** | set\nb4 | none\n", b);
+        List<SectionGroups.Group> g = SectionGroups.readGroups("b1 | sequence\n**b2-b3** | set\nb4 | none\n", b);
         assertEquals(2, g.size());
         assertEquals("set", g.get(1).type());
         assertEquals(List.of("b2", "b3"), g.get(1).blocks().stream().map(SectionGroups.Member::block).toList());
-        assertEquals(List.of("b2-b3"), SectionGroups.readGroups("b2-b3 | set\nb1 | one\nb3 | one\n", b).stream().map(x -> x.first() + "-" + x.last()).toList(),
+        assertEquals(List.of("b2-b3"), SectionGroups.readGroups("b2-b3 | set\nb1 | sequence\nb3 | structure\n", b).stream().map(x -> x.first() + "-" + x.last()).toList(),
                 "a line starting inside a range already read is skipped");
         assertEquals(List.of(), SectionGroups.readGroups("b3-b2 | set\n", b), "a range that runs backwards");
-        List<SectionGroups.Group> past = SectionGroups.readGroups("b1 | one\nb2-b9 | set\nb11-b12 | sequence\n", b);
+        List<SectionGroups.Group> past = SectionGroups.readGroups("b1 | sequence\nb2-b9 | set\nb11-b12 | sequence\n", b);
         assertEquals(List.of("b2", "b3", "b4"), past.get(1).blocks().stream().map(SectionGroups.Member::block).toList(),
                 "a range past the last block stops at it; a line starting at no block is skipped");
         assertEquals(2, past.size());
@@ -54,7 +54,7 @@ class SectionGroupsTest {
     @Test
     void theSecondReplyNamesTheConceptsAndTheBlocks() {
         List<SectionGroups.Block> b = SectionGroups.blocks(RULES, Map.of());
-        List<SectionGroups.Group> g = SectionGroups.readGroups("b1 | one\nb2-b3 | set\nb4 | none\n", b);
+        List<SectionGroups.Group> g = SectionGroups.readGroups("b1 | sequence\nb2-b3 | set\nb4 | none\n", b);
         g = SectionGroups.readNames("g1: reason Java puts weight on security\ng2: attacks Java prevents.\nb2 | introduction\n"
                 + "b3 | overrunning the runtime stack\nb3 | corrupting memory\n", g);
         assertEquals("reason Java puts weight on security", g.get(0).concept());

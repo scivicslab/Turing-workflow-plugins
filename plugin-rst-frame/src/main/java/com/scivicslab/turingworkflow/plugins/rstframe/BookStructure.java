@@ -129,14 +129,9 @@ public final class BookStructure {
         return ask(db, name, url, model, 600, parallel, only, (s, b, o, w, p, l) -> SectionPattern.askAll(s, b, o, w, p, l, text));
     }
 
-    /** Frame data step 1: splits each section's blocks into groups, each with its type and main concept ({@link SectionGroups}). */
+    /** Frame data step 1: splits each section's blocks into the smallest units of explanation, each with its axis and main concept ({@link SectionGroups}). */
     public String groups(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
         return ask(db, name, url, model, 800, parallel, only, SectionGroups::askAll);
-    }
-
-    /** Frame data step 1, second question: consecutive groups that explain one larger thing ({@link SectionClusters}). */
-    public String clusters(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
-        return ask(db, name, url, model, 600, parallel, only, SectionClusters::askAll);
     }
 
     /** Frame data step 2: the causes and motives of each group's main concept ({@link ConceptCauses}). */

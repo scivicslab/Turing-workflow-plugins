@@ -15,7 +15,6 @@ import java.util.Map;
  * java ... BookImport judge &lt;db-file&gt; &lt;book-name&gt;
  * java ... BookImport relations &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
  * java ... BookImport review &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
- * java ... BookImport clusters &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
  * java ... BookImport properties &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
  * java ... BookImport causes &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
  * java ... BookImport groups &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
@@ -109,14 +108,6 @@ public final class BookImport {
             try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
                 System.out.println(FrameItems.askAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 1000), Integer.parseInt(a[5]),
-                        line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
-            }
-            return;
-        }
-        if (a.length >= 6 && a[0].equals("clusters")) {
-            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
-                java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
-                System.out.println(SectionClusters.askAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 600), Integer.parseInt(a[5]),
                         line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
             }
             return;

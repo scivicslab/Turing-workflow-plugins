@@ -17,24 +17,26 @@ import java.util.regex.Pattern;
 
 /**
  * The paragraph level of a section ({@code FrameDataWorkflow_261024_oo01}, step 1): the blocks of its heading rule
- * ({@code (defrule s1 -> b1 b2 b3 ...)}, only listed) split into groups of consecutive blocks, each explaining one thing,
- * its main concept, in one of three ways:
+ * ({@code (defrule s1 -> b1 b2 b3 ...)}, only listed) split into the smallest units of an explanatory text. Such a unit
+ * is a run of consecutive blocks that explains one subject, its main concept, along one axis:
  * <ul>
  * <li>{@code sequence}: the blocks go through it in order: the steps of a procedure, stages in time, or topics taken one
  * after another (what it is, its syntax, how it is used, what to watch out for);</li>
  * <li>{@code structure}: the blocks take it apart into its parts;</li>
- * <li>{@code set}: the blocks take up the members or kinds of a group, one by one;</li>
+ * <li>{@code set}: the blocks take up its members or kinds, one by one.</li>
  * </ul>
- * or {@code one}, a group of one block that makes one point. Two questions per section: the first splits the blocks and
- * types each group; the second names each group's main concept, and what each of its blocks is in it (a step, a part, a
- * member). Each block is shown with its sentences labelled by their relation to the block's nucleus, from the rule file.
+ * A section is one unit or more. The members of a set, the parts of a structure and the steps of a sequence are what a
+ * unit holds, not units of their own: section 3.2 "Comments" is one unit, comment explained as a set, and the three kinds
+ * of comment are its members. Two questions per section: the first splits the blocks into units and gives each its axis;
+ * the second names each unit's main concept, and what each of its blocks is in it (a step, a part, a member). Each block
+ * is shown with its sentences labelled by their relation to the block's nucleus, from the rule file. The class and its
+ * table keep the name group for a unit.
  */
 public final class SectionGroups {
 
     public static final String SEQUENCE = "sequence";
     public static final String STRUCTURE = "structure";
     public static final String SET = "set";
-    public static final String ONE = "one";
 
     /** One block of a group, and what it is in the group: a step, a part, a member. */
     public record Member(String block, String name) {}
@@ -43,7 +45,7 @@ public final class SectionGroups {
      * One group of consecutive blocks.
      *
      * @param ordinal its place in the section, from 1
-     * @param type    sequence, structure, set or one
+     * @param type    its axis: sequence, structure or set
      * @param concept its main concept, or {@code null} before the second question
      * @param blocks  its blocks in order, each with its name in the group (empty before the second question)
      */
@@ -142,22 +144,26 @@ public final class SectionGroups {
                 + "item of a list.\n\n" + text;
     }
 
-    /** @return the first question for one section: split its blocks into groups, and say how each group explains */
+    /** @return the first question for one section: split its blocks into the smallest units of explanation, each with its axis */
     public static String groupQuestion(BookOutline.Node node, List<Block> blocks) {
         return shown(node, blocks)
-                + "Split the blocks into groups. A group is one block or several consecutive blocks that together explain one "
-                + "thing. Say how each group explains it, with one of these words:\n"
-                + "sequence   the blocks go through the thing in order: the steps of a procedure, stages in time (how it began, "
-                + "what went wrong, how it is now), or topics about it taken one after another (what it is, its syntax, how it "
-                + "is used, what to watch out for).\n"
-                + "structure  the blocks take the thing apart into its parts or components.\n"
-                + "set        the blocks take up the members or the kinds of a group one by one, as a list of them does; a block "
-                + "that introduces the list (\"among them:\") belongs to the same group.\n"
-                + "one        a single block that makes one point (why the thing is needed, what it is).\n"
-                + "A block that belongs to no group (a note aside, a sentence leading to another topic) gets the word none.\n"
-                + "Every block is in exactly one line. Write one line per group, from the first block to the last, as the first "
-                + "block, \"-\", the last block, \" | \", and the word; a group of one block is just its name. For example\n"
-                + "b1 | one\nb2-b3 | set\nb4-b7 | sequence\nb8 | none\n"
+                + "Split the blocks into units. A unit is a run of consecutive blocks, one block or more, that explains one "
+                + "subject along one axis:\n"
+                + "sequence   the blocks go through the subject in order: the steps of a procedure, stages in time (how it "
+                + "began, what went wrong, how it is now), or topics about it taken one after another (what it is, its syntax, "
+                + "how it is used, what to watch out for).\n"
+                + "structure  the blocks take the subject apart into its parts or components.\n"
+                + "set        the blocks take up the members or the kinds of the subject one by one; a block that introduces "
+                + "them (\"Java has three ways of marking comments\") belongs to the same unit.\n"
+                + "Make the units as large as the subject goes: the members of a set, the parts of a structure and the steps or "
+                + "topics of a sequence are inside one unit, not units of their own. A section on comments that takes up the "
+                + "end-of-line comment, the block comment and the documentation comment in turn is one unit, a set; a section that "
+                + "says what a thing is, how it is written and what to watch out for is one unit, a sequence. Start a new unit "
+                + "only where the text turns to another subject. A block that belongs to no unit (a note aside, a sentence "
+                + "leading to another topic) gets the word none.\n"
+                + "Every block is in exactly one line. Write one line per unit, as the first block, \"-\", the last block, "
+                + "\" | \", and the axis; a unit of one block is just its name. For example\n"
+                + "b1-b4 | set\nb5-b7 | sequence\nb8 | none\n"
                 + "Write nothing else.";
     }
 
@@ -169,7 +175,7 @@ public final class SectionGroups {
      */
     public static List<Group> readGroups(String reply, List<Block> blocks) {
         List<String> names = blocks.stream().map(Block::name).toList();
-        Matcher m = Pattern.compile("(?im)^\\W*\\[?([a-z][\\w/]*)\\]?[\\]*_`]*(?:\\s*[-–]\\s*[*_`]*\\[?([a-z][\\w/]*)\\]?[*_`]*)?\\s*\\|\\s*\\W*(sequence|structure|set|one|none)\\b").matcher(reply);
+        Matcher m = Pattern.compile("(?im)^\\W*\\[?([a-z][\\w/]*)\\]?[\\]*_`]*(?:\\s*[-–]\\s*[*_`]*\\[?([a-z][\\w/]*)\\]?[*_`]*)?\\s*\\|\\s*\\W*(sequence|structure|set|none)\\b").matcher(reply);
         List<Group> out = new ArrayList<>();
         int next = 0;
         while (m.find()) {
@@ -197,16 +203,16 @@ public final class SectionGroups {
               .append(", ").append(x.type()).append('\n');
         }
         return shown(node, blocks)
-                + "The blocks have been split into these groups, each explaining one thing (sequence: in order; structure: by its "
-                + "parts; set: by its members or kinds; one: one point):\n" + g + "\n"
-                + "For each group, name the thing it explains, its main concept, in a few words: the one thing its blocks are about "
-                + "together, not the title of the whole section unless the group explains the whole section's subject. Name the thing "
+                + "The blocks have been split into these units, each explaining one subject along one axis (sequence: in order; "
+                + "structure: by its parts; set: by its members or kinds):\n" + g + "\n"
+                + "For each unit, name the subject it explains, its main concept, in a few words: the one thing its blocks are "
+                + "about together, not the title of the whole section unless the group explains the whole section's subject. Name the thing "
                 + "itself, as a reader would look it up, not what is said of it: a group that gives the rules for forming identifiers "
                 + "explains \"identifier\", not \"identifier composition and character rules\"; a group that explains encapsulation "
                 + "explains \"encapsulation\", not \"principles of object-oriented programming\"; a group that tells why Java "
-                + "stresses security explains \"Java security\" or the reason itself. Write \"g\", the group's number, \": \", "
+                + "stresses security explains \"Java security\" or the reason itself; a unit on the three kinds of comment explains \"comment\". Write \"g\", the unit's number, \": \", "
                 + "and the concept.\n"
-                + "Then, for each block of a group of two blocks or more, say what the block is in it, in a few words: in a sequence, "
+                + "Then, for each block of a unit of two blocks or more, say what the block is in it, in a few words: in a sequence, "
                 + "its step, stage or topic; in a structure, the part it takes up; in a set, the member or kind it takes up, or "
                 + "\"introduction\" for a block that introduces the list. A block that lists several members gets one line for each. "
                 + "Write the block's name, \" | \", and that. For example\n"
@@ -273,10 +279,7 @@ public final class SectionGroups {
                 fs.add(pool.submit(() -> {
                     try {
                         BookOutline.Node node = nodes.get(number);
-                        // a section of one block is one group of one block; only its concept is asked
-                        List<Group> groups = e.getValue().size() == 1
-                                ? List.of(new Group(1, ONE, null, List.of(new Member(e.getValue().get(0).name(), null))))
-                                : readGroups(writer.apply(groupQuestion(node, e.getValue())), e.getValue());
+                        List<Group> groups = readGroups(writer.apply(groupQuestion(node, e.getValue())), e.getValue());
                         if (groups.isEmpty()) throw new IllegalStateException("the reply makes no group of the blocks");
                         groups = readNames(writer.apply(nameQuestion(node, e.getValue(), groups)), groups);
                         store.saveGroups(book, number, groups);
