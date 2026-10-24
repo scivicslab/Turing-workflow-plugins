@@ -150,6 +150,26 @@ public final class BookStructure {
         return ask(db, name, url, model, 2500, parallel, only, GeneralFrames::generalizeAll);
     }
 
+    /** Places the book's concrete frames in the registry of generalized frames, one at a time ({@link FrameRegistry#placeAll}). */
+    public String place(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
+        return ask(db, name, url, model, 300, parallel, only, FrameRegistry::placeAll);
+    }
+
+    /** Gives the sections' relations to the generalized frames of the registry ({@link FrameRegistry#relateAll}). */
+    public String relate(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
+        return ask(db, name, url, model, 300, parallel, only, FrameRegistry::relateAll);
+    }
+
+    /** Names each generalized frame of the registry from all its concrete frames ({@link FrameRegistry#nameAll}). */
+    public String frameNames(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
+        return ask(db, name, url, model, 100, parallel, only, FrameRegistry::nameAll);
+    }
+
+    /** The items of each generalized frame of the registry, over its material put together ({@link FrameRegistry#itemsAll}). */
+    public String frameItems(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
+        return ask(db, name, url, model, 2500, parallel, only, FrameRegistry::itemsAll);
+    }
+
     /** The items of each concept's concrete frame: the questions its gathered rules answer ({@link FrameItems}). */
     public String items(String db, String name, String url, String model, int parallel, List<String> only) throws Exception {
         return ask(db, name, url, model, 1000, parallel, only, FrameItems::askAll);

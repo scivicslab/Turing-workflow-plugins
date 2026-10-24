@@ -127,6 +127,34 @@ public class BookStructureIIAR extends IIActorRef<BookStructure> {
                 a.getString("model"), parallel(a), sections(a)));
     }
 
+    /** Places the book's concrete frames in the registry of generalized frames. Args: {@code {db, name, url, model, sections}}; sections "reset" empties it first. */
+    @Action("place")
+    public ActionResult place(String args) {
+        return step(args, "could not place the frames", (b, a) -> b.place(a.getString("db"), a.getString("name"), a.getString("url"),
+                a.getString("model"), 1, sections(a)));
+    }
+
+    /** Gives the sections' relations to the generalized frames of the registry. Args: {@code {db, name, url, model}}. */
+    @Action("relate")
+    public ActionResult relate(String args) {
+        return step(args, "could not relate the frames", (b, a) -> b.relate(a.getString("db"), a.getString("name"), a.getString("url"),
+                a.getString("model"), 1, sections(a)));
+    }
+
+    /** Names each generalized frame of the registry from all its concrete frames. Args: {@code {db, name, url, model, parallel}}. */
+    @Action("frame-names")
+    public ActionResult frameNames(String args) {
+        return step(args, "could not name the frames", (b, a) -> b.frameNames(a.getString("db"), a.getString("name"), a.getString("url"),
+                a.getString("model"), parallel(a), sections(a)));
+    }
+
+    /** The items of each generalized frame of the registry. Args: {@code {db, name, url, model, parallel}}. */
+    @Action("frame-items")
+    public ActionResult frameItems(String args) {
+        return step(args, "could not ask the frames' items", (b, a) -> b.frameItems(a.getString("db"), a.getString("name"), a.getString("url"),
+                a.getString("model"), parallel(a), sections(a)));
+    }
+
     /** Recognizes the concepts of the book across its sections. Args: {@code {db, name, url, model, parallel}}. */
     @Action("identify")
     public ActionResult identify(String args) {

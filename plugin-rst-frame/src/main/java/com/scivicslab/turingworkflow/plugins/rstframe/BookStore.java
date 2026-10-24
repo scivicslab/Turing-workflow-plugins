@@ -71,6 +71,19 @@ public final class BookStore implements AutoCloseable {
             // the items of a concept of the book: the questions, each with the sentences ("number:rule") that answer it
             s.execute("CREATE TABLE IF NOT EXISTS concept_entity_item (book VARCHAR(200) NOT NULL, id VARCHAR(1000) NOT NULL, "
                     + "ordinal INT NOT NULL, question VARCHAR(2000) NOT NULL, rules CLOB NOT NULL, PRIMARY KEY (book, id, ordinal))");
+            // the registry of generalized frames, kept across books and runs: each with an id that is not a name, the frame
+            // above it in the concept tree, the concrete frames put into it, and its items
+            s.execute("CREATE TABLE IF NOT EXISTS frame_registry (id VARCHAR(40) PRIMARY KEY, name VARCHAR(1000) NOT NULL, "
+                    + "parent VARCHAR(40), seq INT NOT NULL)");
+            s.execute("CREATE TABLE IF NOT EXISTS frame_registry_member (id VARCHAR(40) NOT NULL, book VARCHAR(200) NOT NULL, "
+                    + "number VARCHAR(40) NOT NULL, concept VARCHAR(1000) NOT NULL, seq INT NOT NULL, PRIMARY KEY (book, number, concept))");
+            // the relations between generalized frames of the registry besides the tree's is-a: part-of, feature,
+            // operation, other, and the is-a the sections said, each with the section that said it
+            s.execute("CREATE TABLE IF NOT EXISTS frame_relation (from_id VARCHAR(40) NOT NULL, kind VARCHAR(20) NOT NULL, "
+                    + "to_id VARCHAR(40) NOT NULL, book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "PRIMARY KEY (from_id, kind, to_id, book, number))");
+            s.execute("CREATE TABLE IF NOT EXISTS frame_registry_item (id VARCHAR(40) NOT NULL, ordinal INT NOT NULL, "
+                    + "question VARCHAR(2000) NOT NULL, rules CLOB NOT NULL, PRIMARY KEY (id, ordinal))");
             s.execute("CREATE TABLE IF NOT EXISTS section_pattern (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "concept VARCHAR(1000) NOT NULL, pattern VARCHAR(20) NOT NULL, members CLOB, PRIMARY KEY (book, number))");
         }
@@ -586,6 +599,162 @@ public final class BookStore implements AutoCloseable {
         java.util.Map<String, List<FrameItem>> out = new java.util.LinkedHashMap<>();
         try (PreparedStatement p = db.prepareStatement("SELECT id, question, rules FROM concept_entity_item WHERE book = ? ORDER BY id, ordinal")) {
             p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) out.computeIfAbsent(r.getString(1), k -> new ArrayList<>()).add(new FrameItem(r.getString(2), List.of(r.getString(3).split(","))));
+            }
+        }
+        return out;
+    }
+
+    /** A concrete frame put into a generalized frame of the registry: the book, the section and the concept it is of. */
+    public record RegistryMember(String book, String number, String concept) {
+    }
+
+    /** A generalized frame of the registry: its id, its name, the frame above it ({@code null} at the top), its concrete frames. */
+    public record RegistryFrame(String id, String name, String parent, List<RegistryMember> members) {
+    }
+
+    /** @return the generalized frames of the registry, in the order they were made, each with its concrete frames */
+    public synchronized List<RegistryFrame> registry() throws SQLException {
+        java.util.Map<String, List<RegistryMember>> members = new java.util.HashMap<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT id, book, number, concept FROM frame_registry_member ORDER BY seq")) {
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) members.computeIfAbsent(r.getString(1), k -> new ArrayList<>()).add(new RegistryMember(r.getString(2), r.getString(3), r.getString(4)));
+            }
+        }
+        List<RegistryFrame> out = new ArrayList<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT id, name, parent FROM frame_registry ORDER BY seq")) {
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) out.add(new RegistryFrame(r.getString(1), r.getString(2), r.getString(3), members.getOrDefault(r.getString(1), List.of())));
+            }
+        }
+        return out;
+    }
+
+    /** Adds a generalized frame to the registry, with no concrete frame yet. */
+    public synchronized void addRegistryFrame(String id, String name, int seq) throws SQLException {
+        try (PreparedStatement p = db.prepareStatement("INSERT INTO frame_registry (id, name, parent, seq) VALUES (?, ?, NULL, ?)")) {
+            p.setString(1, id);
+            p.setString(2, name);
+            p.setInt(3, seq);
+            p.executeUpdate();
+        }
+    }
+
+    /** Puts a concrete frame into a generalized frame of the registry, taking it out of any it was in. */
+    public synchronized void addRegistryMember(String id, RegistryMember m, int seq) throws SQLException {
+        try (PreparedStatement p = db.prepareStatement("MERGE INTO frame_registry_member (id, book, number, concept, seq) KEY (book, number, concept) VALUES (?, ?, ?, ?, ?)")) {
+            p.setString(1, id);
+            p.setString(2, m.book());
+            p.setString(3, m.number());
+            p.setString(4, m.concept());
+            p.setInt(5, seq);
+            p.executeUpdate();
+        }
+    }
+
+    /** Renames a generalized frame of the registry. */
+    public synchronized void renameRegistryFrame(String id, String name) throws SQLException {
+        try (PreparedStatement p = db.prepareStatement("UPDATE frame_registry SET name = ? WHERE id = ?")) {
+            p.setString(1, name);
+            p.setString(2, id);
+            p.executeUpdate();
+        }
+    }
+
+    /** Sets the frame above a generalized frame in the concept tree; {@code null} puts it at the top. */
+    public synchronized void setRegistryParent(String id, String parent) throws SQLException {
+        try (PreparedStatement p = db.prepareStatement("UPDATE frame_registry SET parent = ? WHERE id = ?")) {
+            p.setString(1, parent);
+            p.setString(2, id);
+            p.executeUpdate();
+        }
+    }
+
+    /** A relation between two generalized frames of the registry, as a section of a book said it. */
+    public record FrameRelation(String from, String kind, String to, String book, String number) {
+    }
+
+    /** Replaces the relations a book's sections gave between generalized frames of the registry. */
+    public synchronized void saveFrameRelations(String book, List<FrameRelation> rels) throws SQLException {
+        db.setAutoCommit(false);
+        try {
+            try (PreparedStatement d = db.prepareStatement("DELETE FROM frame_relation WHERE book = ?")) {
+                d.setString(1, book);
+                d.executeUpdate();
+            }
+            try (PreparedStatement p = db.prepareStatement("MERGE INTO frame_relation (from_id, kind, to_id, book, number) KEY (from_id, kind, to_id, book, number) VALUES (?, ?, ?, ?, ?)")) {
+                for (FrameRelation r : rels) {
+                    p.setString(1, r.from());
+                    p.setString(2, r.kind());
+                    p.setString(3, r.to());
+                    p.setString(4, r.book());
+                    p.setString(5, r.number());
+                    p.addBatch();
+                }
+                p.executeBatch();
+            }
+            db.commit();
+        } catch (SQLException e) {
+            db.rollback();
+            throw e;
+        } finally {
+            db.setAutoCommit(true);
+        }
+    }
+
+    /** @return every relation between generalized frames of the registry */
+    public synchronized List<FrameRelation> frameRelations() throws SQLException {
+        List<FrameRelation> out = new ArrayList<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT from_id, kind, to_id, book, number FROM frame_relation ORDER BY from_id, kind, to_id")) {
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) out.add(new FrameRelation(r.getString(1), r.getString(2), r.getString(3), r.getString(4), r.getString(5)));
+            }
+        }
+        return out;
+    }
+
+    /** Empties the registry: its frames, their concrete frames, their items and their relations. */
+    public synchronized void clearRegistry() throws SQLException {
+        try (Statement st = db.createStatement()) {
+            st.execute("DELETE FROM frame_relation");
+            st.execute("DELETE FROM frame_registry_item");
+            st.execute("DELETE FROM frame_registry_member");
+            st.execute("DELETE FROM frame_registry");
+        }
+    }
+
+    /** Replaces the items of a generalized frame of the registry; a rule is named "book|number:rule". */
+    public synchronized void saveRegistryItems(String id, List<FrameItem> items) throws SQLException {
+        db.setAutoCommit(false);
+        try {
+            try (PreparedStatement d = db.prepareStatement("DELETE FROM frame_registry_item WHERE id = ?")) {
+                d.setString(1, id);
+                d.executeUpdate();
+            }
+            try (PreparedStatement p = db.prepareStatement("INSERT INTO frame_registry_item (id, ordinal, question, rules) VALUES (?, ?, ?, ?)")) {
+                for (int n = 0; n < items.size(); n++) {
+                    p.setString(1, id);
+                    p.setInt(2, n);
+                    p.setString(3, items.get(n).question());
+                    p.setString(4, String.join(",", items.get(n).rules()));
+                    p.addBatch();
+                }
+                p.executeBatch();
+            }
+            db.commit();
+        } catch (SQLException e) {
+            db.rollback();
+            throw e;
+        } finally {
+            db.setAutoCommit(true);
+        }
+    }
+
+    /** @return the items of each generalized frame of the registry that has them, by id */
+    public synchronized java.util.Map<String, List<FrameItem>> registryItems() throws SQLException {
+        java.util.Map<String, List<FrameItem>> out = new java.util.LinkedHashMap<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT id, question, rules FROM frame_registry_item ORDER BY id, ordinal")) {
             try (ResultSet r = p.executeQuery()) {
                 while (r.next()) out.computeIfAbsent(r.getString(1), k -> new ArrayList<>()).add(new FrameItem(r.getString(2), List.of(r.getString(3).split(","))));
             }

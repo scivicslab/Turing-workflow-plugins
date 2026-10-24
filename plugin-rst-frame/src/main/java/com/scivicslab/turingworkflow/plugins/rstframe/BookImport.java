@@ -74,6 +74,20 @@ public final class BookImport {
             }
             return;
         }
+        if (a.length >= 6 && (a[0].equals("place") || a[0].equals("relate") || a[0].equals("frame-items") || a[0].equals("frame-names"))) {
+            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+                java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
+                java.util.function.Consumer<String> log = line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line);
+                int parallel = Integer.parseInt(a[5]);
+                System.out.println(switch (a[0]) {
+                    case "place" -> FrameRegistry.placeAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 300), 1, log);
+                    case "relate" -> FrameRegistry.relateAll(store, a[2], only, null, 1, log);
+                    case "frame-names" -> FrameRegistry.nameAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 100), parallel, log);
+                    default -> FrameRegistry.itemsAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 2500), parallel, log);
+                });
+            }
+            return;
+        }
         if (a.length >= 6 && (a[0].equals("identify") || a[0].equals("merge") || a[0].equals("generalize"))) {
             try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
