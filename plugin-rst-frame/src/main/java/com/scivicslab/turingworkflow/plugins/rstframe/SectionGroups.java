@@ -195,6 +195,14 @@ public final class SectionGroups {
         return out;
     }
 
+    /** @return whether the reply says none of every block of the section, and nothing else */
+    static boolean allNone(String reply, List<Block> blocks) {
+        for (Block b : blocks) {
+            if (!Pattern.compile("(?im)^\\W*\\[?" + Pattern.quote(b.name()) + "\\]?[*_`]*\\s*\\|\\s*\\W*none\\b").matcher(reply).find()) return false;
+        }
+        return true;
+    }
+
     /** @return the second question for one section: each group's main concept, and what each of its blocks is in it */
     public static String nameQuestion(BookOutline.Node node, List<Block> blocks, List<Group> groups) {
         StringBuilder g = new StringBuilder();
@@ -279,7 +287,14 @@ public final class SectionGroups {
                 fs.add(pool.submit(() -> {
                     try {
                         BookOutline.Node node = nodes.get(number);
-                        List<Group> groups = readGroups(writer.apply(groupQuestion(node, e.getValue())), e.getValue());
+                        String reply = writer.apply(groupQuestion(node, e.getValue()));
+                        List<Group> groups = readGroups(reply, e.getValue());
+                        if (groups.isEmpty() && allNone(reply, e.getValue())) {
+                            // a section that only leads into its subsections ("In the following sections, we discuss ...")
+                            // explains nothing itself; it is asked again on the next run, at the cost of one question
+                            log.accept("done " + done.incrementAndGet() + "/" + todo.size() + " " + number + ": no unit (every block is none)");
+                            return;
+                        }
                         if (groups.isEmpty()) throw new IllegalStateException("the reply makes no group of the blocks");
                         groups = readNames(writer.apply(nameQuestion(node, e.getValue(), groups)), groups);
                         store.saveGroups(book, number, groups);

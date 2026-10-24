@@ -49,6 +49,9 @@ class SectionGroupsTest {
         assertEquals(List.of("b2", "b3", "b4"), past.get(1).blocks().stream().map(SectionGroups.Member::block).toList(),
                 "a range past the last block stops at it; a line starting at no block is skipped");
         assertEquals(2, past.size());
+        assertTrue(SectionGroups.allNone("b1 | none\nb2-b3 | none\nb4 | none\n".replace("b2-b3 | none\n", "b2 | none\nb3 | none\n"), b),
+                "a section that only leads into its subsections");
+        assertTrue(!SectionGroups.allNone("b1 | none\nb2-b4 | set\n", b));
     }
 
     @Test
