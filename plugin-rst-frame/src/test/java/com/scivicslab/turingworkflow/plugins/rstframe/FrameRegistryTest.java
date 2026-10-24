@@ -48,7 +48,8 @@ class FrameRegistryTest {
     void aMatchNamesACandidateAndMayRenameItAnIdNotAmongThemIsNoMatch() {
         List<FrameRegistry.Frame> cand = List.of(frame("F0001", "integer type"));
         assertEquals("F0001", FrameRegistry.readMatch("**match:** F0001", cand).id());
-        assertEquals(new FrameRegistry.Match(null, null), FrameRegistry.readMatch("match: F0099", cand));
+        assertEquals(new FrameRegistry.Match(null, null, null), FrameRegistry.readMatch("match: F0099", cand));
+        assertEquals(new FrameRegistry.Match(null, null, "F0001"), FrameRegistry.readMatch("kind: F0001", cand), "a kind gets a frame of its own under it");
         assertNull(FrameRegistry.readMatch("new", cand).id());
     }
 

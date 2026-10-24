@@ -117,13 +117,16 @@ public final class FrameRegistry {
                 + "\", from section " + c.at().number() + " of a textbook:\n" + qs + "\n"
                 + "And here are generalized frames already made, each with the subjects it explains and some of its questions:\n\n"
                 + sb + "\n"
-                + "Does one of these generalized frames explain the same kind of subject as \"" + c.at().concept() + "\", so that one "
-                + "frame of questions can explain both? Subjects of one kind share their questions: an integer type and a "
-                + "floating-point type are both data types (what values it holds, how much storage, how it is written); a "
-                + "variable and a thread are not. Being mentioned together is not enough; the questions must fit. The same subject "
-                + "explained in another section (Java, a virtual machine, an interface) always matches the frame that holds it, even "
-                + "when this section asks other questions about it: they are more questions of the same frame.\n"
-                + "Write \"match: \" and the frame's id, or \"new\" when none fits. Write nothing else.";
+                + "Say how \"" + c.at().concept() + "\" stands to these frames, with one of three answers.\n"
+                + "match: F0012   it is the subject that frame explains, or a subject of the same kind whose questions that frame "
+                + "already asks: an integer type and a floating-point type are both data types (what values it holds, how much "
+                + "storage, how it is written). The same subject explained in another section (Java, a virtual machine) always "
+                + "matches the frame that holds it.\n"
+                + "kind: F0012   it is a kind of the subject that frame explains, with questions of its own the frame does not ask: a "
+                + "documentation comment is a kind of comment, with its own tags and its own place in the code. It gets a frame of "
+                + "its own, under that one.\n"
+                + "new            none of them: a variable and a thread. Being mentioned together is not enough.\n"
+                + "Write the one line and nothing else.";
     }
 
     /**
@@ -140,8 +143,11 @@ public final class FrameRegistry {
                 + "\"different\" only when the name means another thing here. Write \"same\" or \"different\". Write nothing else.";
     }
 
-    /** The reply to a match question: the id matched ({@code null} for a new frame), and the new name when one is given. */
-    public record Match(String id, String name) {}
+    /**
+     * The reply to a match question: the id matched ({@code null} for a new frame), a new name when one is given, and the
+     * frame a new frame goes under when it is a kind of that frame's subject.
+     */
+    public record Match(String id, String name, String kindOf) {}
 
     /** @return what the reply says; an id not among the candidates counts as no match */
     public static Match readMatch(String reply, List<Frame> candidates) {
@@ -151,9 +157,14 @@ public final class FrameRegistry {
             String f = m.group(1);
             if (candidates.stream().anyMatch(c -> c.id.equals(f))) id = f;
         }
+        Matcher k = Pattern.compile("(?im)^\\W*kind\\W*[:=]\\s*\\W*(F\\d+)").matcher(reply);
+        if (id == null && k.find()) {
+            String f = k.group(1);
+            if (candidates.stream().anyMatch(c -> c.id.equals(f))) return new Match(null, null, f);
+        }
         Matcher n = Pattern.compile("(?im)^\\W*name\\W*[:=]\\s*(.+)$").matcher(reply);
         String name = n.find() ? n.group(1).replaceAll("^[\\s*_`\"]+|[\\s*_`\".]+$", "") : null;
-        return new Match(id, name == null || name.isBlank() ? null : name);
+        return new Match(id, name == null || name.isBlank() ? null : name, null);
     }
 
     /** @return the question how a new generalized frame stands in the concept tree among frames already made */
@@ -258,11 +269,11 @@ public final class FrameRegistry {
                 for (Frame f0 : cand) {
                     if (f0.concepts.stream().noneMatch(x -> GeneralFrames.norm(x).equals(nm))) continue;
                     if (writer.apply(sameQuestion(c, f0)).strip().toLowerCase(Locale.ROOT).replaceAll("[^a-z]", "").startsWith("same")) {
-                        m = new Match(f0.id, null);
+                        m = new Match(f0.id, null, null);
                         break;
                     }
                 }
-                if (m == null) m = cand.isEmpty() ? new Match(null, null) : readMatch(writer.apply(matchQuestion(c, cand)), cand);
+                if (m == null) m = cand.isEmpty() ? new Match(null, null, null) : readMatch(writer.apply(matchQuestion(c, cand)), cand);
                 Frame f;
                 if (m.id() != null) {
                     // the name stays while frames are placed; nameAll names each frame from all its concrete frames at the end
@@ -275,6 +286,12 @@ public final class FrameRegistry {
                     store.addRegistryFrame(id, f.name, byId.size() + 1);
                     byId.put(id, f);
                     made++;
+                    // a kind of a frame's subject, with questions of its own: a frame of its own, under that one
+                    if (m.kindOf() != null) {
+                        f.parent = m.kindOf();
+                        store.setRegistryParent(id, f.parent);
+                        log.accept("  tree: " + id + " " + f.name + " under " + m.kindOf() + " (a kind of it)");
+                    }
                 }
                 f.add(c.at().concept(), c.questions());
                 store.addRegistryMember(f.id, c.at(), ++memberSeq);
@@ -283,7 +300,7 @@ public final class FrameRegistry {
                     List<Frame> near = candidates(c, byId.values().stream().filter(x -> x != f).toList());
                     if (!near.isEmpty()) {
                         Place p = readPlace(writer.apply(treeQuestion(f, near)), near);
-                        if (p.parent() != null && !above(f.id, p.parent(), byId)) {
+                        if (f.parent == null && p.parent() != null && !above(f.id, p.parent(), byId)) {
                             f.parent = p.parent();
                             store.setRegistryParent(f.id, f.parent);
                         }
@@ -302,7 +319,7 @@ public final class FrameRegistry {
                 }
                 done++;
                 log.accept("done " + done + "/" + todo.size() + " " + c.at().number() + " " + c.at().concept() + " -> " + f.id + " " + f.name
-                        + (m.id() == null ? " (new)" : ""));
+                        + (m.id() != null ? "" : m.kindOf() != null ? " (new, a kind of " + m.kindOf() + ")" : " (new)"));
             } catch (Exception ex) {
                 failed++;
                 log.accept("FAILED " + c.at().number() + " " + c.at().concept() + ": " + ex.getMessage());
