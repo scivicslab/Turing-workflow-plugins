@@ -97,6 +97,11 @@ public final class BookStore implements AutoCloseable {
                     + "ordinal INT NOT NULL, group_ordinal INT NOT NULL, relation VARCHAR(60) NOT NULL, kind VARCHAR(20) NOT NULL, "
                     + "from_concept VARCHAR(1000) NOT NULL, to_concept VARCHAR(1000) NOT NULL, nucleus_rule VARCHAR(200) NOT NULL, "
                     + "satellite_rule VARCHAR(200) NOT NULL, PRIMARY KEY (book, number, ordinal))");
+            s.execute("CREATE TABLE IF NOT EXISTS section_cluster (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "ordinal INT NOT NULL, type VARCHAR(20) NOT NULL, concept VARCHAR(1000) NOT NULL, first_group INT NOT NULL, "
+                    + "last_group INT NOT NULL, PRIMARY KEY (book, number, ordinal))");
+            s.execute("CREATE TABLE IF NOT EXISTS section_cluster_asked (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
+                    + "PRIMARY KEY (book, number))");
             s.execute("CREATE TABLE IF NOT EXISTS concept_property (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "ordinal INT NOT NULL, group_ordinal INT NOT NULL, concept VARCHAR(1000), kind VARCHAR(20) NOT NULL, "
                     + "property VARCHAR(2000) NOT NULL, rule VARCHAR(200) NOT NULL, PRIMARY KEY (book, number, ordinal))");
@@ -859,6 +864,61 @@ public final class BookStore implements AutoCloseable {
         return out;
     }
 
+    /** Replaces the clusters of one section's groups (step 1's second question), and marks it asked. */
+    public synchronized void saveClusters(String book, String number, List<SectionClusters.Cluster> clusters) throws SQLException {
+        try (PreparedStatement d = db.prepareStatement("DELETE FROM section_cluster WHERE book = ? AND number = ?")) {
+            d.setString(1, book);
+            d.setString(2, number);
+            d.executeUpdate();
+        }
+        try (PreparedStatement p = db.prepareStatement("INSERT INTO section_cluster (book, number, ordinal, type, concept, first_group, last_group) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?)")) {
+            for (SectionClusters.Cluster c : clusters) {
+                p.setString(1, book);
+                p.setString(2, number);
+                p.setInt(3, c.ordinal());
+                p.setString(4, c.type());
+                p.setString(5, c.concept());
+                p.setInt(6, c.first());
+                p.setInt(7, c.last());
+                p.executeUpdate();
+            }
+        }
+        try (PreparedStatement p = db.prepareStatement("MERGE INTO section_cluster_asked (book, number) KEY (book, number) VALUES (?, ?)")) {
+            p.setString(1, book);
+            p.setString(2, number);
+            p.executeUpdate();
+        }
+    }
+
+    /** @return the sections whose clusters have been asked, even those that had none */
+    public synchronized java.util.Set<String> clustersAsked(String book) throws SQLException {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT number FROM section_cluster_asked WHERE book = ?")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) out.add(r.getString(1));
+            }
+        }
+        return out;
+    }
+
+    /** @return the clusters of each section's groups, by section number, in order */
+    public synchronized java.util.Map<String, List<SectionClusters.Cluster>> clusters(String book) throws SQLException {
+        java.util.Map<String, List<SectionClusters.Cluster>> out = new java.util.LinkedHashMap<>();
+        try (PreparedStatement p = db.prepareStatement("SELECT number, ordinal, type, concept, first_group, last_group FROM section_cluster "
+                + "WHERE book = ? ORDER BY number, ordinal")) {
+            p.setString(1, book);
+            try (ResultSet r = p.executeQuery()) {
+                while (r.next()) {
+                    out.computeIfAbsent(r.getString(1), k -> new ArrayList<>()).add(new SectionClusters.Cluster(r.getInt(2), r.getString(3),
+                            r.getString(4), r.getInt(5), r.getInt(6)));
+                }
+            }
+        }
+        return out;
+    }
+
     /** Replaces the properties of one section's groups' main concepts (step 3 of the frame data workflow), and marks it asked. */
     public synchronized void saveProperties(String book, String number, List<ConceptProperties.Property> props) throws SQLException {
         try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_property WHERE book = ? AND number = ?")) {
@@ -975,12 +1035,19 @@ public final class BookStore implements AutoCloseable {
         return out;
     }
 
-    /** Replaces the groups of one section's blocks (step 1 of the frame data workflow). */
+    /**
+     * Replaces the groups of one section's blocks (step 1 of the frame data workflow), and forgets the clusters, causes
+     * and properties read of the old ones.
+     */
     public synchronized void saveGroups(String book, String number, List<SectionGroups.Group> groups) throws SQLException {
-        try (PreparedStatement d = db.prepareStatement("DELETE FROM section_group WHERE book = ? AND number = ?")) {
-            d.setString(1, book);
-            d.setString(2, number);
-            d.executeUpdate();
+        // what was read of the old groups refers to them by ordinal: it goes with them
+        for (String t : List.of("section_group", "section_cluster", "section_cluster_asked", "concept_cause", "concept_cause_asked",
+                "concept_property", "concept_property_asked")) {
+            try (PreparedStatement d = db.prepareStatement("DELETE FROM " + t + " WHERE book = ? AND number = ?")) {
+                d.setString(1, book);
+                d.setString(2, number);
+                d.executeUpdate();
+            }
         }
         try (PreparedStatement p = db.prepareStatement("INSERT INTO section_group (book, number, ordinal, type, concept, members) VALUES (?, ?, ?, ?, ?, ?)")) {
             for (SectionGroups.Group g : groups) {

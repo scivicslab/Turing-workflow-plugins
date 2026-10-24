@@ -120,6 +120,13 @@ public class BookStructureIIAR extends IIActorRef<BookStructure> {
                 a.getString("model"), parallel(a), sections(a)));
     }
 
+    /** Frame data step 1, second question: consecutive groups that explain one larger thing. Args: {@code {db, name, url, model, parallel, sections}}. */
+    @Action("clusters")
+    public ActionResult clusters(String args) {
+        return step(args, "could not ask the clusters", (b, a) -> b.clusters(a.getString("db"), a.getString("name"), a.getString("url"),
+                a.getString("model"), parallel(a), sections(a)));
+    }
+
     /** Frame data step 2: the causes and motives of each group's main concept. Args: {@code {db, name, url, model, parallel, sections}}. */
     @Action("causes")
     public ActionResult causes(String args) {
