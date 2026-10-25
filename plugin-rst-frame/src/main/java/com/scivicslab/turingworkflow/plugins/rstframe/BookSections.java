@@ -82,6 +82,93 @@ public final class BookSections {
         return byHeadings;
     }
 
+    /** The outline and the sections after the sections over the limit were cut into pieces. */
+    public record Pieces(List<BookOutline.Node> outline, List<Section> sections, List<String> notes) {
+    }
+
+    /** The number of a piece cut from a section that was too large: the section's number and ".p2", ".p3", ... */
+    public static final Pattern PIECE = Pattern.compile("\\.p\\d+$");
+    /** No section is cut below this many characters, whatever its book's median. */
+    public static final int LIMIT_FLOOR = 50_000;
+
+    /**
+     * How large a section of this book may be before it is cut: four times the median of its sections that have text, and
+     * never under {@link #LIMIT_FLOOR}. Four medians leave a book's long chapters whole (texbook's longest chapters are a
+     * little over two medians); the floor keeps a book of very short sections (a reference, a book of headed paragraphs)
+     * from having its ordinary sections cut.
+     */
+    public static int limit(List<Section> sections) {
+        int[] sizes = sections.stream().mapToInt(x -> x.text().length()).filter(n -> n > 0).sorted().toArray();
+        if (sizes.length == 0) return LIMIT_FLOOR;
+        long median = sizes[sizes.length / 2];
+        return (int) Math.max(LIMIT_FLOOR, Math.min(Integer.MAX_VALUE, 4 * median));
+    }
+
+    /**
+     * Cuts each section longer than {@code limit} characters into pieces, so that no one section holds a large part of the
+     * book (an appendix the outline ran on into the chapter before it, a book whose chapters the outline missed). A piece
+     * begins at a heading of the section's own text once the piece before it has half the limit; with no heading in reach,
+     * at a blank line outside code once it has the whole limit. The first piece keeps the section's number; the others are
+     * its children, numbered with {@link #PIECE} and titled by their heading (or the section's title, continued), placed
+     * right after the section, before any child it had. A piece's heading line becomes its title and leaves its text, as a
+     * section's own heading does. Each piece is given the section's files, as the cut does not follow the page files.
+     */
+    public static Pieces splitLarge(List<BookOutline.Node> outline, List<Section> sections, int limit) {
+        Map<String, Section> byNumber = new LinkedHashMap<>();
+        for (Section x : sections) byNumber.put(x.number(), x);
+        List<BookOutline.Node> nodes = new ArrayList<>();
+        List<Section> out = new ArrayList<>();
+        List<String> notes = new ArrayList<>();
+        for (BookOutline.Node n : outline) {
+            Section x = byNumber.get(n.number());
+            nodes.add(n);
+            if (x == null) continue;
+            if (x.text().length() <= limit) {
+                out.add(x);
+                continue;
+            }
+            List<String[]> pieces = cut(x.text(), limit);
+            out.add(new Section(n.number(), pieces.get(0)[1], x.files()));
+            String level = n.level().equals("chapter") ? "section" : "subsection";
+            String firstFile = x.files().isEmpty() ? n.firstFile() : x.files().get(0);
+            for (int k = 1; k < pieces.size(); k++) {
+                String number = n.number() + ".p" + (k + 1);
+                String title = pieces.get(k)[0] != null ? pieces.get(k)[0] : n.title() + " (continued)";
+                nodes.add(new BookOutline.Node(number, level, title, n.number(), firstFile));
+                out.add(new Section(number, pieces.get(k)[1], x.files()));
+            }
+            notes.add(n.number() + " (" + x.text().length() + " characters) cut into " + pieces.size() + " pieces of at most about " + limit);
+        }
+        return new Pieces(nodes, out, notes);
+    }
+
+    /** @return the pieces of a text, each its title (null for the first, and for one begun at a blank line) and its text */
+    static List<String[]> cut(String text, int limit) {
+        List<String[]> pieces = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        String title = null;
+        boolean code = false;
+        for (String line : text.split("\n", -1)) {
+            if (line.startsWith("```")) code = !code;
+            Matcher h = code ? null : HEADING.matcher(line);
+            if (h != null && h.matches() && cur.length() >= limit / 2) {
+                pieces.add(new String[] {title, cur.toString().strip()});
+                cur.setLength(0);
+                title = BookOutline.clean(h.group(1));
+                continue;
+            }
+            if (!code && line.isBlank() && cur.length() >= limit) {
+                pieces.add(new String[] {title, cur.toString().strip()});
+                cur.setLength(0);
+                title = null;
+                continue;
+            }
+            cur.append(line).append('\n');
+        }
+        pieces.add(new String[] {title, cur.toString().strip()});
+        return pieces;
+    }
+
     /** A title reduced to its letters and digits, to find it in a heading whatever the marks and spacing around it. */
     private static String bare(String s) {
         return BookOutline.clean(s).toLowerCase(java.util.Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]+", "");

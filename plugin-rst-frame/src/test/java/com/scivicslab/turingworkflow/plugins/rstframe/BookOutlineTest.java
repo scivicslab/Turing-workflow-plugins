@@ -125,4 +125,39 @@ class BookOutlineTest {
                 "3.2 section Project Scope and Planning", "4 chapter Laws", "4.1 section Categories of Laws"),
                 o.nodes().stream().map(n -> n.number() + " " + n.level() + " " + n.title()).toList(), "a plain heading among bold ones is a sidebar");
     }
+
+    @Test
+    void aSectionOrSubsectionNumberMayHaveThreeDigitsAChapterTwo() {
+        var o = BookOutline.read(new java.util.TreeMap<>(java.util.Map.of(
+                "Chap02/p1.md", "# 2 java.util\n\n## 2.9 class Arrays\n\n### 2.9.99 method Arrays.fill(int[], int)\n\ntext\n\n"
+                        + "### 2.9.214 method Arrays.toString(Object[])\n\ntext\n\n## 2.100 class Timer\n\ntext\n\n"
+                        + "## 3.1415 is pi to four places\n\n## 100.5 percent of the budget\n\n## 2.9.1000 not a member\n")));
+        org.junit.jupiter.api.Assertions.assertEquals(java.util.List.of("2 chapter Chapter 2", "2.9 section class Arrays",
+                "2.9.99 subsection method Arrays.fill(int[], int)", "2.9.214 subsection method Arrays.toString(Object[])", "2.100 section class Timer"),
+                o.nodes().stream().map(n -> n.number() + " " + n.level() + " " + n.title()).toList(),
+                "four digits after a dot, or three before the first, make no heading");
+    }
+
+    @Test
+    void theChaptersAndAppendicesItsDirectoriesNameAreAddedWhereTheOutlineHasNone() {
+        var files = new java.util.TreeMap<String, String>(java.util.Map.of(
+                "29_第27章 Recovery from Errors/p301.md", "## 27\n\n## Recovery from Errors\n\ntext\n",
+                "29_第27章 Recovery from Errors/p311.md", "more of 27\n\n## Answers to All the Exercises\n\n- 2.5. an answer\n",
+                "30_付録A Answers to All the Exercises/p321.md", "## 12.16. an answer\n",
+                "31_付録B Basic Control Sequences/p351.md", "## A Bold, Centered Title\n"));
+        var read = new BookOutline.Outline(java.util.List.of(
+                new BookOutline.Node("27", "chapter", "27 Recovery from Errors", null, "29_第27章 Recovery from Errors/p301.md"),
+                new BookOutline.Node("27.1", "section", "Answers to All the Exercises", "27", "29_第27章 Recovery from Errors/p311.md")), java.util.List.of());
+        var o = BookOutline.withDirectoryChapters(files, read);
+        org.junit.jupiter.api.Assertions.assertEquals(java.util.List.of("27 chapter 27 Recovery from Errors @29_第27章 Recovery from Errors/p301.md",
+                "A chapter Answers to All the Exercises @29_第27章 Recovery from Errors/p311.md",
+                "B chapter Basic Control Sequences @31_付録B Basic Control Sequences/p351.md"),
+                o.nodes().stream().map(n -> n.number() + " " + n.level() + " " + n.title() + " @" + n.firstFile()).toList(),
+                "chapter 27 is in the outline already; appendix A begins on the page its heading is on, and the section of the same title goes");
+        var r = BookSections.split(files, o.nodes());
+        org.junit.jupiter.api.Assertions.assertEquals(java.util.List.of("27|## 27\n\n## Recovery from Errors\n\ntext\n\nmore of 27", "A|- 2.5. an answer\n\n## 12.16. an answer", "B|## A Bold, Centered Title"),
+                r.sections().stream().map(x -> x.number() + "|" + x.text()).toList());
+        var one = new java.util.TreeMap<String, String>(java.util.Map.of("Chap01/p1.md", "## 1 One\n", "30_付録A Answers/p1.md", "## x\n"));
+        org.junit.jupiter.api.Assertions.assertSame(read, BookOutline.withDirectoryChapters(one, read), "one such directory leaves the outline as it is");
+    }
 }

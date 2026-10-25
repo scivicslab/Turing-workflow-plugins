@@ -41,7 +41,7 @@ public final class BookStructure {
         Path root = Path.of(dir).toAbsolutePath().toRealPath();
         Map<String, String> md = markdown(root);
         if (md.isEmpty()) throw new IllegalArgumentException("no markdown file under " + root);
-        BookOutline.Outline outline = BookOutline.read(md);
+        BookOutline.Outline outline = BookOutline.withDirectoryChapters(md, BookOutline.read(md));
         Path dbFile = Path.of(db).toAbsolutePath().normalize();
         files.mayWrite(dbFile);
         if (dbFile.getParent() != null) Files.createDirectories(dbFile.getParent());
@@ -66,13 +66,32 @@ public final class BookStructure {
         try (BookStore store = new BookStore(url(dbFile))) {
             String dir = store.dirOf(name);
             if (dir == null) throw new IllegalArgumentException("no book " + name + " in " + db + "; read its table of contents first");
-            BookSections.Result result = BookSections.split(markdown(Path.of(dir)), store.outline(name));
-            store.saveSections(name, result.sections());
+            BookSections.Result result = cutAndStore(store, name, dir, markdown(Path.of(dir)));
             long empty = result.sections().stream().filter(x -> x.text().isEmpty()).count();
             long spanning = result.sections().stream().filter(x -> x.files().size() > 1).count();
             return result.sections().size() + " section(s) of " + name + "; " + empty + " with no text of their own; "
                     + spanning + " spanning more than one file" + (result.notes().isEmpty() ? "" : "; " + String.join("; ", result.notes()));
         }
+    }
+
+    /**
+     * Cuts a book's text into the nodes of its stored outline, cuts a section too large into pieces
+     * ({@link BookSections#splitLarge}), and stores the sections, with the outline when pieces were added or taken away.
+     * The pieces an earlier run cut are left out of the outline first, so a section is cut again from its whole text.
+     *
+     * @param dir the book's directory, as its table of contents stored it
+     * @param md  the book's markdown files, path under {@code dir} to text, in the order they are read
+     */
+    static BookSections.Result cutAndStore(BookStore store, String name, String dir, Map<String, String> md) throws java.sql.SQLException {
+        List<BookOutline.Node> outline = new java.util.ArrayList<>(store.outline(name));
+        boolean cutBefore = outline.removeIf(n -> BookSections.PIECE.matcher(n.number()).find());
+        BookSections.Result whole = BookSections.split(md, outline);
+        BookSections.Pieces p = BookSections.splitLarge(outline, whole.sections(), BookSections.limit(whole.sections()));
+        if (cutBefore || p.outline().size() != outline.size()) store.saveOutline(name, dir, new BookOutline.Outline(p.outline(), List.of()));
+        List<String> notes = new java.util.ArrayList<>(whole.notes());
+        notes.addAll(p.notes());
+        store.saveSections(name, p.sections());
+        return new BookSections.Result(p.sections(), notes);
     }
 
     /** One step that asks a model at a chat endpoint about every section of a book ({@code SectionTagging.tagAll} and its like). */

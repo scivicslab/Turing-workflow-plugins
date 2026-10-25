@@ -223,8 +223,98 @@ public final class BookOutline {
         return new Outline(inBookOrder(List.copyOf(nodes.values())), List.of());
     }
 
-    /** A numbered heading of a book read by its numbers: "24.2.1 The FilesForSale Service", "A.2 Installing the Toolkit". */
-    private static final Pattern NUMBERED_ANY = Pattern.compile("^([A-Z]|\\d{1,2})((?:\\.\\d{1,2})+)\\.?\\s+(\\S.*)$");
+    /** A directory of one chapter or appendix named in Japanese: "29_第27章 Recovery from Errors", "30_付録A Answers to All the Exercises". */
+    private static final Pattern DIR_JA = Pattern.compile("^\\d+_(?:第\\s*(\\d{1,3})\\s*章|付録\\s*([A-Z]))\\s*(.*)$");
+    private static final Pattern ANY_HEADING = Pattern.compile("^#{1,6}\\s+(.+)$");
+
+    /**
+     * The outline with the chapters and appendices its book's directories name ("29_第27章 Recovery from Errors",
+     * "30_付録A Answers to All the Exercises") that it does not have. A book cut into such directories says where each of
+     * them begins even when its headings do not: an appendix whose OCR lost its heading, or whose heading the model took for
+     * the name of the chapter before it, otherwise runs on as the end of that chapter. A directory's node begins at its
+     * first file, or at the last file of the directory before it when that file holds a heading of its title (the
+     * appendix began on the page the chapter before it ended). A node of the outline that names the chapter (its title,
+     * its letter and title, or its letter alone) is its heading where the outline found it, and becomes the chapter in its
+     * place. Fewer than two such directories leave the outline as it is.
+     *
+     * @param files the book's markdown files, path under the book's directory to text, in the order they are read
+     */
+    public static Outline withDirectoryChapters(Map<String, String> files, Outline outline) {
+        Map<String, List<String>> dirs = new LinkedHashMap<>();
+        for (String path : files.keySet()) {
+            int slash = path.indexOf('/');
+            if (slash > 0) dirs.computeIfAbsent(path.substring(0, slash), k -> new ArrayList<>()).add(path);
+        }
+        if (dirs.keySet().stream().filter(d -> DIR_JA.matcher(d).matches()).count() < 2) return outline;
+        Map<String, Integer> order = new LinkedHashMap<>();
+        for (String path : files.keySet()) order.put(path, order.size());
+        List<Node> nodes = new ArrayList<>(outline.nodes());
+        List<String> notes = new ArrayList<>(outline.notes());
+        java.util.Set<String> chapters = new java.util.HashSet<>();
+        for (Node n : nodes) if (n.level().equals("chapter")) chapters.add(n.number());
+        List<String> previous = null;
+        for (Map.Entry<String, List<String>> d : dirs.entrySet()) {
+            Matcher m = DIR_JA.matcher(d.getKey());
+            List<String> before = previous;
+            previous = d.getValue();
+            if (!m.matches()) continue;
+            String number = m.group(1) != null ? m.group(1) : m.group(2);
+            if (chapters.contains(number)) continue;
+            String title = m.group(3).strip().isEmpty() ? d.getKey() : m.group(3).strip();
+            String first = d.getValue().get(0);
+            if (before != null) {
+                String last = before.get(before.size() - 1);
+                for (String line : files.get(last).split("\\R")) {
+                    Matcher h = ANY_HEADING.matcher(line);
+                    if (h.matches() && bareTitle(h.group(1)).equals(bareTitle(title))) {
+                        first = last;
+                        break;
+                    }
+                }
+            }
+            // a node of the outline that names this chapter ("D Dirty Tricks", "E") is its heading, found where it stands
+            java.util.Set<String> names = java.util.Set.of(bareTitle(title), bareTitle(number + " " + title), bareTitle(number));
+            int at = -1;
+            for (int i = 0; i < nodes.size(); i++) {
+                Node n = nodes.get(i);
+                if (n.level().equals("chapter") || !names.contains(bareTitle(n.title()))) continue;
+                if (at < 0) {
+                    at = i;
+                    first = n.firstFile();
+                } else {
+                    nodes.remove(i--);
+                }
+            }
+            if (at >= 0) {
+                nodes.set(at, new Node(number, "chapter", title, null, first));
+            } else {
+                at = nodes.size();
+                int from = order.getOrDefault(first, Integer.MAX_VALUE);
+                for (int i = 0; i < nodes.size(); i++) {
+                    if (order.getOrDefault(nodes.get(i).firstFile(), -1) > from) {
+                        at = i;
+                        break;
+                    }
+                }
+                nodes.add(at, new Node(number, "chapter", title, null, first));
+            }
+            chapters.add(number);
+            notes.add("chapter " + number + " \"" + title + "\" added from its directory " + d.getKey());
+        }
+        return new Outline(nodes, notes);
+    }
+
+    /** A title reduced to its letters and digits, to compare a heading with a directory's name. */
+    static String bareTitle(String s) {
+        return clean(s).toLowerCase(java.util.Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]+", "");
+    }
+
+    /**
+     * A numbered heading of a book read by its numbers: "24.2.1 The FilesForSale Service", "A.2 Installing the Toolkit".
+     * A chapter has at most two digits; a section or subsection may have three, as a reference with more than ninety-nine
+     * members of a class has ("2.9.214 method Arrays.fill").
+     */
+    private static final Pattern NUMBERED_ANY = Pattern.compile("^([A-Z]|\\d{1,2})((?:\\.\\d{1,3})+)\\.?\\s+(\\S.*)$");
     /** A chapter's own heading in such a book: its number and its title, "2 COMPUTER SYSTEMS ORGANIZATION". */
     private static final Pattern BARE_CHAPTER = Pattern.compile("^([1-9]\\d?)\\.?\\s+(\\p{L}[\\p{L}\\p{N} ,:&'()-]{2,})$");
 

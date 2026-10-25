@@ -190,8 +190,8 @@ public final class BookImport {
             try (var s = Files.walk(dir)) {
                 for (Path p : s.filter(p -> p.toString().endsWith(".md")).sorted().toList()) files.put(dir.relativize(p).toString(), Files.readString(p));
             }
-            BookOutline.Outline o = OutlineByModel.read(a[2], files, new ChatEndpoint(a[4], a[5], 1500),
-                    line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line));
+            BookOutline.Outline o = BookOutline.withDirectoryChapters(files, OutlineByModel.read(a[2], files, new ChatEndpoint(a[4], a[5], 1500),
+                    line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
             try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 store.saveOutline(a[2], dir.toString(), o);
             }
@@ -210,7 +210,7 @@ public final class BookImport {
         try (var s = Files.walk(dir)) {
             for (Path p : s.filter(p -> p.toString().endsWith(".md")).sorted().toList()) files.put(dir.relativize(p).toString(), Files.readString(p));
         }
-        BookOutline.Outline o = BookOutline.read(files);
+        BookOutline.Outline o = BookOutline.withDirectoryChapters(files, BookOutline.read(files));
         try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
             store.saveOutline(a[2], dir.toString(), o);
         }
@@ -229,8 +229,7 @@ public final class BookImport {
             try (var s = Files.walk(dir)) {
                 for (Path p : s.filter(p -> p.toString().endsWith(".md")).sorted().toList()) files.put(dir.relativize(p).toString(), Files.readString(p));
             }
-            BookSections.Result r = BookSections.split(files, store.outline(book));
-            store.saveSections(book, r.sections());
+            BookSections.Result r = BookStructure.cutAndStore(store, book, d, files);
             long empty = r.sections().stream().filter(x -> x.text().isEmpty()).count();
             long spanning = r.sections().stream().filter(x -> x.files().size() > 1).count();
             System.out.println(r.sections().size() + " section(s); " + empty + " with no text of their own; " + spanning + " spanning more than one file");

@@ -29,6 +29,8 @@ public final class OutlineByModel {
 
     /** How many candidates one question shows. */
     public static final int CHUNK = 150;
+    /** A chapter's line that gives only its number: "27", "CHAPTER ONE", "Chapter 3", "第3章". */
+    private static final Pattern ONLY_A_NUMBER = Pattern.compile("(?i)^(?:(?:chapter|part)\\s+)?(?:\\d{1,3}|[ivxlc]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\\.?$|^第\\s*[0-9０-９一二三四五六七八九十百]+\\s*[章部]$");
 
     private static final Pattern HEADING = Pattern.compile("^#{1,6}\\s+(.*)$");
     private static final Pattern LEADERS = Pattern.compile("(?:[-.·…]\\s*){4,}\\s*\\d+\\s*$");
@@ -188,14 +190,18 @@ public final class OutlineByModel {
             if (level == null) continue;
             Candidate c = candidates.get(i);
             String key = chapter + "\t" + c.text().toLowerCase(Locale.ROOT);
-            // the name of a chapter whose own line is only its number joins its title
+            // the name of a chapter whose own line is only its number joins its title; a chapter that has its name already
+            // takes the line as a section, so a title the model took for a name ("Answers to All the Exercises" after
+            // "27 Recovery from Errors") still starts a node
             if (level.equals("name")) {
                 int last = nodes.size() - 1;
-                if (last >= 0 && nodes.get(last).level().equals("chapter")) {
+                if (last >= 0 && nodes.get(last).level().equals("chapter") && ONLY_A_NUMBER.matcher(nodes.get(last).title()).matches()) {
                     BookOutline.Node ch = nodes.get(last);
                     nodes.set(last, new BookOutline.Node(ch.number(), ch.level(), ch.title() + " " + c.text(), ch.parent(), ch.firstFile()));
+                    continue;
                 }
-                continue;
+                if (chapter == 0) continue;
+                level = "section";
             }
             if (level.startsWith("chapter")) {
                 chapter++;

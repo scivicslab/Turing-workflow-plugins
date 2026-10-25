@@ -56,4 +56,13 @@ class OutlineByModelTest {
         assertEquals(List.of("1 chapter Getting Started", "1.1 section Installing", "2 chapter Authenticating Users", "2.1 section Tokens"),
                 o.nodes().stream().map(n -> n.number() + " " + n.level() + " " + n.title()).toList());
     }
+
+    @Test
+    void aNameAfterAChapterThatHasItsNameStartsASection() {
+        var files = new TreeMap<String, String>(Map.of("29/p301.md", "## 27\n\n## Recovery from Errors\n\n## Answers to All the Exercises\n"));
+        var c = OutlineByModel.candidates(OutlineByModel.inBookOrder(files));
+        var o = OutlineByModel.outline(c, OutlineByModel.read("L0 | chapter 27\nL1 | name\nL2 | name\n"));
+        assertEquals(List.of("1 chapter 27 Recovery from Errors", "1.1 section Answers to All the Exercises"),
+                o.nodes().stream().map(n -> n.number() + " " + n.level() + " " + n.title()).toList());
+    }
 }
