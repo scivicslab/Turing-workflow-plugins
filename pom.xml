@@ -69,6 +69,11 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <pojo-actor.version>4.8.0-SNAPSHOT</pojo-actor.version>
         <turing-workflow.version>4.8.0-SNAPSHOT</turing-workflow.version>
+        <!-- Tests tagged e2e reach other machines (SSH hosts, Vault), so a plain build skips
+             them. Surefire reads these two properties; run the e2e tests on purpose with
+             -Pe2e, which selects only them. -->
+        <excludedGroups>e2e</excludedGroups>
+        <groups></groups>
     </properties>
 
     <dependencyManagement>
@@ -218,6 +223,15 @@
     </build>
 
     <profiles>
+        <!-- Runs only the tests tagged e2e, e.g. mvn test -pl plugin-ssh -Pe2e -->
+        <profile>
+            <id>e2e</id>
+            <properties>
+                <excludedGroups></excludedGroups>
+                <groups>e2e</groups>
+            </properties>
+        </profile>
+
         <!-- Generate a JSON Schema for every @Action that declares argsType.
              Runs in a forked JVM with the module's own classpath: exec:java would put the
              generator in the plugin's class loader, which cannot see the module's compiled

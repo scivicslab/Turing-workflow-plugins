@@ -10,7 +10,8 @@ import com.scivicslab.pojoactor.action.ActionResult;
  *   arXiv: 2203.02155
  *
  * Run with:
- *   mvn exec:java -pl plugin-arxiv \
+ *   mvn test-compile exec:java -pl plugin-arxiv \
+ *     -Dexec.classpathScope=test \
  *     -Dexec.mainClass=com.scivicslab.turingworkflow.plugins.arxiv.ArxivActorE2eRunner
  */
 public class ArxivActorE2eRunner {

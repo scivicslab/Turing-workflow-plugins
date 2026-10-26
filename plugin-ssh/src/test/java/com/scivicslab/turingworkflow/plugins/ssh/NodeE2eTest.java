@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   E2E_SSH_HOST  — hostname or IP  (default: 192.168.5.13)
  *   E2E_SSH_USER  — SSH username    (default: devteam)
  *
- * Run with: mvn test -pl plugin-ssh -Dgroups=e2e
+ * Run with: mvn test -pl plugin-ssh -Pe2e
  */
 @Tag("e2e")
 class NodeE2eTest {

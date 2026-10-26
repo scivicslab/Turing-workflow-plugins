@@ -29,12 +29,14 @@ import java.util.List;
  *     DOI: 10.1038/s41586-021-03819-2  (OA, OpenAlex-indexed, PDF 3.6 MB)
  *
  * Run Phases 2 only (fast, no LLM needed):
- *   mvn exec:java -pl plugin-ocr \
+ *   mvn test-compile exec:java -pl plugin-ocr \
+ *     -Dexec.classpathScope=test \
  *     -Dexec.mainClass=com.scivicslab.turingworkflow.plugins.ocr.OcrActorE2eRunner \
  *     -Dexec.args="phase2"
  *
  * Run all phases including full workflow:
- *   mvn exec:java -pl plugin-ocr \
+ *   mvn test-compile exec:java -pl plugin-ocr \
+ *     -Dexec.classpathScope=test \
  *     -Dexec.mainClass=com.scivicslab.turingworkflow.plugins.ocr.OcrActorE2eRunner
  */
 public class OcrActorE2eRunner {

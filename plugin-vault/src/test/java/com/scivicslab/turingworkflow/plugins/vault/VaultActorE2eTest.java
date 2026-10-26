@@ -19,11 +19,11 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * E2E tests for VaultActor. Supports two modes:
  *
  * HTTP mode (requires VAULT_ADDR + VAULT_TOKEN):
- *   mvn test -pl plugin-vault -Dgroups=e2e
+ *   mvn test -pl plugin-vault -Pe2e
  *
  * kubectl mode (requires E2E_VAULT_K8S_NAMESPACE + optional E2E_VAULT_K8S_POD, E2E_VAULT_K8S_MOUNT):
  *   E2E_VAULT_K8S_NAMESPACE=infra-vault E2E_VAULT_K8S_POD=vault-0 E2E_VAULT_K8S_MOUNT=devtools \
- *     mvn test -pl plugin-vault -Dgroups=e2e
+ *     mvn test -pl plugin-vault -Pe2e
  */
 @Tag("e2e")
 class VaultActorE2eTest {

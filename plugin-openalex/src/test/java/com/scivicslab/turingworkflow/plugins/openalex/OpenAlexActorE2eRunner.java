@@ -14,7 +14,8 @@ import com.scivicslab.pojoactor.action.ActionResult;
  *   License: hybrid OA — freely downloadable
  *
  * Run with:
- *   mvn exec:java -pl plugin-openalex \
+ *   mvn test-compile exec:java -pl plugin-openalex \
+ *     -Dexec.classpathScope=test \
  *     -Dexec.mainClass=com.scivicslab.turingworkflow.plugins.openalex.OpenAlexActorE2eRunner
  */
 public class OpenAlexActorE2eRunner {

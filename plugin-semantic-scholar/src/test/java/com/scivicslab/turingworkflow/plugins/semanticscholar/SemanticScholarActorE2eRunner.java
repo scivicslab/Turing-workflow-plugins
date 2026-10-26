@@ -10,7 +10,8 @@ import com.scivicslab.pojoactor.action.ActionResult;
  * Test paper: "Attention Is All You Need" (Vaswani et al., 2017), arXiv:1706.03762
  *
  * Run with:
- *   mvn exec:java -pl plugin-semantic-scholar \
+ *   mvn test-compile exec:java -pl plugin-semantic-scholar \
+ *     -Dexec.classpathScope=test \
  *     -Dexec.mainClass=com.scivicslab.turingworkflow.plugins.semanticscholar.SemanticScholarActorE2eRunner
  */
 public class SemanticScholarActorE2eRunner {
