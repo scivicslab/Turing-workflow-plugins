@@ -1,13 +1,13 @@
 package com.scivicslab.turingworkflow.plugins.rstframe;
 
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 
 /**
  * Stores and retrieves the intermediate data produced by the steps of the frame data workflow in an H2 database.
@@ -73,6 +73,28 @@ public final class BookStore implements AutoCloseable {
     private final Connection db;
 
     /**
+     * Opens an H2 connection through the H2 driver class this class's own class loader sees.
+     *
+     * <p>{@code DriverManager} hands a connection only to drivers visible to the caller's class loader, so it finds
+     * no driver when H2 was loaded by another class loader ({@code loader.loadJar} or {@code plugins.yaml}).
+     * Calling the driver directly works there and on a plain classpath (the {@code BookImport} CLI).</p>
+     *
+     * @param url an H2 JDBC URL
+     * @return the open connection, as user {@code sa} with an empty password
+     * @throws SQLException if the URL is not an H2 URL or the database cannot be opened
+     */
+    static Connection openH2(String url) throws SQLException {
+        Properties credentials = new Properties();
+        credentials.setProperty("user", "sa");
+        credentials.setProperty("password", "");
+        Connection connection = new org.h2.Driver().connect(url, credentials);
+        if (connection == null) {
+            throw new SQLException("Not an H2 JDBC URL: " + url);
+        }
+        return connection;
+    }
+
+    /**
      * Initializes a connection to an H2 database that stores the intermediate data of the steps that make frames from
      * books.
      *
@@ -80,7 +102,7 @@ public final class BookStore implements AutoCloseable {
      * @throws SQLException if a database access error occurs or the connection cannot be established
      */
     public BookStore(String url) throws SQLException {
-        this.db = DriverManager.getConnection(url, "sa", "");
+        this.db = openH2(url);
         try (Statement s = db.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS book (name VARCHAR(200) PRIMARY KEY, dir VARCHAR(2000) NOT NULL)");
             s.execute("CREATE TABLE IF NOT EXISTS toc_node (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
