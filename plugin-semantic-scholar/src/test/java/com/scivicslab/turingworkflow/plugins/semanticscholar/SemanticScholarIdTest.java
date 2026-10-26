@@ -24,6 +24,16 @@ class SemanticScholarIdTest {
     }
 
     @Test
+    void aDoiUrl_becomesAPrefixedDoi() {
+        assertThat(SemanticScholarClient.resolveId("https://doi.org/10.1038/s41586-021-03819-2"))
+                .isEqualTo("DOI:10.1038/s41586-021-03819-2");
+        assertThat(SemanticScholarClient.resolveId("http://doi.org/10.1038/nature14539"))
+                .isEqualTo("DOI:10.1038/nature14539");
+        assertThat(SemanticScholarClient.resolveId("https://dx.doi.org/10.1038/nature14539"))
+                .isEqualTo("DOI:10.1038/nature14539");
+    }
+
+    @Test
     void aBareArxivNumber_getsItsPrefix() {
         assertThat(SemanticScholarClient.resolveId("2203.02155")).isEqualTo("arXiv:2203.02155");
         assertThat(SemanticScholarClient.resolveId("2203.02155v1")).isEqualTo("arXiv:2203.02155v1");

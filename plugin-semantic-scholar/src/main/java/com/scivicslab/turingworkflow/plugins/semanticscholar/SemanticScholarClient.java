@@ -174,7 +174,7 @@ public class SemanticScholarClient {
      * Returns a text description of a single paper, including its abstract, title, and metadata.
      *
      * @param id a Semantic Scholar id, or one of the forms the API takes as a prefix: {@code DOI:10.1038/…}, {@code
-     * arXiv:2203.02155}, {@code CorpusId:…}, {@code PMID:…}. A bare DOI or arXiv id is prefixed here.
+     * arXiv:2203.02155}, {@code CorpusId:…}, {@code PMID:…}. A bare DOI, a doi.org URL or an arXiv id is prefixed here.
      *
      * @return an action result that is a success and holds the formatted paper text in its message, or is not a
      * success if the id is blank or the paper cannot be found.
@@ -266,19 +266,26 @@ public class SemanticScholarClient {
         }
     }
 
+    /** A DOI written as a URL; group 1 is the DOI. */
+    private static final java.util.regex.Pattern DOI_URL =
+            java.util.regex.Pattern.compile("https?://(?:dx\\.)?doi\\.org/(10\\..+)", java.util.regex.Pattern.CASE_INSENSITIVE);
+
     /**
      * Returns a string that is a valid Semantic Scholar identifier.
      *
      * If the input is a bare DOI or an arXiv ID, the result is the same identifier prefixed with {@code DOI:} or
-     * {@code arXiv:} respectively. If the input already contains a colon, it is returned as is.
+     * {@code arXiv:} respectively. A DOI URL ({@code https://doi.org/10.…}, also {@code http://} and {@code dx.doi.org})
+     * becomes {@code DOI:} and the DOI. Otherwise, if the input contains a colon, it is returned as is.
      *
      * @param id the paper identifier to resolve, such as a DOI, an arXiv ID, or a Semantic Scholar ID
      */
     static String resolveId(String id) {
         String s = id.strip();
+        // A DOI URL contains a colon too, so it is recognised before the prefixed forms.
+        java.util.regex.Matcher doiUrl = DOI_URL.matcher(s);
+        if (doiUrl.matches()) return "DOI:" + doiUrl.group(1);
         if (s.contains(":")) return s;                      // already prefixed (DOI:, arXiv:, PMID:, …)
         if (s.startsWith("10.")) return "DOI:" + s;
-        if (s.startsWith("https://doi.org/")) return "DOI:" + s.substring("https://doi.org/".length());
         if (s.matches("\\d{4}\\.\\d{4,5}(v\\d+)?")) return "arXiv:" + s;
         return s;                                            // a Semantic Scholar id
     }
