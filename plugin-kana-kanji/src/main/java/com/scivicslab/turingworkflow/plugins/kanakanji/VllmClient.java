@@ -294,6 +294,10 @@ public class VllmClient {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(vllmUrl))
                 .header("Content-Type", "application/json; charset=utf-8")
+                // Bulk generation: tell quarkus-gpu-broker to queue this behind interactive requests
+                // (the chat path defaults to foreground), and who is asking.
+                .header("X-Job-Priority", "background")
+                .header("X-Submitter-Id", "kana-kanji-pairs")
                 .timeout(TIMEOUT)
                 .POST(HttpRequest.BodyPublishers.ofString(body, java.nio.charset.StandardCharsets.UTF_8))
                 .build();
