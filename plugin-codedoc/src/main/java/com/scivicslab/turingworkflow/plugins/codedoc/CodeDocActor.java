@@ -17,6 +17,7 @@ import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -147,6 +148,42 @@ public class CodeDocActor extends IIActorRef<Object> {
      */
     public record WriteStrToFileArgs(@NotNull String file, @NotNull String strActor) {}
 
+    // ------------------------------------------------------------------
+    // Calls to the engine's built-in list and string actors, in the argument form their actions declare.
+    // ------------------------------------------------------------------
+
+    /**
+     * Appends one value to a list actor through its {@code add} action, which takes {@code {"value": ...}}.
+     *
+     * @throws IllegalStateException if the list actor refuses the value
+     */
+    private static void addToList(IIActorRef<?> list, String value) {
+        ActionResult r = list.callByActionName("add", new JSONObject().put("value", value).toString());
+        if (!r.isSuccess()) throw new IllegalStateException("list add failed: " + r.getResult());
+    }
+
+    /**
+     * Reads one item of a list actor through its {@code get} action, which takes {@code {"index": n}}.
+     *
+     * @throws IllegalStateException if the list actor has no such item
+     */
+    private static String getFromList(IIActorRef<?> list, int index) {
+        ActionResult r = list.callByActionName("get", new JSONObject().put("index", index).toString());
+        if (!r.isSuccess()) throw new IllegalStateException("list get failed: " + r.getResult());
+        return r.getResult();
+    }
+
+    /**
+     * Stores a text in a string actor through its {@code set} action. The text goes as the one element of a JSON
+     * array, so text that itself starts with {@code [} reaches the actor unchanged.
+     *
+     * @throws IllegalStateException if the string actor refuses the text
+     */
+    private static void setStr(IIActorRef<?> str, String value) {
+        ActionResult r = str.callByActionName("set", new JSONArray().put(value).toString());
+        if (!r.isSuccess()) throw new IllegalStateException("str set failed: " + r.getResult());
+    }
+
     @Action(value = "chunkFile", argsType = ChunkFileArgs.class)
     public ActionResult chunkFile(ChunkFileArgs args) {
         try {
@@ -156,7 +193,7 @@ public class CodeDocActor extends IIActorRef<Object> {
             List<String> chunks = chunk(Files.readString(in), max);
             IIActorRef<?> list = system.getIIActor(listName);
             if (list == null) return new ActionResult(false, "chunkFile: list not found: " + listName);
-            for (String c : chunks) list.callByActionName("add", c);
+            for (String c : chunks) addToList(list, c);
             return new ActionResult(true, String.valueOf(chunks.size()));
         } catch (Exception e) {
             return new ActionResult(false, "chunkFile: " + e.getMessage());
@@ -175,7 +212,7 @@ public class CodeDocActor extends IIActorRef<Object> {
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < n; i++) {
                 if (i > 0) sb.append(sep);
-                sb.append(list.callByActionName("get", String.valueOf(i)).getResult());
+                sb.append(getFromList(list, i));
             }
             if (out.getParent() != null) Files.createDirectories(out.getParent());
             Files.writeString(out, sb.toString());
@@ -199,9 +236,9 @@ public class CodeDocActor extends IIActorRef<Object> {
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < n; i++) {
                 if (i > 0) sb.append(sep);
-                sb.append(list.callByActionName("get", String.valueOf(i)).getResult());
+                sb.append(getFromList(list, i));
             }
-            str.callByActionName("set", sb.toString());
+            setStr(str, sb.toString());
             return new ActionResult(true, String.valueOf(n));
         } catch (Exception e) {
             return new ActionResult(false, "joinListToStr: " + e.getMessage());
@@ -240,13 +277,16 @@ public class CodeDocActor extends IIActorRef<Object> {
                     .filter(f -> keepForType(type, base.relativize(f)))
                     .sorted()
                     .forEach(f -> {
+                        String c;
                         try {
                             if (Files.size(f) > 1_000_000) return;
-                            String c = Files.readString(f);
-                            if (c.length() > maxChars) c = c.substring(0, maxChars) + "\n…(truncated)…";
-                            list.callByActionName("add", "FILE: " + base.relativize(f) + "\n\n" + c);
-                            count[0]++;
-                        } catch (Exception ignore) { /* skip unreadable */ }
+                            c = Files.readString(f);
+                        } catch (Exception ignore) {
+                            return; // skip unreadable
+                        }
+                        if (c.length() > maxChars) c = c.substring(0, maxChars) + "\n…(truncated)…";
+                        addToList(list, "FILE: " + base.relativize(f) + "\n\n" + c);
+                        count[0]++;
                     });
             }
             return new ActionResult(true, String.valueOf(count[0]));
@@ -269,12 +309,16 @@ public class CodeDocActor extends IIActorRef<Object> {
                     .filter(f -> !isSkipped(base, f))
                     .sorted()
                     .forEach(f -> {
+                        boolean described;
                         try {
-                            if (!hasFrontmatterDescription(Files.readString(f))) {
-                                list.callByActionName("add", f.toString());
-                                count[0]++;
-                            }
-                        } catch (Exception ignore) { /* skip unreadable */ }
+                            described = hasFrontmatterDescription(Files.readString(f));
+                        } catch (Exception ignore) {
+                            return; // skip unreadable
+                        }
+                        if (!described) {
+                            addToList(list, f.toString());
+                            count[0]++;
+                        }
                     });
             }
             return new ActionResult(true, String.valueOf(count[0]));
@@ -290,7 +334,7 @@ public class CodeDocActor extends IIActorRef<Object> {
             String strName = args.strActor();
             IIActorRef<?> str = system.getIIActor(strName);
             if (str == null) return new ActionResult(false, "readFileToStr: str actor not found: " + strName);
-            str.callByActionName("set", Files.readString(in));
+            setStr(str, Files.readString(in));
             return new ActionResult(true, in.toString());
         } catch (Exception e) {
             return new ActionResult(false, "readFileToStr: " + e.getMessage());
