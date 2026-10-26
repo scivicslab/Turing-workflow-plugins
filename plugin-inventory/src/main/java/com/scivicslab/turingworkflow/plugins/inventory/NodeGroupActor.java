@@ -307,6 +307,10 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      * <p>Returns an action result that is a success if the child actors were created, or a failure message if the
      * group could not be found or processed.</p>
      *
+     * <p>Hosts whose node actor this group already has are skipped, so a second call for the same group succeeds
+     * and creates nothing. If an actor that is not a child of this group holds a node actor's name, the result is
+     * a failure naming it.</p>
+     *
      * @param args a {@link GroupArgs} object containing the name of the group in the inventory.
      * @return an ActionResult indicating whether the child actors were successfully created and a message describing
      * the outcome.
@@ -314,7 +318,12 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     @Action(value = "createNodeActors", argsType = GroupArgs.class)
     public ActionResult createNodeActorsAction(GroupArgs args) {
         String groupName = args.group();
-        createNodeActors(groupName);
+        try {
+            createNodeActors(groupName);
+        } catch (IllegalStateException e) {
+            logger.log(Level.SEVERE, "createNodeActors failed for group " + groupName, e);
+            return new ActionResult(false, "Error: " + e.getMessage());
+        }
         return new ActionResult(true, String.format("Created node actors for group '%s'", groupName));
     }
 
@@ -526,9 +535,18 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      * <p>If the group name is "local", it creates a single child actor representing the local machine instead of using
      * the inventory. If the group name does not exist in the inventory, no child actors are created.</p>
      *
+     * <p>Each node is registered once in the actor system, as a {@code NodeActor} named {@code node-<host>}
+     * ({@code <host>} is the {@code ansible_host} value, or the inventory host name when it has none), and is
+     * added to this actor's children. A node whose actor this group already has as a child is skipped and kept
+     * as it is, so calling this again for the same group, or for a group sharing hosts with an earlier one,
+     * creates only the missing node actors. A name held by an actor that is not a child of this group is not
+     * taken over: the call throws {@link IllegalStateException}.</p>
+     *
      * @param groupName the name of the group to expand, or "local" for the localhost node
+     * @return the number of node actors created by this call
+     * @throws IllegalStateException when an actor outside this group already holds a node actor's name
      */
-    private void createNodeActors(String groupName) {
+    private int createNodeActors(String groupName) {
         // Direct execution (no tell().get() to avoid deadlock when called from workflow)
         IIActorSystem sys = (IIActorSystem) this.system();
         NodeGroupInterpreter nodeGroupInterpreter = this.object;
@@ -543,8 +561,19 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
         }
 
         // Create child actors for each node
+        int created = 0;
         for (Node node : nodes) {
             String nodeName = "node-" + node.getHostname();
+
+            if (sys.hasActor(nodeName)) {
+                if (this.getNamesOfChildren().contains(nodeName)) {
+                    logger.fine(String.format("Node actor already exists, kept as is: %s", nodeName));
+                    continue;
+                }
+                // Checked before addChildActor, which would record the name as a child before refusing it.
+                throw new IllegalStateException(String.format(
+                    "an actor that is not a child of %s is already registered as %s", this.getName(), nodeName));
+            }
 
             // Wrap Node in NodeInterpreter to add workflow capabilities
             NodeInterpreter nodeInterpreter = new NodeInterpreter(node, sys);
@@ -564,17 +593,16 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
                 nodeInterpreter.setAccumulator(nodeGroupInterpreter.getAccumulator());
             }
 
-            // Create child actor using ActorRef.createChild()
-            // This establishes parent-child relationship
-            this.createChild(nodeName, nodeInterpreter);
-
-            // Also wrap in NodeActor and add to system for workflow execution
+            // Register one NodeActor under the name, as a child of this group.
             NodeActor nodeActor = new NodeActor(nodeName, nodeInterpreter, sys);
-            sys.addIIActor(nodeActor);
+            this.addChildActor(nodeActor);
+            created++;
 
             logger.fine(String.format("Created child node actor: %s", nodeName));
         }
-        logger.info(String.format("Created %d node actors for group '%s'", nodes.size(), groupName));
+        logger.info(String.format("Created %d node actors for group '%s' (%d already existed)",
+            created, groupName, nodes.size() - created));
+        return created;
     }
 
     /**
