@@ -151,3 +151,20 @@ Vision Statement の分からない所は空欄、新しいプラグインは1�
   - `*E2eRunner` の javadoc の `mvn exec:java` のコマンドは `-Dexec.classpathScope=test` が無く、クラスが見つからずに失敗する
   - `VaultActorE2eTest.get_missingPath_returnsFailure` はマウントの設定にかかわらず `secret/` を読み、失敗の種類を区別しない
   - `PomXmlPlugin_260921_oo01` の表はエンジンへの依存を `compile` とするが、親 pom は `provided`
+
+## 2026-10-26: 文書の書き直しで見つけた不具合を直す
+1つずつ、落ちるテストを先に書いて（赤）、直して（緑）、`rm -rf target && mvn install`（-DskipTests なし）。commit はローカルだけ。
+- [x] エンジン（Turing-workflow）: `Interpreter.apply` が子へ引数を JSON 配列で渡す／`DescribeCLI.loadYamlWithOverlay` が namePrefix・nameSuffix のあるオーバーレイを当てない
+- [x] plugin-inventory: `createNodeActors` が同じ名前を2回登録する／`apply`・`executeCommandOnAllNodes` が名前つきの引数を渡せない
+- [x] 親 pom: `e2e` のタグを既定で除く（E2E は明示したときだけ）／`*E2eRunner` の javadoc のコマンドに `-Dexec.classpathScope=test`
+- [x] plugin-chatui3: 終了時の `ChatUi3WatchdogActor.close` の NPE で `run` が終わらない
+- [x] plugin-codedoc: リストのアクターに文字列をそのまま渡す
+- [x] plugin-rst-frame: `loadJar` で読み込んだ H2 を使えない（`No suitable driver found`）
+- [x] plugin-llm: `[` で始まるプロンプトを配列として読む／javadoc の「MCP」／README の `setOpenAiUrl` の例
+- [x] plugin-semantic-scholar: `resolveId` の DOI の URL の分岐が通らない
+- [x] 例の YAML: plugin-kana-kanji の `kana-kanji-pairs.yaml`、plugin-llm の `llm-hello.yaml`
+- [x] 文書: Under the Hood の不具合の記述を外し、動くようになったチュートリアルを実行し直す
+- 結果: エンジン 950b305・02e741b・1aae8e2、プラグイン bde750b・9ceaf6e・db6a2cb・f154dd6・56488c4・ca55c2e・980a1cb・f2534e1・30b2891・9b2b52f・36bacd2、
+  文書 doc_SCIVICS001 882883c。プラグイン全体の mvn install（e2e の除外を既定にした後、-DexcludedGroups なし）で 339 件成功、E2E は実行されない
+- 残り（未修正）: rst-frame は `loadJar` で H2 を一緒に読み込む必要がある（無いと `NoClassDefFoundError` で `run` が終わらない）、
+  `VllmClient`（kana-kanji）が応答の `\uXXXX` を解かない、`run -l WARNING` に `out` のアクターの警告が出る

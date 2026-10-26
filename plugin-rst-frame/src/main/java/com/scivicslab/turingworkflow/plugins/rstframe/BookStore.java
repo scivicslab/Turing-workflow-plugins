@@ -76,8 +76,9 @@ public final class BookStore implements AutoCloseable {
      * Opens an H2 connection through the H2 driver class this class's own class loader sees.
      *
      * <p>{@code DriverManager} hands a connection only to drivers visible to the caller's class loader, so it finds
-     * no driver when H2 was loaded by another class loader ({@code loader.loadJar} or {@code plugins.yaml}).
-     * Calling the driver directly works there and on a plain classpath (the {@code BookImport} CLI).</p>
+     * no driver when H2 was loaded by another class loader. Calling the driver directly works when the workflow loads
+     * H2 with {@code loader.loadJar} besides this plugin, and on a plain classpath (the {@code BookImport} CLI); listing
+     * H2 in {@code plugins.yaml} alone does not make it visible to this plugin.</p>
      *
      * @param url an H2 JDBC URL
      * @return the open connection, as user {@code sa} with an empty password
