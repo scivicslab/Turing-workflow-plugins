@@ -6,18 +6,21 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * Integration test for {@link ChatUi3Actor}, run against a live quarkus-chat-ui3 process
- * and a live vLLM server. Implemented as a main() program (not JUnit) because the steps
- * form a stateful, order-dependent flow.
+ * Verifies the integration between the {@link ChatUi3Actor} and a running quarkus-chat-ui3 process and vLLM server by
+ * executing a sequence of dependent actions.
  *
- * <p>Specification: PluginChatUi3IntegrationTest_260617_oo01 (doc_SCIVICS003).</p>
- *
- * <p>Preconditions:
+ * <p>The test performs the following steps:
  * <ul>
- *   <li>quarkus-chat-ui3 running on localhost:18090</li>
- *   <li>vLLM running on the node pointed to by chatui3.vllm-base-url</li>
+ * <li>Calls {@code getModels} and verifies the returned list of models is not empty.</li>
+ * <li>Calls {@code clearHistory} to reset the session.</li>
+ * <li>Calls {@code chat} with a prompt and verifies the response is not empty.</li>
+ * <li>Calls {@code getTrace} and verifies the trace contains at least one turn with a positive prompt token
+ * count.</li>
+ * <li>Calls {@code updateConfig} to set the temperature to 0.2.</li>
+ * <li>Calls {@code getConfig} and verifies the temperature was updated correctly.</li>
  * </ul>
- * Exits 0 on success, non-zero (via thrown exception) on any failure.</p>
+ *
+ * <p>The test exits with a non-zero status if any action fails or if any returned data violates the expected state.
  */
 public class ChatUi3IntegrationTest {
 

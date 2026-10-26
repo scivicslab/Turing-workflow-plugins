@@ -10,20 +10,31 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * The actions every {@link QuestionWork} has: {@code question} and {@code answer}. A workflow keeps what
- * {@code question} answers and branches on its {@code done}:
+ * Provides the actions for a workflow to interact with a writing procedure by posing questions and receiving replies.
+ *
+ * <ul>
+ * <li>{@code question} returns a JSON object {@code {"question": "...", "done": "true"}} containing the next question
+ * to be addressed, or {@code {"question": null, "done": "false"}} if no more questions remain.</li>
+ * <li>{@code answer} takes a JSON object with a {@code reply} key and submits the text to the work.</li>
+ * </ul>
+ *
+ * <p>A workflow uses the result of {@code question} to branch based on the {@code done} field and to retrieve the
+ * question text via {@code ${result.question}.</p>
  *
  * <pre>{@code
- * - actor: tree
- *   method: question
  * - actor: this
+ *   method: question
+ *   arguments: {}
+ * - actor: vars
  *   method: putJson
  *   arguments: {path: q, value: "jexl:result"}
- * # then: jexl:state.getString("q.done") == "true", and the question is state.getString("q.question")
- * - actor: tree
+ * # then: jexl:state.getString("q.done") == "true"
+ * - actor: this
  *   method: answer
- *   arguments: {reply: 'jexl:state.getString("reply")'}
+ *   arguments: {reply: 'jexl:state.getString("q.reply")'}
  * }</pre>
+ *
+ * <p>An action fails if the underlying work cannot provide a question or if the answer cannot be processed.</p>
  */
 public abstract class QuestionWorkIIAR<T extends QuestionWork> extends IIActorRef<T> {
 
@@ -31,13 +42,36 @@ public abstract class QuestionWorkIIAR<T extends QuestionWork> extends IIActorRe
         super(actorName, work, system);
     }
 
-    /** The next question. No args; the message is {@code {"question", "done"}}. */
+    /**
+     * Returns a JSON object containing the next question to be addressed.
+     *
+     * The result is a JSON object with the keys {@code question} and {@code done}. If the work is finished, {@code
+     * done} is {@code "true"} and the {@code question} key is absent.
+     *
+     * An action result is a failure if the underlying work cannot provide a question.
+     *
+     * <pre>{@code
+     * - actor: this
+     *   method: question
+     * - actor: tree
+     *   method: putJson
+     *   arguments: {path: q, value: "jexl:result"}
+     * # then: jexl:state.getString("q.done") == "true", and the question is state.getString("q.question")
+     * }</pre>
+     */
     @Action("question")
     public ActionResult question(String args) {
         return perform("could not take the next question", w -> w.question());
     }
 
-    /** Hands the writer's reply to the work. Args: {@code {reply}}. */
+    /**
+     * Submits the writer's response to the work.
+     *
+     * <p>The argument is a JSON object containing the key {@code reply} with the text of the response. The action
+     * succeeds if the response is accepted, and returns a failure result if the answer could not be processed.
+     *
+     * @param args a JSON object containing the key {@code reply} whose value is the response text
+     */
     @Action("answer")
     public ActionResult answer(String args) {
         JSONObject a = new JSONObject(args);
@@ -45,7 +79,16 @@ public abstract class QuestionWorkIIAR<T extends QuestionWork> extends IIActorRe
         return perform("could not take the answer", w -> w.answer(reply));
     }
 
-    /** One call on the work, through this actor's mailbox; an exception becomes a failure naming its reason. */
+    /**
+     * Executes a single step of the work through this actor's mailbox, returning a success result containing the
+     * step's output or a failure result containing the provided failure message.
+     *
+     * @param failure the message to include in the result if the step or the call fails
+     * @param step a function that performs the work on the underlying object and returns a string result
+     * @return a success result if the step completes successfully, with the message holding the step's return value; a
+     * failure result if the step throws an exception, the thread is interrupted, or the call fails, with the message
+     * holding the failure reason
+     */
     protected ActionResult perform(String failure, Step<T> step) {
         try {
             return new ActionResult(true, ask(w -> {
@@ -65,12 +108,18 @@ public abstract class QuestionWorkIIAR<T extends QuestionWork> extends IIActorRe
         }
     }
 
-    /** @return the args as an object; empty for none */
+    /**
+     * Returns a {@link JSONObject} containing the parsed arguments from the given string.
+     *
+     * <p>If the string is null, blank, or does not start with {@code {}, an empty {@link JSONObject} is returned.
+     *
+     * @param args the JSON string to parse
+     */
     protected static JSONObject args(String args) {
         return args == null || args.isBlank() || !args.strip().startsWith("{") ? new JSONObject() : new JSONObject(args);
     }
 
-    /** @return the value, or {@code ""} when absent or null */
+    /** Returns the value associated with the key, or an empty string if the key is absent or the value is null. */
     protected static String str(JSONObject a, String key) {
         return a.isNull(key) ? "" : a.optString(key, "");
     }
@@ -80,7 +129,12 @@ public abstract class QuestionWorkIIAR<T extends QuestionWork> extends IIActorRe
         return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
     }
 
-    /** One call on the work. */
+    /**
+     * Performs a single operation on the work.
+     *
+     * @param <T> the type of the work being operated on
+     * @return a string representing the result of the operation
+     */
     public interface Step<T> {
         String on(T work) throws Exception;
     }

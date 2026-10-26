@@ -27,10 +27,16 @@ import java.sql.Connection;
 import java.util.logging.Logger;
 
 /**
- * Actor wrapper for {@link GpuSummarySection}.
+ * Generates a text section for a report that summarizes GPU information, such as model names, VRAM, and driver
+ * versions, extracted from system logs.
  *
- * <p>Exposes the POJO's methods as actions via {@code @Action} annotations.
- * Handles database connection and session ID retrieval from the system.</p>
+ * <ul><li><code>generate</code> returns an action result containing the formatted GPU summary
+ * text.</li><li><code>getTitle</code> returns an action result containing the section title.</li></ul>
+ *
+ * <p>This actor holds a database connection and a session ID retrieved from the {@code nodeGroup} actor to query the
+ * logs.</p>
+ *
+ * <p>One instance may serve one workflow at a time.</p>
  *
  * @author devteam@scivicslab.com
  * @since 2.16.0
@@ -40,10 +46,10 @@ public class GpuSummarySectionActor extends IIActorRef<GpuSummarySection> {
     private static final Logger logger = Logger.getLogger(GpuSummarySectionActor.class.getName());
 
     /**
-     * Constructs the actor with a new POJO instance.
+     * Creates a new actor that generates a text section summarizing GPU information extracted from logs.
      *
-     * @param actorName the actor name
-     * @param system the actor system
+     * @param actorName the name to assign to this actor
+     * @param system the actor system used to retrieve the session ID from the {@code nodeGroup} actor
      */
     public GpuSummarySectionActor(String actorName, IIActorSystem system) {
         super(actorName, new GpuSummarySection(), system);
@@ -51,7 +57,8 @@ public class GpuSummarySectionActor extends IIActorRef<GpuSummarySection> {
     }
 
     /**
-     * Initializes the POJO with database connection and session ID.
+     * Sets up the underlying {@link GpuSummarySection} by retrieving a database connection from the {@link
+     * DistributedLogStore} and a session ID from the {@code nodeGroup} actor.
      */
     private void initializeFromSystem() {
         // Get database connection from DistributedLogStore
@@ -73,7 +80,10 @@ public class GpuSummarySectionActor extends IIActorRef<GpuSummarySection> {
     }
 
     /**
-     * Retrieves session ID from nodeGroup actor.
+     * Returns the session ID from the {@code nodeGroup} actor.
+     *
+     * Returns the session ID as a long, or -1 if the {@code nodeGroup} actor is not found, the {@code actorSystem} is
+     * invalid, or the returned value is not a valid number.
      */
     private long getSessionIdFromNodeGroup() {
         if (actorSystem == null || !(actorSystem instanceof IIActorSystem)) {
@@ -98,12 +108,11 @@ public class GpuSummarySectionActor extends IIActorRef<GpuSummarySection> {
     }
 
     /**
-     * Generates the GPU summary section content.
+     * Returns an action result containing the GPU summary section content.
      *
-     * <p><strong>Expected args:</strong> unused (may be empty or null).</p>
+     * <p>The result is a success with the generated text as the message. The argument is unused.</p>
      *
      * @param args unused
-     * @return an {@link ActionResult} with the generated section content
      */
     @Action("generate")
     public ActionResult generate(String args) {
@@ -112,12 +121,12 @@ public class GpuSummarySectionActor extends IIActorRef<GpuSummarySection> {
     }
 
     /**
-     * Returns the section title.
+     * Returns the title of the GPU summary section.
      *
-     * <p><strong>Expected args:</strong> unused (may be empty or null).</p>
+     * <p>The result is a success containing the section title as a string, or an empty string if no title is set.</p>
      *
      * @param args unused
-     * @return an {@link ActionResult} with the title string (empty if no title)
+     * @return an action result containing the section title string
      */
     @Action("getTitle")
     public ActionResult getTitle(String args) {

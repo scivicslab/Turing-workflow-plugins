@@ -26,29 +26,28 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 /**
- * Deterministic actors for the code-understanding / document-generation workflows: scan a project,
- * split a document into chunks, and write a list of strings to a file. These are the "確実に既知問題を"
- * pieces — pure rules, no LLM — that surround the {@code parallel-map} + {@code llm} stages.
+ * A set of deterministic actors for code-understanding and document-generation workflows that scan projects, split
+ * documents, and persist text to files.
  *
- * <p>To avoid passing large multi-line content through workflow arguments (which breaks JSON/escaping),
- * the actors read and write {@code list:} actors and files <b>by name</b>: they reach into the
- * {@link IIActorSystem} themselves rather than receiving the content as a string argument.</p>
- *
- * <h2>Actions</h2>
  * <ul>
- *   <li>{@code chunkFile} — {@code [inFile, list:out, maxChars?]}: split a document into Markdown-aware
- *       chunks and append each to the named list. Result = chunk count.</li>
- *   <li>{@code writeFileFromList} — {@code [outFile, list:src, separator?]}: join the list's items and
- *       write them to a file. Result = the output path.</li>
- *   <li>{@code scanProject} — {@code [projectDir, list:out, maxFileChars?]}: enumerate source files
- *       (skipping build/VCS/binary noise) and append one {@code FILE: path\n\n<content>} payload per
- *       file to the named list. Result = file count.</li>
- *   <li>{@code joinListToStr} — {@code [list:src, str:dest, separator?]}: join the list's items and
- *       store the result in the named {@code str:} actor (the reduce-input bridge: feed many summaries
- *       into one {@code llm} call without passing huge content through arguments). Result = item count.</li>
- *   <li>{@code writeStrToFile} — {@code [outFile, str:src]}: write the named {@code str:} actor's value
- *       to a file (used to persist a synthesized overview held in a {@code str:} actor). Result = path.</li>
+ * <li>{@code chunkFile} — splits a Markdown file into chunks of up to {@code maxChars} characters and appends them to
+ * a named list actor. Returns the number of chunks created.</li>
+ * <li>{@code writeFileFromList} — joins the items in a named list actor using a separator and writes the result to a
+ * file. Returns the output path.</li>
+ * <li>{@code scanProject} — enumerates source files in a directory, skipping build and VCS noise, and appends each
+ * file's path and content to a named list actor. Returns the number of files found.</li>
+ * <li>{@code joinListToStr} — joins the items in a named list actor using a separator and stores the resulting string
+ * in a named string actor. Returns the number of items joined.</li>
+ * <li>{@code writeStrToFile} — writes the content of a named string actor to a file. Returns the output path.</li>
+ * <li>{@code listMarkdownNoDescription} — finds Markdown files in a directory that lack a frontmatter description and
+ * adds their paths to a named list actor. Returns the number of files found.</li>
+ * <li>{@code readFileToStr} — reads a file and stores its entire content in a named string actor. Returns the path of
+ * the file read.</li>
+ * <li>{@code setFrontmatterDescription} — inserts a description from a named string actor into the YAML frontmatter of
+ * a Markdown file. Returns a message indicating if the file was updated or skipped.</li>
  * </ul>
+ *
+ * <p>One instance may serve several workflows at once, as actions are executed one at a time per actor.</p>
  */
 public class CodeDocActor extends IIActorRef<Object> {
 
@@ -80,69 +79,70 @@ public class CodeDocActor extends IIActorRef<Object> {
     // ------------------------------------------------------------------
 
     /**
-     * Which file to split, where to put the pieces, and how large a piece may be.
+     * Arguments for splitting a file into Markdown-aware chunks.
      *
-     * @param file     path of the file to read
-     * @param listActor name of the list actor the pieces are added to
-     * @param maxChars  largest piece in characters; omit to use the default
+     * @param file the path of the file to read
+     * @param listActor the name of the list actor where the chunks are added
+     * @param maxChars the largest number of characters allowed in a single chunk; omit to use the default of 3,000
      */
     public record ChunkFileArgs(@NotNull String file, @NotNull String listActor, Integer maxChars) {}
 
     /**
-     * Which file to write, which list supplies the pieces, and what separates them.
+     * The path of the file to write, the name of the list actor providing the items, and the text to place between
+     * them.
      *
-     * @param file      path of the file to write
+     * @param file path of the file to write
      * @param listActor name of the list actor the pieces come from
      * @param separator text placed between pieces; omit to use a blank line
      */
     public record WriteFileFromListArgs(@NotNull String file, @NotNull String listActor, String separator) {}
 
     /**
-     * Which list supplies the pieces, which text slot receives them, and what separates them.
+     * Arguments for joining a list of items into a single string.
      *
      * @param listActor name of the list actor the pieces come from
-     * @param strActor  name of the text actor the joined result is stored in
+     * @param strActor name of the text actor the joined result is stored in
      * @param separator text placed between pieces; omit to use a blank line
      */
     public record JoinListToStrArgs(@NotNull String listActor, @NotNull String strActor, String separator) {}
 
     /**
-     * Which file to read and which text slot receives it.
+     * The path of the file to read and the name of the text actor where the contents are stored.
      *
-     * @param file     path of the file to read
-     * @param strActor name of the text actor the contents are stored in
+     * @param file the path of the file to read
+     * @param strActor the name of the text actor where the contents are stored
      */
     public record ReadFileToStrArgs(@NotNull String file, @NotNull String strActor) {}
 
     /**
-     * Which file's frontmatter to set and which text slot holds the description.
+     * Arguments for inserting a description into a Markdown file's YAML frontmatter.
      *
-     * @param file     path of the Markdown file to edit
+     * @param file path of the Markdown file to edit
      * @param strActor name of the text actor holding the description
      */
     public record SetFrontmatterDescriptionArgs(@NotNull String file, @NotNull String strActor) {}
 
     /**
-     * Which directory to search and where to put the paths found.
+     * The directory to search and the name of the list actor where found paths are added.
      *
-     * @param directory directory to search under
-     * @param listActor name of the list actor the paths are added to
+     * @param directory the directory to search under
+     * @param listActor the name of the list actor the paths are added to
      */
     public record ListMarkdownNoDescriptionArgs(@NotNull String directory, @NotNull String listActor) {}
 
     /**
-     * Which project to scan, where to put the findings, and how much of each file to read.
+     * Arguments for scanning a project directory and populating a list with file contents.
      *
-     * @param directory project root to scan
-     * @param listActor name of the list actor the findings are added to
-     * @param maxChars  how many characters of each file to read; omit to use the default
+     * @param directory the project root directory to scan
+     * @param listActor the name of the list actor where findings are appended
+     * @param maxChars the maximum number of characters to read from each file; omit to use the default
      */
     public record ScanProjectArgs(@NotNull String directory, @NotNull String listActor, Integer maxChars) {}
 
     /**
-     * Which text slot supplies the contents and which file receives them.
+     * The path of the file to write and the name of the text actor supplying the contents.
      *
-     * @param file     path of the file to write
+     * @param file path of the file to write
      * @param strActor name of the text actor supplying the contents
      */
     public record WriteStrToFileArgs(@NotNull String file, @NotNull String strActor) {}
@@ -333,7 +333,13 @@ public class CodeDocActor extends IIActorRef<Object> {
 
     // ── deterministic helpers ────────────────────────────────────────────────
 
-    /** True if the Markdown source has a frontmatter {@code description:} with a non-empty value. */
+    /**
+     * Returns true if the Markdown content contains a YAML frontmatter block with a non-empty {@code description:}
+     * field.
+     *
+     * @param src the Markdown content to check
+     * @return true if a non-empty description is found within the frontmatter, false otherwise
+     */
     static boolean hasFrontmatterDescription(String src) {
         if (src == null || !src.startsWith("---")) return false;
         int end = src.indexOf("\n---", 3);
@@ -370,8 +376,16 @@ public class CodeDocActor extends IIActorRef<Object> {
         return dot >= 0 && SKIP_EXT.contains(name.substring(dot + 1).toLowerCase());
     }
 
-    /** Splits Markdown into chunks of up to {@code maxChars}, breaking only on blank-line block boundaries
-     *  outside fenced code blocks, so headings/paragraphs/code blocks stay intact. */
+    /**
+     * Returns a list of strings that are segments of the input text, where each segment is at most {@code maxChars}
+     * characters long.
+     *
+     * <p>The segments are formed by grouping blocks of text separated by blank lines, ensuring that no single segment
+     * exceeds the character limit. Breaks occur at blank lines that are not contained within fenced code blocks.</p>
+     *
+     * @param text the Markdown content to split
+     * @param maxChars the maximum number of characters allowed in a single chunk
+     */
     static List<String> chunk(String text, int maxChars) {
         List<String> blocks = new ArrayList<>();
         StringBuilder cur = new StringBuilder();

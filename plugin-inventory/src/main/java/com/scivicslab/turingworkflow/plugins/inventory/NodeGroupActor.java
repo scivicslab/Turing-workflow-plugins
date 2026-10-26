@@ -47,74 +47,58 @@ import com.scivicslab.turingworkflow.plugins.ssh.NodeInterpreter;
 import com.scivicslab.turingworkflow.plugins.ssh.NodeActor;
 
 /**
- * Interpreter-interfaced actor reference for {@link NodeGroupInterpreter} instances.
+ * An actor reference for {@link NodeGroupInterpreter} that orchestrates groups of infrastructure nodes and executes
+ * workflows across them.
  *
- * <p>This class provides a concrete implementation of {@link IIActorRef}
- * specifically for {@link NodeGroupInterpreter} objects. It manages groups of infrastructure
- * nodes and can apply actions to all nodes in a group using wildcard patterns.</p>
- *
- * <p>NodeGroupInterpreter extends Interpreter, so this class can execute main workflows
- * that orchestrate multiple nodes.</p>
- *
- * <p><strong>Supported actions:</strong></p>
- * <p><em>Workflow actions (from Interpreter):</em></p>
+ * <p>The actor offers the following actions:
  * <ul>
- *   <li>{@code runWorkflow} - Loads and runs a workflow file</li>
- *   <li>{@code readYaml} - Reads a YAML workflow definition</li>
- *   <li>{@code runUntilEnd} - Executes the workflow until completion</li>
- * </ul>
- * <p><em>NodeGroup actions:</em></p>
- * <ul>
- *   <li>{@code hasInventory} - Returns true if inventory is loaded (for conditional branching)</li>
- *   <li>{@code createNodeActors} - Creates child actors for all nodes in a specified group</li>
- *   <li>{@code apply} - Applies an action to child actors matching a wildcard pattern</li>
- *   <li>{@code hasAccumulator} - Returns true if accumulator exists (for idempotent workflows)</li>
- *   <li>{@code createAccumulator} - Creates an accumulator for result collection</li>
- *   <li>{@code getAccumulatorSummary} - Gets the collected results</li>
- *   <li>{@code getSessionId} - Gets the current session ID for log queries</li>
+ * <li>{@code createNodeActors} creates child actors for each host in a specified inventory group.</li>
+ * <li>{@code apply} runs a specific action on all child actors matching a wildcard pattern.</li>
+ * <li>{@code executeCommandOnAllNodes} runs a shell command on every child node.</li>
+ * <li>{@code runWorkflow} loads and executes a workflow file on this node group.</li>
+ * <li>{@code runUntilEnd} executes the current workflow until it reaches the "end" state.</li>
+ * <li>{@code hasInventory} returns whether an inventory is currently loaded.</li>
+ * <li>{@code hasAccumulator} returns whether an output multiplexer is registered.</li>
+ * <li>{@code getAccumulatorSummary} returns the collected results from the output multiplexer.</li>
+ * <li>{@code getSessionId} returns the current session ID.</li>
+ * <li>{@code printJson} and {@code printYaml} output the current state as formatted JSON or YAML.</li>
  * </ul>
  *
- * <p><strong>Node Actor Hierarchy:</strong></p>
- * <p>When {@code createNodeActors} is called, it creates a parent-child relationship:</p>
- * <pre>
- * NodeGroup (parent)
- *   +- node-web-01 (child NodeActor)
- *   +- node-web-02 (child NodeActor)
- *   +- node-db-01 (child NodeActor)
- * </pre>
+ * <p>When {@code createNodeActors} is called, it establishes a hierarchy where this actor is the parent and each host
+ * becomes a child actor named {@code node-<hostname>}.
  *
- * <p><strong>Example YAML Workflow:</strong></p>
+ * <p>One instance may serve several workflows at once, as child actors are created for each node.
+ *
+ * <p>Example workflow step:
  * <pre>{@code
- * name: setup-nodegroup
- * steps:
- *   # Step 1: Create node actors
- *   - states: [0, 1]
- *     actions:
- *       - actor: nodeGroup
- *         method: createNodeActors
- *         arguments: ["web-servers"]
- *
- *   # Step 2: Run workflow on all nodes (load and execute in one step)
- *   - states: [1, end]
- *     actions:
- *       - actor: nodeGroup
- *         method: apply
- *         arguments: ['{"actor": "node-*", "method": "runWorkflow", "arguments": ["deploy.yaml"]}']
+ * - states: [0, 1]
+ *   actions:
+ *     - actor: nodeGroup
+ *       method: createNodeActors
+ *       arguments: ["web-servers"]
+ * - states: [1, end]
+ *   actions:
+ *     - actor: nodeGroup
+ *       method: apply
+ *       arguments: ['{"actor": "node-*", "method": "runWorkflow", "arguments": ["deploy.yaml"]}']
  * }</pre>
+ *
+ * <p>If an action fails, the result is not a success and the message contains the error details. If {@code apply} is
+ * used and some nodes fail, the result is not a success and the message lists the specific failures.
  *
  * @author devteam@scivicslab.com
  * @since 1.0
  */
 public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
 
-    /** Logger instance named after the actor for contextual log output. */
+    /** A logger used to record contextual information about the actor's operations. */
     Logger logger = null;
 
-    /** Current workflow file path being executed. */
+    /** Holds the file system path of the workflow currently being executed. */
     private String currentWorkflowPath = null;
 
     /**
-     * Constructs a new NodeGroupActor with the specified actor name and nodeGroupInterpreter object.
+     * Initializes a new actor reference for a {@link NodeGroupInterpreter} with the given name.
      *
      * @param actorName the name of this actor
      * @param object the {@link NodeGroupInterpreter} instance managed by this actor reference
@@ -124,14 +108,7 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
         logger = Logger.getLogger(actorName);
     }
 
-    /**
-     * Constructs a new NodeGroupActor with the specified actor name, nodeGroupInterpreter object,
-     * and actor system.
-     *
-     * @param actorName the name of this actor
-     * @param object the {@link NodeGroupInterpreter} instance managed by this actor reference
-     * @param system the actor system managing this actor
-     */
+    /** Initializes a new {@code NodeGroupActor} that links a {@link NodeGroupInterpreter} to an actor system. */
     public NodeGroupActor(String actorName, NodeGroupInterpreter object, IIActorSystem system) {
         super(actorName, object, system);
         logger = Logger.getLogger(actorName);
@@ -151,21 +128,17 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      * @return ActionResult indicating success or failure
      */
     /**
-     * A path in the file system.
+     * Holds a file system path used to locate a workflow definition or a JSON state file.
      *
-     * @param path the path to read
+     * @param path the path to the file on the file system
      */
     public record PathArgs(@NotNull String path) {}
 
-    /**
-     * A piece of text.
-     *
-     * @param text the text
-     */
+    /** Holds a non-null string of text. */
     public record TextArgs(@NotNull String text) {}
 
     /**
-     * Which group of nodes to act on.
+     * The name of the group in the inventory to act on.
      *
      * @param group the group's name in the inventory
      */
@@ -174,32 +147,31 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     /**
      * A shell command to run on every node of the group.
      *
-     * @param command the command line
+     * @param command the command line to execute
      */
     public record CommandArgs(@NotNull String command) {}
 
     /**
-     * How many times the interpreter may step before giving up.
+     * The maximum number of steps the interpreter may execute before stopping.
      *
-     * @param maxIterations the limit; omit for 10000
+     * @param maxIterations the limit of steps to execute; if null, the limit is 10000
      */
     public record MaxIterationsArgs(Integer maxIterations) {}
 
     /**
-     * Which workflow to run and how many steps it may take.
+     * Arguments for running a workflow.
      *
-     * @param workflowFile  path of the workflow file
-     * @param maxIterations the limit; omit for 10000
+     * @param workflowFile the path to the workflow YAML file
+     * @param maxIterations the maximum number of steps to execute; if null, defaults to 10000
      */
     public record RunWorkflowArgs(@NotNull String workflowFile, Integer maxIterations) {}
 
     /**
-     * Which child actors to call, which of their actions to call, and with what.
+     * Arguments for calling an action on multiple child actors matching a pattern.
      *
-     * @param actor     a name pattern the child actors are matched against;
-     *                  {@code *} stands for any run of characters
-     * @param method    the action called on every matched child actor
-     * @param arguments the arguments that action receives; none when absent
+     * @param actor a name pattern the child actors are matched against; {@code *} stands for any run of characters
+     * @param method the name of the action to call on every matched child actor
+     * @param arguments the list of arguments to pass to the action; empty if no arguments are provided
      */
     public record ApplyArgs(@NotNull String actor, @NotNull String method, List<Object> arguments) {}
 
@@ -214,10 +186,11 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Runs the workflow until completion.
+     * Executes the current workflow until it reaches the "end" state or hits the iteration limit.
      *
-     * @param args the argument string (optional max iterations)
-     * @return ActionResult indicating success or failure
+     * @param args the maximum number of steps to execute; if omitted, the limit is 10000
+     * @return an action result indicating success or failure, with the result message containing the outcome of the
+     * workflow execution
      */
     @Action(value = "runUntilEnd", argsType = MaxIterationsArgs.class)
     public ActionResult runUntilEnd(MaxIterationsArgs args) {
@@ -233,8 +206,17 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     /**
      * Loads and runs a workflow file.
      *
-     * @param args JSON array with workflow file path and optional max iterations
-     * @return ActionResult indicating success or failure
+     * <p>Returns an action result indicating whether the workflow execution succeeded or failed. If the workflow
+     * fails, the message holds the error details.</p>
+     *
+     * <p>An optional {@code maxIterations} argument limits the number of steps the workflow may take; if omitted, it
+     * defaults to 10000.</p>
+     *
+     * @param args a {@link RunWorkflowArgs} containing the path to the workflow file and an optional maximum number of
+     * iterations.
+     *
+     * @return an {@link ActionResult} where success indicates the workflow reached the "end" state, and failure
+     * indicates an error occurred during execution.
      */
     @Action(value = "runWorkflow", argsType = RunWorkflowArgs.class)
     public ActionResult runWorkflow(RunWorkflowArgs args) {
@@ -253,10 +235,13 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Reads a YAML workflow definition.
+     * Loads a YAML workflow definition from the file system, optionally using an overlay directory to override
+     * settings.
      *
-     * @param args JSON array with file path
-     * @return ActionResult indicating success or failure
+     * @param args a record containing the path to the YAML file
+     * @return an ActionResult that is a success if the file was loaded, with a message indicating if an overlay was
+     * used; otherwise, a failure with a message describing the error (such as file not found, IO error, or
+     * interruption)
      */
     @Action(value = "readYaml", argsType = PathArgs.class)
     public ActionResult readYaml(PathArgs args) {
@@ -304,10 +289,11 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     // ========================================================================
 
     /**
-     * Checks if inventory is loaded.
+     * Returns an action result indicating whether an inventory is currently loaded.
      *
      * @param args the argument string (not used)
-     * @return ActionResult with true if inventory exists
+     * @return an action result that is a success if an inventory is available, with a message "Inventory available";
+     * otherwise, it is a failure with the message "No inventory"
      */
     @Action("hasInventory")
     public ActionResult hasInventory(String args) {
@@ -316,10 +302,14 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Creates child actors for all nodes in a specified group.
+     * Creates a set of child actors for every host in the specified inventory group.
      *
-     * @param args JSON array with group name
-     * @return ActionResult indicating success or failure
+     * <p>Returns an action result that is a success if the child actors were created, or a failure message if the
+     * group could not be found or processed.</p>
+     *
+     * @param args a {@link GroupArgs} object containing the name of the group in the inventory.
+     * @return an ActionResult indicating whether the child actors were successfully created and a message describing
+     * the outcome.
      */
     @Action(value = "createNodeActors", argsType = GroupArgs.class)
     public ActionResult createNodeActorsAction(GroupArgs args) {
@@ -331,8 +321,26 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     /**
      * Applies an action to child actors matching a wildcard pattern.
      *
-     * @param args which child actors to call, and with what
-     * @return ActionResult indicating success or failure
+     * <p>Returns an action result that is a success if all matched child actors executed the action successfully, or a
+     * failure containing a message listing the specific nodes that failed and their error messages.</p>
+     *
+     * <p>The {@code actor} argument is a name pattern where {@code *} matches any sequence of characters; the {@code
+     * method} is the name of the action to call on each matched child; the {@code arguments} is a list of objects
+     * passed to that action.</p>
+     *
+     * <p>If no child actors match the pattern, the action returns a failure.</p>
+     *
+     * <pre>{@code
+     * - actor: nodeGroup
+     *   method: apply
+     *   arguments: ['{"actor": "node-*", "method": "runWorkflow", "arguments": ["deploy.yaml"]}']
+     * }</pre>
+     *
+     * @param args a record containing the actor pattern, the method name, and the arguments to pass to the matched
+     * actors.
+     *
+     * @return an action result indicating whether all matched actors succeeded, or a failure message detailing which
+     * nodes failed and why.
      */
     @Action(value = "apply", argsType = ApplyArgs.class)
     public ActionResult applyAction(ApplyArgs args) {
@@ -340,10 +348,11 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Executes a command on all child node actors.
+     * Executes a shell command on every child node actor.
      *
-     * @param args JSON array with command
-     * @return ActionResult with execution results
+     * @param args a {@link CommandArgs} containing the command string to run
+     * @return an ActionResult that is a success containing a list of the results from each node, or a failure if the
+     * operation was interrupted or an execution error occurred
      */
     @Action(value = "executeCommandOnAllNodes", argsType = CommandArgs.class)
     public ActionResult executeCommandOnAllNodesAction(CommandArgs args) {
@@ -359,10 +368,10 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Checks if accumulator exists.
+     * Returns a result indicating whether an output multiplexer is registered in the actor system.
      *
      * @param args the argument string (not used)
-     * @return ActionResult with true if accumulator exists
+     * @return an action result that is a success if the accumulator exists, and a failure if it does not
      */
     @Action("hasAccumulator")
     public ActionResult hasAccumulator(String args) {
@@ -371,10 +380,13 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Creates an accumulator (no-op, kept for backward compatibility).
+     * Returns a successful action result without performing any work.
+     *
+     * <p>This action is a no-op kept for backward compatibility; the output multiplexer is now automatically created
+     * by the CLI.</p>
      *
      * @param args the argument string (not used)
-     * @return ActionResult with success
+     * @return an action result that is always a success with the message "Accumulator managed by CLI"
      */
     @Action("createAccumulator")
     public ActionResult createAccumulator(String args) {
@@ -383,10 +395,11 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Gets the summary from the output multiplexer.
+     * Returns a summary of the results collected by the output multiplexer.
      *
      * @param args the argument string (not used)
-     * @return ActionResult with the summary
+     * @return an ActionResult where a success indicates the summary was retrieved, and the result holds the summary
+     * text; a failure indicates no output multiplexer is registered
      */
     @Action("getAccumulatorSummary")
     public ActionResult getAccumulatorSummaryAction(String args) {
@@ -394,10 +407,14 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Prints a summary of the current session's verification results.
+     * Returns a text summary of the verification results for the current session.
+     *
+     * <p>The result is a success if a log store is available and a session ID is set; otherwise, it returns a failure
+     * with a message indicating the log store is unavailable.</p>
      *
      * @param args the argument string (not used)
-     * @return ActionResult with the summary
+     * @return an action result where a success contains a formatted ASCII table of verification statuses (OK, WARN,
+     * ERROR) for various infrastructure components, or a failure message if the session cannot be queried
      */
     @Action("printSessionSummary")
     public ActionResult printSessionSummaryAction(String args) {
@@ -405,10 +422,10 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Gets the current session ID.
+     * Returns an action result containing the current session ID as a string.
      *
-     * @param args the argument string (not used)
-     * @return ActionResult with the session ID
+     * Returns a success result with the session ID as the message if a session is active; otherwise, returns a failure
+     * result with the message "No session ID set".
      */
     @Action("getSessionId")
     public ActionResult getSessionId(String args) {
@@ -420,10 +437,13 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Gets the current workflow file path.
+     * Returns an action result containing the path to the currently executing workflow file.
+     *
+     * If no workflow is currently being executed, returns a failure result with the message "No workflow path set".
      *
      * @param args the argument string (not used)
-     * @return ActionResult with the workflow path
+     * @return an action result that is a success and holds the file path as its message, or a failure if no path is
+     * set
      */
     @Action("getWorkflowPath")
     public ActionResult getWorkflowPath(String args) {
@@ -434,10 +454,10 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Does nothing, returns the argument as result.
+     * Returns the provided text as a successful action result.
      *
-     * @param args the argument string
-     * @return ActionResult with the argument
+     * @param args the text to be returned as the result message
+     * @return an ActionResult that is a success and whose message is the input text
      */
     @Action(value = "doNothing", argsType = TextArgs.class)
     public ActionResult doNothing(TextArgs args) {
@@ -449,10 +469,12 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     // ========================================================================
 
     /**
-     * Outputs JSON State at the given path in pretty JSON format via outputMultiplexer.
+     * Sends a pretty-printed JSON representation of the state at the given path to the output multiplexer and returns
+     * the formatted text.
      *
-     * @param args the path to output (from JSON array)
-     * @return ActionResult with the formatted JSON
+     * @param args the path to the state file to be converted to JSON
+     * @return an action result that is a success containing the formatted JSON string, or a failure if the file cannot
+     * be read or processed
      */
     @Action(value = "printJson", argsType = PathArgs.class)
     public ActionResult printJson(PathArgs args) {
@@ -463,10 +485,11 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Outputs JSON State at the given path in YAML format via outputMultiplexer.
+     * Outputs the YAML-formatted representation of the current state to the output multiplexer.
      *
-     * @param args the path to output (from JSON array)
-     * @return ActionResult with the formatted YAML
+     * @param args the path to the file to be read
+     * @return an action result that is a success if the YAML was successfully formatted and sent, and contains an
+     * error message if the file could not be read or an IO error occurred
      */
     @Action(value = "printYaml", argsType = PathArgs.class)
     public ActionResult printYaml(PathArgs args) {
@@ -476,11 +499,7 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
         return new ActionResult(true, formatted);
     }
 
-    /**
-     * Sends formatted output to the outputMultiplexer actor, line by line.
-     *
-     * @param formatted the formatted text to send
-     */
+    /** Sends the formatted text to the output multiplexer actor line by line. */
     private void sendToMultiplexer(String formatted) {
         ActorHelper.sendToMultiplexer((IIActorSystem) this.system(), this.getName(), formatted);
     }
@@ -498,14 +517,16 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Creates child node actors for all nodes in the specified group.
+     * Creates child actors for all nodes in the specified group.
      *
-     * <p>This method creates Node POJOs using the NodeGroup's inventory,
-     * wraps each in a NodeInterpreter (for workflow capabilities),
-     * then wraps in a NodeActor, and registers them as children of this actor
-     * using the parent-child relationship mechanism.</p>
+     * <p>When a workflow calls this action, it populates the actor hierarchy with new child actors, one for each host
+     * found in the inventory group. Each child is a {@code NodeActor} that manages its own SSH connection and workflow
+     * execution, inheriting the parent's base directory, overlay directory, and result accumulator.</p>
      *
-     * @param groupName the name of the group from the inventory file, or "local" for localhost
+     * <p>If the group name is "local", it creates a single child actor representing the local machine instead of using
+     * the inventory. If the group name does not exist in the inventory, no child actors are created.</p>
+     *
+     * @param groupName the name of the group to expand, or "local" for the localhost node
      */
     private void createNodeActors(String groupName) {
         // Direct execution (no tell().get() to avoid deadlock when called from workflow)
@@ -557,10 +578,23 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Applies an action to multiple actors matching a pattern in parallel.
+     * Applies an action to all child actors matching a wildcard pattern in parallel.
      *
-     * @param actionDef JSON string defining the action to apply
-     * @return ActionResult indicating success or failure
+     * Returns an action result that is a success if all matched child actors executed the method successfully, or a
+     * failure containing a list of specific errors for each failed actor. If no actors match the pattern, it returns a
+     * failure.
+     *
+     * <pre>{@code
+     * - actor: nodeGroup
+     *   method: apply
+     *   arguments: ['{"actor": "node-*", "method": "runWorkflow", "arguments": ["deploy.yaml"]}']
+     * }</pre>
+     *
+     * @param actorPattern a name pattern to match against child actors, where {@code *} acts as a wildcard
+     * @param method the name of the action to call on each matched actor
+     * @param arguments the list of arguments to pass to the action on each matched actor
+     * @return an action result that is a success if all matched actors succeeded, or a failure with a message listing
+     * the failures for each actor (e.g., "Applied to 5/6 actors. Failures: node-web1: Error: connection refused")
      */
     private ActionResult apply(String actorPattern, String method, List<Object> arguments) {
         try {
@@ -633,10 +667,14 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Finds child actors matching a wildcard pattern.
+     * Returns a list of child actors whose names match the provided wildcard pattern.
      *
-     * @param pattern the wildcard pattern (e.g., "node-*", "*-web", "*")
-     * @return list of matching child actors
+     * <p>The pattern is matched against the names of the actors created by {@code createNodeActors}. A single asterisk
+     * {@code *} matches any sequence of characters, such as {@code node-*} matching all node actors, or {@code *-web}
+     * matching any actor ending in {@code -web}. If no wildcard is present, the pattern must be an exact match for an
+     * actor name.</p>
+     *
+     * @param pattern the wildcard pattern to match against child actor names
      */
     private List<IIActorRef<?>> findMatchingChildActors(String pattern) {
         List<IIActorRef<?>> matched = new ArrayList<>();
@@ -678,12 +716,12 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Executes a single command on all child node actors.
+     * Executes a shell command on every child node actor in the group.
      *
-     * @param command the command to execute
-     * @return list of results from each node
-     * @throws ExecutionException if command execution fails
-     * @throws InterruptedException if the operation is interrupted
+     * Returns a list of strings where each entry is formatted as "node-hostname: result", containing the output or
+     * error message from each node's execution.
+     *
+     * @param command the shell command to run on each node
      */
     private List<String> executeCommandOnAllNodes(String command)
             throws ExecutionException, InterruptedException {
@@ -717,19 +755,19 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Extracts a single argument from JSON array format.
+     * Returns a string that is the first element of a JSON array.
      *
      * @param arg the JSON array argument string
-     * @return the extracted argument
      */
     private String extractSingleArgument(String arg) {
         return ActorHelper.extractCommandFromArgs(arg);
     }
 
     /**
-     * Gets the summary from the output multiplexer.
+     * Returns a summary of all collected results from the output multiplexer.
      *
-     * @return ActionResult with the summary or error
+     * @return an action result that is a success and holds the summary text, or a failure if no output multiplexer is
+     * registered
      */
     private ActionResult getAccumulatorSummary() {
         IIActorSystem sys = (IIActorSystem) this.system();
@@ -742,9 +780,13 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Prints a summary of the current session's verification results.
+     * Returns a text summary of the verification results for the current session, formatted as an ASCII table of
+     * statuses for various infrastructure components.
      *
-     * @return ActionResult with success status and summary text
+     * <p>The result is a success if the log store is available and a session ID is set; otherwise, it returns a
+     * failure with a message indicating the log store is unavailable. The summary includes counts of {@code [OK]},
+     * {@code [WARN]}, and {@code [ERROR]} markers found in logs labeled with {@code verify-} prefixes, along with any
+     * extracted metadata like document counts or cluster health.</p>
      */
     private ActionResult printSessionSummary() {
         DistributedLogStore logStore = this.object.getLogStore();
@@ -889,10 +931,11 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Formats the status string for a verification result.
+     * Returns a human-readable status string summarizing the counts of OK, WARN, and ERROR markers found in a
+     * verification result.
      *
-     * @param result the verification result to format
-     * @return a human-readable status string (e.g., "3 OK", "ERROR", "2 OK, 1 WARN")
+     * The result is a string such as "3 OK, 1 WARN", "ERROR", or "2 OK" depending on the counts in the provided
+     * result.
      */
     private String formatStatus(VerifyResult result) {
         if (result.errorCount > 0) {
@@ -915,8 +958,10 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Extracts special information (e.g., document count, cluster health) from log messages
-     * and stores it in the verification result's {@code extraInfo} field.
+     * Updates the verification result with contextual details found in the log message.
+     *
+     * If the message contains patterns for document counts or cluster health, the corresponding values are extracted
+     * and stored in the result's extra information field.
      *
      * @param message the log message to scan
      * @param result the verification result to update with extracted info
@@ -939,11 +984,11 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Counts occurrences of a substring in a string.
+     * Returns the number of non-overlapping occurrences of a substring within a text.
      *
-     * @param text the text to search in
+     * @param text the text to search through
      * @param sub the substring to count
-     * @return the number of non-overlapping occurrences of {@code sub} in {@code text}
+     * @return the number of times {@code sub} appears in {@code text}
      */
     private int countOccurrences(String text, String sub) {
         int count = 0;
@@ -956,22 +1001,22 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Helper class to hold aggregated verification results for a single verification step.
+     * Aggregates the counts of status markers and extracted metadata from log messages for a single verification step.
      *
-     * <p>Counts of OK, WARN, ERROR, and INFO occurrences found in log messages are
-     * accumulated here, along with any extra contextual information extracted from
-     * the log content (e.g., document counts or cluster health status).</p>
+     * <p>It holds the number of {@code [OK]}, {@code [WARN]}, {@code [ERROR]}, and {@code [INFO]} occurrences found in
+     * the logs, along with an optional string for additional context like document counts or cluster health
+     * status.</p>
      */
     private static class VerifyResult {
-        /** Number of {@code [OK]} markers found. */
+        /** The number of {@code [OK]} markers found in the log messages. */
         int okCount = 0;
-        /** Number of {@code [WARN]} markers found. */
+        /** The number of {@code [WARN]} markers found in the log messages. */
         int warnCount = 0;
         /** Number of {@code [ERROR]} markers found. */
         int errorCount = 0;
         /** Number of {@code [INFO]} markers found. */
         int infoCount = 0;
-        /** Optional extra information extracted from log messages (e.g., "(42 docs)"). */
+        /** Holds optional additional context extracted from log messages, such as "(42 docs)" or "(healthy)". */
         String extraInfo = null;
     }
 }

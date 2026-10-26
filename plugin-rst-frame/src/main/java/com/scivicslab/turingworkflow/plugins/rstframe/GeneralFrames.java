@@ -17,36 +17,50 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Generalized frames, built on the concrete frames of the sections ({@link FrameMaterial}, {@link FrameItems}), in three
- * steps.
- * <ol>
- * <li>{@link #identifyAll}: the concepts of all sections are recognized as concepts of the book. Concepts whose names
- * are the same once case and plural are set aside are candidates; the model is shown each one's items (the questions
- * its section answers about it) and says which are the same concept, judged by what is said of them. Each concept of the
- * book gets an id and the sections it appears in.</li>
- * <li>{@link #mergeAll}: the frame material of a concept found in several sections is put together, and the model is
- * asked the same question as for a concrete frame (which questions do these sentences answer, and which sentence answers
- * which), over the whole book.</li>
- * <li>{@link #generalizeAll}: the concepts are joined into abstract ones by the concept tree (the is-a relations steps 6
- * and 7 left, and the kinds the pattern step named). A concept with two kinds or more becomes a generalized concept; the
- * material of it and of its kinds is put together and asked the same question, the items being those an explanation of
- * any of its kinds answers.</li>
- * </ol>
+ * Builds a hierarchy of generalized concepts from the concrete frames of sections by identifying shared concepts,
+ * merging their material, and climbing the concept tree.
+ *
+ * <ul>
+ * <li>{@link #identifyAll} recognizes the concepts of the book by grouping appearances of the same name across
+ * different sections into single entities.</li>
+ * <li>{@link #mergeAll} combines the sentences from all sections where a shared concept appears and asks for the
+ * questions those sentences answer.</li>
+ * <li>{@link #generalizeAll} creates abstract concepts from those with two or more kinds, combining the material of
+ * the parent and its kinds to ask for their shared questions.</li>
+ * </ul>
+ *
+ * <p>One instance may serve several workflows or threads at once.</p>
  */
 public final class GeneralFrames {
 
     private GeneralFrames() {
     }
 
-    /** A sentence of a merged material: the section and concept it was gathered for, its rule, its text. */
+    /**
+     * Represents a single sentence of gathered material, linking its source section and rule to the concept it
+     * describes.
+     *
+     * @param number the section number where the sentence appears
+     * @param concept the name of the concept the sentence describes
+     * @param rule the name of the rule that produced the sentence
+     * @param text the actual text of the sentence
+     *
+     * Returns a string that is the section number and the rule name joined by a colon, such as {@code 1.2.5:s1}.
+     */
     public record Sentence(String number, String concept, String rule, String text) {
-        /** @return how the sentence is named in the stored items: the section and the rule */
+        /**
+         * Returns a string that identifies the sentence in the stored items by combining the section number and the
+         * rule name.
+         */
         public String ref() {
             return number + ":" + rule;
         }
     }
 
-    /** @return the name with case, a parenthesized remark and an English plural set aside */
+    /**
+     * Returns a string that is a lowercase version of the input name, stripped of quotes and parentheses, with extra
+     * whitespace removed and a single English plural form used for the final word.
+     */
     public static String norm(String name) {
         String s = name.toLowerCase(Locale.ROOT).replaceAll("\\(.*?\\)", " ").replaceAll("[`\"']", "").replaceAll("\\s+", " ").strip();
         int sp = s.lastIndexOf(' ');
@@ -62,7 +76,28 @@ public final class GeneralFrames {
 
     // ---- step 1: which concepts of the sections are one concept of the book
 
-    /** @return the question whether the appearances of one name are one concept */
+    /**
+     * Returns a prompt that asks a model to determine if several appearances of a name refer to the same concept.
+     *
+     * <p>The prompt lists each appearance of {@code name} found in the provided {@code occ} list, numbering them and
+     * showing the questions that the corresponding section answers about that appearance. The questions are retrieved
+     * from {@code itemsOf} using the section number and concept name as a key. The prompt instructs the model to group
+     * appearances that represent the same concept by writing "G: " followed by the group's numbers, and to treat any
+     * appearance not mentioned in a group as a group of one.
+     *
+     * <p>An example of the expected reply format is:
+     * <pre>{@code
+     * G: 1, 2, 4
+     * G: 3
+     * }</pre>
+     *
+     * @param name the name of the concept to be judged
+     * @param occ the list of occurrences of the name in the book, each containing a section number and a concept name
+     * @param itemsOf a map from a key of "section number + tab + concept name" to the list of questions that section
+     * answers about that concept
+     *
+     * @return a string containing the full prompt for the model
+     */
     public static String identifyQuestion(String name, List<BookStore.Occurrence> occ, Map<String, List<BookStore.FrameItem>> itemsOf) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < occ.size(); i++) {
@@ -83,7 +118,17 @@ public final class GeneralFrames {
                 + "group. For example\nG: 1, 2, 4\nG: 3\nWrite nothing else.";
     }
 
-    /** @return the groups the reply makes, by index into the appearances; an appearance the reply leaves out is a group alone */
+    /**
+     * Parses a text reply to group the indices of appearances into lists.
+     *
+     * <p>The result is a list of lists, where each inner list contains the 0-based indices of appearances that belong
+     * to the same group. Any appearance index from 0 to count - 1 that is not mentioned in the reply is returned as a
+     * separate list containing only that index.</p>
+     *
+     * @param reply the text containing groups of indices, typically formatted as "G: 1, 2, 4"
+     * @param count the total number of appearances available, used to identify unmentioned indices
+     * @return a list of lists of integers representing the groups of indices
+     */
     public static List<List<Integer>> readGroups(String reply, int count) {
         List<List<Integer>> out = new ArrayList<>();
         Set<Integer> seen = new LinkedHashSet<>();
@@ -101,7 +146,10 @@ public final class GeneralFrames {
         return out;
     }
 
-    /** The concrete-frame concepts of the book that stay on their lists and got rules, as appearances. */
+    /**
+     * Filters the book's concrete-frame concepts to find only those that are kept and have associated rules, returning
+     * them as a list of occurrences.
+     */
     private static List<BookStore.Occurrence> appearances(BookStore store, String book) throws Exception {
         List<BookStore.Occurrence> out = new ArrayList<>();
         for (Map.Entry<String, List<BookStore.FrameConcept>> e : store.frameConcepts(book).entrySet()) {
@@ -114,10 +162,17 @@ public final class GeneralFrames {
     }
 
     /**
-     * Recognizes the concepts of the book: one id per concept, with the sections it appears in. Replaces the concepts
-     * stored before.
+     * Identifies the concepts of the book by determining which section appearances refer to the same concept,
+     * replacing the existing concept entities in the store.
      *
-     * @return how many concepts the book has, and how many of them appear in more than one section, in one line
+     * Returns a string stating the total number of concepts found in the book, how many of them appear in more than
+     * one section, and how many attempts failed.
+     *
+     * <pre>{@code
+     * identifyAll(store, "core-java-14-vol1", List.of(), writer, 4, log)
+     * }</pre>
+     *
+     * If a name cannot be judged by the model, it remains a single concept.
      */
     public static String identifyAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
             Consumer<String> log) throws Exception {
@@ -172,7 +227,29 @@ public final class GeneralFrames {
 
     // ---- steps 2 and 3: the same question over material put together
 
-    /** @return the question asked of material put together from several sections, for {@code name} and, when given, its kinds */
+    /**
+     * Returns a prompt string that asks a model to name the questions answered by a set of sentences about a concept
+     * and its kinds.
+     *
+     * <p>The string contains a numbered list of sentences, each prefixed with its concept and section, followed by
+     * instructions to name the questions and then map each sentence to a question number. If {@code kinds} is empty,
+     * the prompt asks about {@code name} alone; otherwise, it asks about {@code name} and its specified kinds.
+     *
+     * <p>Example of the generated prompt format:
+     * <pre>{@code
+     * [r1] (Concept, Section) Sentence text...
+     * [r2] (Concept, Section) Sentence text...
+     *
+     * Q1: What does an identifier consist of?
+     * r1 | Q1
+     * r2 | none
+     * }</pre>
+     *
+     * @param name the name of the concept to be explained
+     * @param kinds a list of names of kinds of the concept; if empty, only the main concept is queried
+     * @param sentences the list of sentences gathered from the book to be used as material for the questions
+     * @return a formatted prompt string for a local LLM
+     */
     public static String itemsQuestion(String name, List<String> kinds, List<Sentence> sentences) {
         StringBuilder text = new StringBuilder();
         for (int i = 0; i < sentences.size(); i++) {
@@ -200,7 +277,21 @@ public final class GeneralFrames {
                 + "Write nothing else.";
     }
 
-    /** @return the items the reply names, each with the sentences that answer it, named by section and rule */
+    /**
+     * Parses a model's reply to extract the questions it defined and the sentences that answer them.
+     *
+     * Returns a list of {@link BookStore.FrameItem} where each item contains a question string and a list of
+     * references (section and rule) to the sentences that answer it.
+     *
+     * If the reply contains no valid question definitions or no sentences that map to the defined questions, an empty
+     * list is returned.
+     *
+     * @param reply the text from the model containing question definitions (e.g., "Q1: ...") and sentence mappings
+     * (e.g., "r1 | Q1").
+     *
+     * @param sentences the list of available sentences used to resolve the references in the reply.
+     * @return a list of items, each consisting of a question and the references to the sentences that answer it.
+     */
     public static List<BookStore.FrameItem> readItems(String reply, List<Sentence> sentences) {
         Map<String, String> questions = new LinkedHashMap<>();
         Matcher q = Pattern.compile("(?m)^\\W*Q(\\d+)\\s*[:.)]\\s*(.+)$").matcher(reply);
@@ -222,10 +313,15 @@ public final class GeneralFrames {
         return out;
     }
 
-    /** The longest text of the sentences put into one question, so it stays within what the model reads well. */
+    /**
+     * The maximum length in characters for the combined text of sentences used in a single question to the model.
+     */
     static final int MAX_TEXT = 16000;
 
-    /** @return the sentences gathered for the appearances, in section order, up to {@link #MAX_TEXT} */
+    /**
+     * Returns a list of sentences gathered from the occurrences of a concept, in section order, up to a total text
+     * length of {@link #MAX_TEXT} characters.
+     */
     private static List<Sentence> material(List<BookStore.Occurrence> occ, Map<String, BookStore.FrameConcept> conceptOf) {
         List<Sentence> out = new ArrayList<>();
         int len = 0;
@@ -249,7 +345,14 @@ public final class GeneralFrames {
         return out;
     }
 
-    /** One question to ask: an entity, the kinds it is asked with, and its sentences. */
+    /**
+     * Holds the data for a single request to the local LLM: a concept to be described, its kinds, and the sentences
+     * that form its material.
+     *
+     * @param entity the concept being described
+     * @param kinds the names of the kinds of the concept, if any
+     * @param sentences the sentences gathered from the book to be used as material
+     */
     private record Ask(BookStore.Entity entity, List<String> kinds, List<Sentence> sentences) {}
 
     private static String askEach(BookStore store, String book, List<Ask> asks, Function<String, String> writer, int parallel,
@@ -284,8 +387,27 @@ public final class GeneralFrames {
     }
 
     /**
-     * Puts together the material of each concept that appears in more than one section and asks its items over the
-     * whole book. A concept of one section keeps its section's items.
+     * Consolidates the material of concepts appearing in multiple sections and asks for their items across the whole
+     * book.
+     *
+     * Returns a string stating how many concepts were processed, how many items were found, and how many failed.
+     *
+     * If a concept appears in only one section, it is skipped and its existing items are preserved.
+     *
+     * <pre>{@code
+     * mergeAll(store, "core-java-14-vol1", List.of("concept-id"), writer, 4, log)
+     * }</pre>
+     *
+     * @param store the H2 database containing the book's sections, rules, and concepts
+     * @param book the name of the book to process
+     * @param only a list of concept IDs to process; if empty, all concepts appearing in more than one section are
+     * processed
+     *
+     * @param writer a function that takes the question text and returns the LLM's reply
+     * @param parallel the number of concurrent calls to the LLM
+     * @param log a consumer for progress and error messages
+     * @return a summary string containing the count of processed concepts, items found, and failures
+     * @throws Exception if an error occurs during database access or LLM communication
      */
     public static String mergeAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
             Consumer<String> log) throws Exception {
@@ -300,7 +422,14 @@ public final class GeneralFrames {
         return askEach(store, book, asks, writer, parallel, log);
     }
 
-    /** @return the is-a edges of the book, child name to parent name, normalized: the reviewed relations and the pattern's kinds */
+    /**
+     * Builds the hierarchy of concept types in a book by combining is-a relations from reviewed rules and kinds from
+     * section patterns.
+     *
+     * @param store the database containing the book's sections, rules, and patterns
+     * @param book the name of the book to process
+     * @return a mapping from a parent concept name to a set of its normalized child concept names
+     */
     static Map<String, Set<String>> kindsOf(BookStore store, String book) throws Exception {
         Map<String, Set<String>> out = new LinkedHashMap<>();
         for (List<BookStore.Relation> rel : store.relations(book).values()) {
@@ -323,9 +452,28 @@ public final class GeneralFrames {
     }
 
     /**
-     * Joins the concepts into abstract ones, one level up the concept tree: a concept with two kinds or more that are
-     * concepts of the book (their material gathered) becomes a generalized concept, whose material is its own and its
-     * kinds', asked the same question. Replaces the generalized concepts stored before.
+     * Creates abstract generalized concepts from the book's concept tree by grouping concepts that share a common
+     * parent and asking questions about their combined material.
+     *
+     * <p>The method identifies concepts that have two or more kinds and forms a generalized concept for each, whose
+     * material consists of the sentences from the generalized concept itself and all its kinds. It replaces any
+     * previously stored generalized concepts for the specified book.
+     *
+     * <p>Returns a string stating the number of generalized concepts found and the number of items (questions and
+     * answers) successfully processed, or a count of failed attempts.
+     *
+     * @param store the database containing the book's entities and relations
+     * @param book the name of the book to process
+     * @param only a list of specific generalized concept IDs to process; an empty list means all found generalized
+     * concepts are processed
+     *
+     * @param writer a function that takes a question string and returns a reply string
+     * @param parallel the maximum number of concurrent calls to the writer
+     * @param log a consumer for progress and error messages
+     * @return a summary string of the number of generalized concepts found, the number of items processed, and the
+     * number of failures
+     *
+     * @throws Exception if an error occurs during database access or the writing process
      */
     public static String generalizeAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
             Consumer<String> log) throws Exception {

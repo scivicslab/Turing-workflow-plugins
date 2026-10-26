@@ -7,49 +7,38 @@ import java.util.List;
 import java.util.logging.Logger;
 
 /**
- * 節の並びと読み出し位置 を保持する素のオブジェクト。アクターとして動かすのは SectionIteratorActor の役目であり、
- * 「アクターであること」はこのクラスの性質ではない（ActorSuffixAndOwnedActorRef_260722_oo01）。
+ * Splits Markdown text into sections based on headings and iterates through them one at a time.
  *
- * Actor that splits Markdown text into sections and iterates them one at a time.
+ * <ul>
+ * <li>{@code extractSections} — parses the provided Markdown text into a list of sections, returning a success result
+ * with the count of sections extracted</li>
+ * <li>{@code getNext} — returns the next section as a string, or a failure result if no sections remain</li>
+ * <li>{@code setMinChars} — sets the minimum character length for a section before it is merged into the preceding
+ * one, returning a success result</li>
+ * <li>{@code reset} — rewinds the iterator to the first section without re-parsing the text</li>
+ * </ul>
  *
- * <p>Designed for the {@code paraloop} pattern in Turing workflow YAML:</p>
- * <pre>
+ * <p>Sections are split on Markdown headings (lines starting with {@code #}). Sections shorter than {@code minChars}
+ * are merged into the previous section to avoid sending tiny fragments to an LLM.</p>
+ *
+ * <p>An instance holds the list of extracted sections and the current cursor position; it may serve several workflows
+ * if the same instance is shared as an actor.</p>
+ *
+ * <pre>{@code
  * - states: ["N", "section-loop"]
  *   actions:
  *     - actor: sections
  *       method: extractSections
  *       arguments: "$(str:full_markdown.get)"
  *
- * - states: ["section-loop", "next"]      # succeeds while sections remain
+ * - states: ["section-loop", "next"]
  *   actions:
  *     - actor: sections
- *       method: getNext
- *
- * - states: ["section-loop", "done"]      # fires when getNext has no more items
- *   actions:
- *     - actor: interpreter
- *       method: doNothing
- *
- * - states: ["next", "section-loop"]
- *   actions:
- *     - actor: ... process ${result} ...
+ *       method: getNext}
  * </pre>
  *
- * <p>Sections are split on Markdown headings (lines starting with {@code #}).
- * Each section includes its heading line and all body text until the next heading.
- * Sections shorter than {@code minChars} (default 100) are merged into the
- * previous section to avoid sending tiny fragments to the LLM.</p>
- *
- * <p>Supported actions:</p>
- * <ul>
- *   <li>{@code extractSections} — load Markdown text and split into sections;
- *       returns "{count} sections extracted"</li>
- *   <li>{@code getNext}         — return the next section; fails (returns false)
- *       when all sections have been returned</li>
- *   <li>{@code setMinChars}     — set the minimum section length before merging
- *       (default 100)</li>
- *   <li>{@code reset}           — rewind the iterator to the first section</li>
- * </ul>
+ * <p>If {@code extractSections} is called with null or blank text, it returns a failure result. {@code getNext}
+ * returns a failure result when the cursor reaches the end of the section list.</p>
  */
 public class SectionIterator {
 
@@ -61,12 +50,14 @@ public class SectionIterator {
     private int minChars = DEFAULT_MIN_CHARS;
 
     /**
-     * Splits the Markdown text into sections and resets the iterator.
+     * Splits the Markdown text into sections based on headings and resets the iterator.
      *
-     * <p>Sections shorter than {@code minChars} are merged into the preceding
-     * section so the LLM is never called with trivial content.</p>
+     * <p>Sections shorter than {@code minChars} are merged into the preceding section to avoid trivial content. If the
+     * input is blank or null, the action fails.</p>
      *
-     * @return "{count} sections extracted"
+     * @param markdown the Markdown text to be parsed
+     * @return a success result with a message containing the number of sections extracted, or a failure result if the
+     * input is blank
      */
     public ActionResult extractSections(String markdown) {
         markdown = markdown == null ? "" : markdown.trim();
@@ -108,11 +99,14 @@ public class SectionIterator {
     }
 
     /**
-     * Returns the next section and advances the cursor.
+     * Returns the next section of Markdown text and advances the cursor.
      *
-     * <p>Returns {@code ActionResult(false, ...)} when all sections have been
-     * returned, which causes the {@code paraloop} state machine to exit the loop.</p>
+     * <p>Returns a success result containing the section text as its message, or a failure result with the message "No
+     * more sections" if no sections remain. A failure result causes a {@code paraloop} state machine to exit the
+     * loop.</p>
      *
+     * @return a success result with the section text as the message, or a failure result if no more sections are
+     * available
      */
     public ActionResult getNext() {
         if (cursor >= sections.size()) {
@@ -124,10 +118,10 @@ public class SectionIterator {
     }
 
     /**
-     * Sets the minimum character count for a section before it is merged
-     * into the preceding section. Default is 100.
+     * Sets the minimum character count for a section before it is merged into the preceding section.
      *
-     * @param args minimum character count as a string
+     * @param n the minimum character count in characters; must be non-negative
+     * @return a success result if the value was updated, or a failure result if n is negative
      */
     public ActionResult setMinChars(int n) {
         if (n < 0) return new ActionResult(false, "minChars must be non-negative");
@@ -138,6 +132,8 @@ public class SectionIterator {
     /**
      * Rewinds the iterator to the first section without re-parsing the Markdown.
      *
+     * @return an action result that is a success with a message stating the new position relative to the total number
+     * of sections, or a failure if the iterator is empty.
      */
     public ActionResult reset() {
         cursor = 0;

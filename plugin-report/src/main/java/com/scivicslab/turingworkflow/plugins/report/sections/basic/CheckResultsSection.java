@@ -29,13 +29,18 @@ import java.util.List;
 import java.util.logging.Logger;
 
 /**
- * POJO section builder that collects and outputs messages with % prefix.
+ * Aggregates and formats log messages prefixed with {@code %} into a structured report section.
  *
- * <p>Pure business logic - no {@code CallableByActionName}.
- * Use {@link CheckResultsSectionActor} to expose as an actor.</p>
+ * <ul><li>{@link #generate()} returns a string containing a {@code [Check Results]} header followed by the
+ * deduplicated, sorted messages found in the logs.</li></ul>
  *
- * <p>The % prefix is used in workflows to mark lines that should be
- * collected and displayed in the final report.</p>
+ * <p>The class holds a JDBC {@link Connection} and a session ID to query the log database.</p>
+ *
+ * <p>One instance may serve several workflows, but it must be configured with the correct connection and session ID
+ * for each.</p>
+ *
+ * <p>If the connection is null, the session ID is negative, or no matching messages are found, {@link #generate()}
+ * returns an empty string.</p>
  *
  * @author devteam@scivicslab.com
  * @since 2.16.0
@@ -44,14 +49,16 @@ public class CheckResultsSection implements SectionBuilder {
 
     private static final Logger logger = Logger.getLogger(CheckResultsSection.class.getName());
 
-    /** Prefix for messages to be included in the report. */
+    /**
+     * The prefix used to identify lines in the log database that should be collected and included in the report.
+     */
     private static final String REPORT_PREFIX = "%";
 
     private Connection connection;
     private long sessionId = -1;
 
     /**
-     * Sets the database connection for log queries.
+     * Assigns the JDBC connection to the H2 log database used to query check results.
      *
      * @param connection the JDBC connection to the H2 log database
      */
@@ -60,22 +67,26 @@ public class CheckResultsSection implements SectionBuilder {
     }
 
     /**
-     * Sets the session ID to query logs from.
+     * Sets the session ID used to query the log database for check results.
      *
-     * @param sessionId the session ID
+     * @param sessionId the session ID to filter logs by
      */
     public void setSessionId(long sessionId) {
         this.sessionId = sessionId;
     }
 
     /**
-     * {@inheritDoc}
+     * Returns a string containing all log messages from the current session that are prefixed with {@code %},
+     * organized under a {@code [Check Results]} header.
      *
-     * <p>Queries the log database for messages prefixed with {@code %}. Lines matching
-     * the pattern (optionally preceded by a {@code [node-xxx]} prefix) are extracted,
-     * deduplicated, sorted, and output under a {@code [Check Results]} header.</p>
+     * The result is a sorted, deduplicated list of messages extracted from the log database, where any {@code
+     * [node-xxx]} prefix is stripped and the leading {@code %} is removed. If no messages matching the pattern are
+     * found, or if the database connection or session ID is invalid, it returns an empty string.
      *
-     * @return the formatted check results content, or empty string if none found
+     * <pre>{@code
+     * // Example of a log message that would be captured:
+     * // [node-web1] % Verification successful
+     * }</pre>
      */
     @Override
     public String generate() {
@@ -104,10 +115,14 @@ public class CheckResultsSection implements SectionBuilder {
     }
 
     /**
-     * Get messages with % prefix from logs.
+     * Returns a sorted list of unique messages from the log database that are marked with the {@code %} prefix for the
+     * current session.
      *
-     * @return list of messages (without the % prefix)
-     * @throws SQLException if database query fails
+     * The list contains the text of each matching line with the {@code %} prefix and any {@code [node-xxx]} prefix
+     * removed.
+     *
+     * @return a list of the extracted and cleaned messages, or an empty list if no matching messages are found
+     * @throws SQLException if a database access error occurs
      */
     private List<String> getReportMessages() throws SQLException {
         List<String> messages = new ArrayList<>();
@@ -139,12 +154,7 @@ public class CheckResultsSection implements SectionBuilder {
         return uniqueMessages;
     }
 
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Always returns {@code null} because the title is embedded within the
-     * generated content.</p>
-     */
+    /** Returns null. */
     @Override
     public String getTitle() {
         return null;  // Title is embedded in content

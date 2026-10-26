@@ -18,10 +18,12 @@
 package com.scivicslab.turingworkflow.plugins.report;
 
 /**
- * Interface for report sections (legacy).
+ * Defines a single block of text and a title to be included in a workflow execution report.
  *
- * <p>Each implementation provides a specific type of content for the final report.
- * Sections are output in the order they were added.</p>
+ * <ul><li>{@link #getTitle()} returns the title string for the section.</li><li>{@link #getContent()} returns the body
+ * text of the section.</li></ul>
+ *
+ * <p>Sections are output in the order they were added to the report builder.</p>
  *
  * @author devteam@scivicslab.com
  * @since 2.15.0
@@ -29,18 +31,19 @@ package com.scivicslab.turingworkflow.plugins.report;
 public interface ReportSection {
 
     /**
-     * Returns the section title.
+     * Returns the title of the report section.
      *
-     * <p>If null or empty, the section content is output without a title line.</p>
+     * <p>If the title is null or empty, the section content is output without a title line. A null or empty title does
+     * not prevent the content from being included in the report.</p>
      *
-     * @return the section title, or null for no title
+     * @return the section title, or null if no title is provided
      */
     String getTitle();
 
     /**
-     * Returns the section content.
+     * Returns the section content as a string.
      *
-     * <p>If null or empty, the section is skipped in the report.</p>
+     * <p>If the returned string is null or empty, the section is skipped in the report.
      *
      * @return the section content
      */

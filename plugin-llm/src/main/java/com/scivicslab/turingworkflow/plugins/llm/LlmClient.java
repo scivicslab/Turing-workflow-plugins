@@ -13,52 +13,49 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * LLMサーバ／MCPゲートウェイへの問い合わせ を保持する素のオブジェクト。アクターとして動かすのは LlmActor の役目であり、
- * 「アクターであること」はこのクラスの性質ではない（ActorSuffixAndOwnedActorRef_260722_oo01）。
+ * Communicates with LLM services via either a direct REST API for chat-ui instances or an OpenAI-compatible endpoint.
  *
- * Actor that calls an LLM service.
- *
- * <p>Two backends are supported:</p>
  * <ul>
- *   <li><b>Direct REST</b> ({@code submitDirect}) — POSTs to {@code /api/chat/submit} on a
- *       quarkus-chat-ui instance and polls for the result. No MCP session required.</li>
- *   <li><b>OpenAI-compatible</b> ({@code callOpenAi}) — Calls any vLLM / OpenAI-compatible
- *       {@code /v1/chat/completions} endpoint via system curl.</li>
+ * <li>{@code setDirectUrl} sets the base URL for the chat-ui REST API.</li>
+ * <li>{@code submitDirect} submits a prompt to the chat-ui and polls for the result.</li>
+ * <li>{@code setOpenAiUrl} configures the OpenAI-compatible endpoint and an optional model name.</li>
+ * <li>{@code setSystemPrompt} sets a system instruction prepended to OpenAI-compatible requests.</li>
+ * <li>{@code setEnableThinking} enables or disables extended thinking for Qwen3-family models.</li>
+ * <li>{@code callOpenAi} sends a prompt to the OpenAI-compatible endpoint and returns the reply.</li>
  * </ul>
  *
- * <p>Supported actions:</p>
- * <ul>
- *   <li>{@code setDirectUrl}    — set the chat-ui base URL for {@code submitDirect}</li>
- *   <li>{@code submitDirect}    — submit a prompt and poll for the result</li>
- *   <li>{@code setOpenAiUrl}    — configure the OpenAI-compatible endpoint</li>
- *   <li>{@code setSystemPrompt} — set a system prompt prepended to {@code callOpenAi} requests</li>
- *   <li>{@code setEnableThinking} — enable/disable extended thinking (Qwen3 family)</li>
- *   <li>{@code callOpenAi}      — call the OpenAI-compatible endpoint</li>
- * </ul>
+ * <p>One instance may serve several workflows at the same time, as actions are executed sequentially for a single
+ * actor.</p>
  */
 public class LlmClient {
 
     private static final Logger logger = Logger.getLogger(LlmClient.class.getName());
 
-    /** HTTP request timeout for LLM calls (5 minutes to allow for long responses). */
+    /** The maximum time to wait for an LLM response, set to 5 minutes. */
     private static final Duration TIMEOUT = Duration.ofMinutes(5);
 
-    /** Base URL of the chat-ui REST API for direct access. */
+    /** The base URL of the chat-ui REST API used for direct access via {@link #submitDirect}. */
     private String directBaseUrl = null;
 
-    /** OpenAI-compatible API endpoint URL (e.g. vLLM at http://host:8000/v1/chat/completions). */
+    /**
+     * The URL of the OpenAI-compatible API endpoint, such as a vLLM instance at {@code
+     * http://host:8000/v1/chat/completions}.
+     */
     private String openAiUrl = null;
 
-    /** Model name for OpenAI-compatible API calls. */
+    /** The model ID used for OpenAI-compatible API calls. */
     private String openAiModel = null;
 
-    /** Optional system prompt prepended to every callOpenAi request. */
+    /** The system prompt text prepended to every {@code callOpenAi} request. */
     private String openAiSystemPrompt = null;
 
-    /** When false, disables extended thinking for Qwen3-family models (default: false). */
+    /** Enables or disables extended thinking for Qwen3-family models. */
     private boolean enableThinking = false;
 
-    /** Optional listener that receives output messages (prompt results, status, errors). */
+    /**
+     * An optional listener that receives output messages such as status updates, LLM responses, and error
+     * notifications.
+     */
     private volatile Consumer<String> outputListener;
 
     /**
@@ -69,8 +66,7 @@ public class LlmClient {
      */
 
     /**
-     * Sets an output listener that will be called with status messages,
-     * LLM responses, and error notifications.
+     * Sets an output listener that receives status messages, LLM responses, and error notifications.
      *
      * @param listener a consumer that receives output messages, or {@code null} to disable
      */
@@ -88,10 +84,10 @@ public class LlmClient {
     /**
      * Sets the base URL for direct chat-ui REST API access.
      *
-     * <p>Expected argument: base URL string (e.g., {@code "http://localhost:28006"}).</p>
+     * Returns an action result that is a success if the URL is non-blank, with a message containing the new URL;
+     * otherwise, it is a failure with a message stating that the URL is required.
      *
-     * @param url the chat-ui base URL
-     * @return an {@link ActionResult} indicating success or failure
+     * @param url the chat-ui base URL, which may be a bare string, a quoted string, or a single-element JSON array
      */
     public ActionResult setDirectUrl(String url) {
         if (url == null || url.isBlank()) {
@@ -117,11 +113,15 @@ public class LlmClient {
      * @return ActionResult indicating success or failure
      */
     /**
-     * Sets the endpoint and, when given, the model to ask for.
+     * Sets the endpoint and, when provided, the model name for OpenAI-compatible API calls.
      *
-     * @param url   base URL of the OpenAI-compatible endpoint
-     * @param model model id to request, or {@code null} to keep the current one
-     * @return what was set
+     * Returns an {@link ActionResult} indicating success or failure.
+     *
+     * A {@code null} or blank model has no effect on the current model.
+     *
+     * @param url the base URL of the OpenAI-compatible endpoint
+     * @param model the model ID to request, or {@code null} to keep the current one
+     * @return an {@link ActionResult} containing a message describing what was set
      */
     public ActionResult setOpenAiUrl(String url, String model) {
         this.openAiUrl = url == null ? null : url.trim();
@@ -154,11 +154,10 @@ public class LlmClient {
     }
 
     /**
-     * Sets a system-level instruction prepended to every {@code callOpenAi} request.
-     * Pass an empty string to clear the system prompt.
+     * Sets a system-level instruction that is prepended to every {@code callOpenAi} request.
      *
-     * @param args the system prompt text
-     * @return ActionResult indicating success
+     * @param args the system prompt text, or an empty string or null to clear the prompt
+     * @return an {@link ActionResult} indicating success
      */
     public ActionResult setSystemPrompt(String args) {
         this.openAiSystemPrompt = (args == null || args.isBlank()) ? null : unwrapJsonArray(args.trim());
@@ -167,11 +166,12 @@ public class LlmClient {
     }
 
     /**
-     * Enables or disables extended thinking for Qwen3-family models (default: disabled).
-     * When disabled, {@code chat_template_kwargs: {enable_thinking: false}} is added to the request.
+     * Sets whether extended thinking is enabled for Qwen3-family models.
      *
-     * @param args {@code "true"} to enable, {@code "false"} (default) to disable
-     * @return ActionResult indicating success
+     * @param args a string that is {@code "true"} to enable or {@code "false"} to disable; defaults to disabling if
+     * the argument is not {@code "true"}
+     *
+     * @return an {@link ActionResult} indicating success
      */
     public ActionResult setEnableThinking(String args) {
         this.enableThinking = Boolean.parseBoolean(unwrapJsonArray(args == null ? "" : args.trim()));
@@ -179,13 +179,16 @@ public class LlmClient {
     }
 
     /**
-     * Sends the given text to the configured OpenAI-compatible endpoint and returns
-     * the model's reply. Blocks until the response is complete (up to 5 minutes).
+     * Sends a prompt to an OpenAI-compatible endpoint and returns the model's reply.
      *
-     * <p>Requires {@link #setOpenAiUrl} to be called first.</p>
+     * <p>Blocks for up to 5 minutes until the response is complete.</p>
      *
-     * @param args the user prompt / content to send
-     * @return ActionResult containing the model's reply on success
+     * <p>Returns the model's text content as the message on success, or an error message if the URL is not set, the
+     * prompt is blank, or the API returns an error.</p>
+     *
+     * @param args the user prompt text or a JSON array containing the prompt
+     *
+     * @return an {@link ActionResult} where a success contains the model's reply text in the message
      */
     public ActionResult callOpenAi(String args) {
         if (openAiUrl == null || openAiUrl.isBlank()) {
@@ -269,15 +272,18 @@ public class LlmClient {
     // ── Direct REST (chat-ui) ─────────────────────────────────────────────────
 
     /**
-     * Submits a prompt directly to a chat-ui instance via its REST API.
-     * Blocks until the LLM response is complete.
+     * Submits a prompt to a chat-ui instance via its REST API and waits for the response.
      *
-     * <p>Expected argument: the prompt text as a plain string.</p>
+     * Returns the LLM's response text as a message on success, or an error message if the submission fails, the
+     * session cannot be found, or the request times out.
      *
-     * <p>Flow: POST /api/chat/submit → poll GET /api/chat/status/{id} → GET /api/chat/result/{id}</p>
+     * A timeout of 5 minutes is enforced for the entire polling process.
      *
-     * @param promptText the prompt to send
-     * @return an {@link ActionResult} containing the LLM response on success
+     * Does not support tool calling; use {@link #callOpenAi(String)} for MCP-based agent loops.
+     *
+     * @param promptText the prompt text to send, provided as a plain string or a JSON array containing one string
+     * @return an ActionResult where a success contains the LLM response text in the message, and a failure contains
+     * the error description
      */
     public ActionResult submitDirect(String promptText) {
         if (directBaseUrl == null || directBaseUrl.isBlank()) {

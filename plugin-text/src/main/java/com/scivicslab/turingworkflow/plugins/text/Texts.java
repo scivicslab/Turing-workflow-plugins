@@ -14,7 +14,10 @@ import org.json.JSONObject;
  */
 public final class Texts {
 
-    /** How many of one kind {@link #compare} lists before the rest are summed up. */
+    /**
+     * The maximum number of specific items of a certain kind (such as code blocks, identifiers, names, or numbers)
+     * that are listed in a {@link #compare} result before the remaining items are summarized as a count.
+     */
     private static final int COMPLAINTS_SHOWN = 8;
 
     /**
@@ -40,11 +43,16 @@ public final class Texts {
     }
 
     /**
-     * Whether this verdict says the same as the last one ({@code WhenTheTwoRolesDoNotAgree_260915_oo01}): when a judge
-     * answers with the same words again, the two roles read the rule differently, and another round will produce the
-     * same pair of answers. Blank space is ignored. The workflow keeps the last verdict itself.
+     * Returns whether the current verdict is equivalent to the previous one, ignoring differences in whitespace.
      *
-     * @param last the verdict before this one; {@code null} or empty when there was none
+     * A verdict of {@code null} results in an error.
+     *
+     * A {@code last} value that is {@code null} or empty results in {@code false}.
+     *
+     * @param verdict the current verdict to check; must not be {@code null}
+     * @param last the previous verdict; if {@code null} or empty, the result is {@code false}
+     * @return {@code true} if the two strings are identical after stripping extra whitespace, {@code false} otherwise
+     * @throws IllegalArgumentException if {@code verdict} is {@code null}
      */
     public boolean sameAsLast(String verdict, String last) {
         if (verdict == null) throw new IllegalArgumentException("no verdict was given");
@@ -52,11 +60,15 @@ public final class Texts {
     }
 
     /**
-     * What a rewrite changed that it had no business changing ({@code WhatAProgramCanDo_260915_oo01}): code blocks,
-     * identifiers, names and numbers that went missing or appeared.
+     * Compares a text before and after a rewrite to identify unauthorized changes to code blocks, identifiers, names,
+     * or numbers.
      *
-     * @return {@code ACCEPT} when nothing of the kind changed, and otherwise {@code REVISE:} followed by what changed,
-     *         the shape a judge's verdict has
+     * @param before the text before the rewrite
+     * @param after the text after the rewrite
+     * @return {@code ACCEPT} if no such changes were found, otherwise a string starting with {@code REVISE:} followed
+     * by a list of the specific changes found
+     *
+     * @throws IllegalArgumentException if either before or after is null
      */
     public String compare(String before, String after) {
         if (before == null || after == null) throw new IllegalArgumentException("both texts are required");
@@ -71,11 +83,13 @@ public final class Texts {
     }
 
     /**
-     * Takes a document's front matter off, so that what is worked on is the text alone: nothing in a rewrite concerns
-     * those lines, and a run that sent them to a model got a document back without them.
+     * Returns a JSON string containing the document's front matter and the remaining body.
      *
-     * @return {@code {head, body}}: the front matter ending with its closing line's newline ({@code ""} when there is
-     *         none), and the rest
+     * @param text the document text to process
+     * @return a JSON string with two fields: {@code "head"} contains the front matter including its closing newline
+     * (or an empty string if none exists), and {@code "body"} contains the rest of the text
+     *
+     * @throws IllegalArgumentException if text is null
      */
     public String takeFrontMatter(String text) {
         if (text == null) throw new IllegalArgumentException("no text was given");
@@ -83,7 +97,13 @@ public final class Texts {
         return new JSONObject().put("head", end < 0 ? "" : text.substring(0, end)).put("body", end < 0 ? text : text.substring(end)).toString();
     }
 
-    /** Puts back what {@link #takeFrontMatter} took off, with one blank line between the two. */
+    /**
+     * Combines a document's front matter and its body into a single text, with one blank line between them.
+     *
+     * @param head the front matter text; if null or empty, only the body is returned
+     * @param body the body of the document; must not be null
+     * @return the concatenated text starting with the head and ending with the body
+     */
     public String joinFrontMatter(String head, String body) {
         if (body == null) throw new IllegalArgumentException("no text was given");
         if (head == null || head.isEmpty()) return body;
@@ -92,8 +112,11 @@ public final class Texts {
     }
 
     /**
-     * Where a document's front matter ends, or {@code -1} when it has none. Only a block at the very top counts: a
-     * line of dashes further down is a horizontal rule.
+     * Returns the index immediately following the closing line of a document's front matter, or {@code -1} if no such
+     * matter exists. Only a block starting at the very beginning of the text counts; a line of dashes appearing later
+     * in the text is treated as a horizontal rule and does not mark the end of front matter.
+     *
+     * @param text the text to search
      */
     static int frontMatterEnd(String text) {
         if (!text.startsWith("---\n") && !text.startsWith("---\r\n")) return -1;
@@ -121,7 +144,10 @@ public final class Texts {
         complaints.add(sb.toString());
     }
 
-    /** @return what is in {@code from} and not in {@code in}, each value once, in order */
+    /**
+     * Returns a list of elements that are present in {@code from} but not in {@code in}, with each missing element
+     * appearing at most once and in the order they first appeared in {@code from}.
+     */
     private static List<String> missing(List<String> from, List<String> in) {
         List<String> rest = new ArrayList<>(in);
         List<String> gone = new ArrayList<>();
@@ -136,7 +162,7 @@ public final class Texts {
         return flat.length() > 60 ? flat.substring(0, 60) + "…" : flat;
     }
 
-    /** The fenced blocks of a markdown text, as their contents. */
+    /** Returns a list of the contents of the fenced blocks in a markdown text. */
     static List<String> codeBlocks(String text) {
         List<String> blocks = new ArrayList<>();
         Matcher m = Pattern.compile("(?ms)^```[^\\n]*\\n(.*?)^```", Pattern.MULTILINE).matcher(text);
@@ -144,7 +170,10 @@ public final class Texts {
         return blocks;
     }
 
-    /** The backquoted spans of a markdown text: class names, paths, options, actor names. */
+    /**
+     * Returns a list of the contents of backquoted spans in a markdown text, such as class names, paths, options, or
+     * actor names.
+     */
     static List<String> inlineCode(String text) {
         String withoutBlocks = text.replaceAll("(?ms)^```.*?^```", "");
         List<String> spans = new ArrayList<>();
@@ -154,8 +183,12 @@ public final class Texts {
     }
 
     /**
-     * The names in a text's prose ({@code OpenAlex}, {@code ChatSession}): capitals inside a word mark one, so
-     * rewriting a sentence of ordinary words is not a complaint.
+     * Returns a list of names found in the prose of a text.
+     *
+     * <p>Names are identified as words containing at least one capital letter inside them, such as {@code OpenAlex} or
+     * {@code ChatSession}, while ordinary words are ignored. Fenced code blocks are excluded from the search.
+     *
+     * @param text the text to search in
      */
     static List<String> names(String text) {
         String withoutBlocks = text.replaceAll("(?ms)^```.*?^```", "");
@@ -166,8 +199,11 @@ public final class Texts {
     }
 
     /**
-     * The numbers of a text, read outside the fenced blocks and with the digits of a version or a document id left
-     * out: {@code 260913_oo01} is part of a name.
+     * Returns a list of numbers found in the text, excluding those within fenced code blocks and those that are part
+     * of an alphanumeric identifier like a version or document ID.
+     *
+     * @param text the text to search through
+     * @return a list of the found numbers as strings, with commas removed
      */
     static List<String> numbers(String text) {
         String withoutBlocks = text.replaceAll("(?ms)^```.*?^```", "");

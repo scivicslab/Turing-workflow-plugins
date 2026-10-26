@@ -22,14 +22,20 @@ import java.io.IOException;
 import com.scivicslab.turingworkflow.plugins.ssh.Node;
 
 /**
- * Abstraction for command execution that can be implemented for different contexts.
+ * An interface for running commands on a target machine, either locally or remotely via SSH.
  *
- * <p>This interface allows the same action implementation to work in different
- * execution environments:</p>
  * <ul>
- *   <li>{@link SshCommandExecutor} - Executes commands on remote nodes via SSH</li>
- *   <li>{@link LocalCommandExecutor} - Executes commands on the local machine</li>
+ * <li>{@link #execute(String)} returns the result of the command.</li>
+ * <li>{@link #execute(String, Node.OutputCallback)} returns the result of the command and sends real-time output to
+ * the callback.</li>
+ * <li>{@link #executeSudo(String)} returns the result of the command executed with sudo privileges.</li>
+ * <li>{@link #executeSudo(String, Node.OutputCallback)} returns the result of the command executed with sudo
+ * privileges and sends real-time output to the callback.</li>
+ * <li>{@link #getIdentifier()} returns a short identifier for the target, such as a hostname.</li>
  * </ul>
+ *
+ * <p>Implementations include {@link SshCommandExecutor} for remote execution and {@link LocalCommandExecutor} for
+ * local execution.</p>
  *
  * @author devteam@scivicslab.com
  * @since 2.15.0
@@ -37,19 +43,18 @@ import com.scivicslab.turingworkflow.plugins.ssh.Node;
 public interface CommandExecutor {
 
     /**
-     * Executes a command and returns the result.
+     * Executes the given command and returns its result.
      *
-     * @param command the command to execute
-     * @return the result of command execution
-     * @throws IOException if command execution fails
+     * @param command the command string to be executed
+     * @return a {@link Node.CommandResult} containing the exit code, stdout, and stderr of the execution
      */
     Node.CommandResult execute(String command) throws IOException;
 
     /**
-     * Executes a command and returns the result with output callback.
+     * Executes a command and returns the result, optionally providing real-time access to the output via a callback.
      *
      * @param command the command to execute
-     * @param callback the callback for real-time output (may be null)
+     * @param callback the callback for real-time output, which may be null if no streaming is required
      * @return the result of command execution
      * @throws IOException if command execution fails
      */
@@ -58,24 +63,24 @@ public interface CommandExecutor {
     /**
      * Executes a command with sudo privileges.
      *
-     * @param command the command to execute with sudo
+     * @param command the command to execute
      * @return the result of command execution
-     * @throws IOException if command execution fails or SUDO_PASSWORD is not set
+     * @throws IOException if command execution fails or if the {@code SUDO_PASSWORD} environment variable is not set
      */
     Node.CommandResult executeSudo(String command) throws IOException;
 
     /**
-     * Executes a command with sudo privileges and output callback.
+     * Executes a command with sudo privileges and streams real-time output to the provided callback.
      *
      * @param command the command to execute with sudo
-     * @param callback the callback for real-time output (may be null)
+     * @param callback the callback for real-time output, which may be null to suppress output
      * @return the result of command execution
-     * @throws IOException if command execution fails or SUDO_PASSWORD is not set
+     * @throws IOException if command execution fails or if the {@code SUDO_PASSWORD} environment variable is not set
      */
     Node.CommandResult executeSudo(String command, Node.OutputCallback callback) throws IOException;
 
     /**
-     * Gets a short identifier for this executor (e.g., hostname).
+     * Returns a short string that identifies the execution context, such as a hostname or local designation.
      *
      * @return the identifier string
      */

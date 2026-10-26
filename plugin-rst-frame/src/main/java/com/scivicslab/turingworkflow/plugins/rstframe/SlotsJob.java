@@ -5,9 +5,31 @@ import java.nio.file.Path;
 import java.util.Map;
 
 /**
- * The work of {@code abstract-roles.yaml} ({@code ConceptClasses_261022_oo01}, {@code FrameMakingWorkflow_261022_oo01}
- * step 3): the paragraphs of a book are assigned to concept classes ({@link SlotAssignment}), and the classes grown and
- * the assignments are written to one file.
+ * Assigns the paragraphs of a book to concept classes and writes the resulting assignments and expanded classes to a
+ * file.
+ *
+ * <ul>
+ * <li><code class="action">open</code> assigns the book's paragraphs to concept classes based on the concept tree and
+ * existing class files, returning a string that reports the number of rule and class files processed.</li>
+ * <li><code class="action">write</code> writes the assignments and the grown classes to a new file, returning the path
+ * to that file.</li>
+ * </ul>
+ *
+ * <p>One instance of this actor may serve several workflows at once, but its actions run one at a time.</p>
+ *
+ * <p>A workflow step might call it as follows:</p>
+ * <pre>{@code
+ * actor: slots-job
+ * method: open
+ * arguments:
+ *   book: ~/works/rst-on-lisp/db/books/core-java-14-vol1
+ *   name: core-java-14-vol1
+ *   tree: ~/works/rst-on-lisp/db/books/concept-tree.yaml
+ *   classes: ~/works/rst-on-lisp/db/books/concepts
+ * }</pre>
+ *
+ * <p>The {@code open} action fails if the book's name is blank or if no rule files are found for the book. The {@code
+ * write} action fails if {@code open} has not been successfully called first.</p>
  */
 public final class SlotsJob extends QuestionWork {
 
@@ -18,10 +40,16 @@ public final class SlotsJob extends QuestionWork {
     }
 
     /**
-     * @param book    the book's directory
-     * @param name    the book's name
-     * @param tree    the concept tree's file, as {@code concept-tree.yaml} wrote it
-     * @param classes the directory of concept class files ({@code rst-on-lisp/concepts}); blank for none
+     * Assigns the paragraphs of a book to concept classes and prepares the data for writing.
+     *
+     * <p>If the book's name is blank, throws an {@link IllegalArgumentException}. If no rule files are found under the
+     * book's directory, throws an {@link IllegalStateException}.
+     *
+     * @param book the book's directory
+     * @param name the book's name
+     * @param tree the path to the concept tree file, as written by {@code concept-tree.yaml}
+     * @param classes the directory of concept class files, or a blank string to use none
+     * @return a string stating the number of rule files and class files opened
      */
     public String open(String book, String name, String tree, String classes) throws IOException {
         if (blank(name)) throw new IllegalArgumentException("the book's name is required");
@@ -35,7 +63,16 @@ public final class SlotsJob extends QuestionWork {
         return "opened " + rules.size() + " rule file(s) and " + classFiles.size() + " class file(s)";
     }
 
-    /** Writes the classes grown and the assignments, never over a file already there; the message is its path. */
+    /**
+     * Writes the assignments and the grown concept classes to a new file, returning the file's path.
+     *
+     * <p>If the file already exists, the operation fails.
+     *
+     * @param out the directory for the output file
+     * @param tree the name of the concept tree to include in the assignment, or an empty string to use a placeholder
+     * @return the absolute path of the written file
+     * @throws IllegalStateException if no assignments have been made via {@code open}
+     */
     public String write(String out, String tree) throws IOException {
         if (assignment == null) throw new IllegalStateException("no paragraphs are being assigned");
         Path f = path(out, "the output file");

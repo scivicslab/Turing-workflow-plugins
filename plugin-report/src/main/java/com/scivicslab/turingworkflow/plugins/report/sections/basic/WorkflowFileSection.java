@@ -20,10 +20,17 @@ package com.scivicslab.turingworkflow.plugins.report.sections.basic;
 import com.scivicslab.turingworkflow.plugins.report.SectionBuilder;
 
 /**
- * POJO section builder that outputs the workflow file path.
+ * Generates a report section that displays the path to the workflow file.
  *
- * <p>Pure business logic - no {@code CallableByActionName}.
- * Use {@link WorkflowFileSectionActor} to expose as an actor.</p>
+ * <ul>
+ * <li><code>generate</code> returns a string containing the header "[Workflow File]" followed by the file path.</li>
+ * <li><code>getTitle</code> always returns {@code null} because the title is embedded within the generated
+ * content.</li>
+ * </ul>
+ *
+ * <p>One instance holds the workflow file path provided via {@link #setWorkflowPath(String)}.</p>
+ *
+ * <p>If no path is set, the section outputs {@code (unknown)}.</p>
  *
  * @author devteam@scivicslab.com
  * @since 2.16.0
@@ -33,21 +40,20 @@ public class WorkflowFileSection implements SectionBuilder {
     private String workflowPath;
 
     /**
-     * Sets the workflow file path.
+     * Sets the workflow file path to be used in the generated report.
      *
-     * @param path the workflow file path
+     * @param path the path to the workflow YAML file
      */
     public void setWorkflowPath(String path) {
         this.workflowPath = path;
     }
 
     /**
-     * {@inheritDoc}
+     * Returns a string that is a block containing the workflow file path under the header "[Workflow File]".
      *
-     * <p>Generates a {@code [Workflow File]} block containing the workflow file path.
-     * If no path has been set, outputs {@code "(unknown)"}.</p>
+     * If no path has been set, the result is "[Workflow File]\n(unknown)\n".
      *
-     * @return the formatted workflow file path section content
+     * @return the formatted section content containing the path or "(unknown)"
      */
     @Override
     public String generate() {
@@ -56,10 +62,8 @@ public class WorkflowFileSection implements SectionBuilder {
     }
 
     /**
-     * {@inheritDoc}
-     *
-     * <p>Always returns {@code null} because the title is embedded within the
-     * generated content.</p>
+     * Returns {@code null} because the section title is already included within the string returned by {@code
+     * generate()}.
      */
     @Override
     public String getTitle() {

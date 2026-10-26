@@ -18,19 +18,17 @@ import java.time.Duration;
 import java.util.logging.Logger;
 
 /**
- * Web検索 を保持する素のオブジェクト。アクターとして動かすのは WebSearchActor の役目であり、
- * 「アクターであること」はこのクラスの性質ではない（ActorSuffixAndOwnedActorRef_260722_oo01）。
+ * Performs web searches through DuckDuckGo's HTML interface and returns results as text or lists of URLs.
  *
- * Turing Workflow actor that performs a web search via DuckDuckGo (HTML endpoint, no API key).
- *
- * <p>Logic ported from {@code quarkus-mcp-gateway}'s {@code WebSearchTool} so that deep-research
- * workflows can call search directly, without depending on the MCP gateway.</p>
- *
- * <p>Actions:</p>
  * <ul>
- *   <li>{@code search} - returns numbered results with title, URL and snippet (for an LLM to read)</li>
- *   <li>{@code searchUrls} - returns only the result URLs, one per line (for a fetch pipeline)</li>
+ * <li>{@code search} returns up to 10 numbered results, each containing a title, a URL, and a snippet.</li>
+ * <li>{@code searchUrls} returns a newline-separated list of up to 10 URLs.</li>
  * </ul>
+ *
+ * <p>One instance may serve several workflows or threads at once.</p>
+ *
+ * <p>An action fails if the query is blank or if a network error occurs, returning an {@link ActionResult} where
+ * success is false and the message holds the error details.</p>
  *
  * @author devteam@scivicslab.com
  * @since 1.0.0
@@ -46,10 +44,14 @@ public class WebSearcher {
             .build();
 
     /**
-     * Searches the web and returns numbered results (title, URL, snippet).
+     * Returns an action result containing up to 10 numbered search results, each consisting of a title, a URL, and a
+     * snippet, based on the provided query.
+     * An action result is a success with a message containing the formatted results if the search succeeds; otherwise,
+     * it is a failure with a message describing the error.
+     * If the query is null or blank, the result is a failure stating that the query is required.
+     * If the search fails due to network or parsing errors, the result is a failure with the error message.
      *
-     * @param query what to search for
-     * @return an {@link ActionResult} with the formatted results, or failure on error
+     * @param query the text to search for on DuckDuckGo
      */
     public ActionResult search(String query) {
         if (query == null || query.isBlank()) {
@@ -65,10 +67,13 @@ public class WebSearcher {
     }
 
     /**
-     * Searches the web and returns only the result URLs, one per line.
+     * Returns an action result containing a newline-separated list of URLs found by searching the web via DuckDuckGo.
      *
-     * @param query what to search for
-     * @return an {@link ActionResult} with newline-separated URLs, or failure on error
+     * If the query is null or blank, returns a failed action result with a message stating that the query is required.
+     * If the search fails due to network or parsing errors, returns a failed action result containing the error
+     * message.
+     *
+     * @param query the text to search for on DuckDuckGo
      */
     public ActionResult searchUrls(String query) {
         if (query == null || query.isBlank()) {

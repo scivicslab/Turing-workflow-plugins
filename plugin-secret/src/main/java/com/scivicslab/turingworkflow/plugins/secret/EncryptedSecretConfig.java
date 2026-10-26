@@ -26,27 +26,18 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Parser for encrypted secret configuration files.
+ * An encrypted secret configuration that decrypts an INI-format file and resolves secrets using a priority hierarchy
+ * of host, group, and global settings.
  *
- * <p>This class reads an encrypted INI-format file containing secrets
- * (SSH keys, passphrases, sudo passwords), decrypts it, and provides
- * access to the secrets with host/group/global priority.</p>
+ * <ul>
+ * <li>{@code parse(InputStream, String)} decrypts and parses an encrypted file into a configuration object.</li>
+ * <li>{@code getSecretsForHost(String, String...)} returns a map of secrets for a specific host, where host-specific
+ * values override group values, which in turn override global values.</li>
+ * <li>{@code getGlobalSecrets()} returns a map of only the secrets defined in the {@code [secrets:all]} section.</li>
+ * </ul>
  *
- * <h2>File Format (before encryption)</h2>
- * <pre>
- * [secrets:all]
- * ssh_key=-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNz...
- * ssh_passphrase=MyPassphrase123
- * sudo_password=MySudoPassword
+ * <p>One instance may serve several workflows or threads at once.</p>
  *
- * [secrets:webservers]
- * sudo_password=WebServerSudoPassword
- *
- * [secrets:host:web1.example.com]
- * ssh_key=...different key...
- * </pre>
- *
- * <h2>Usage Example</h2>
  * <pre>{@code
  * InputStream encryptedInput = new FileInputStream("secrets.enc");
  * String key = System.getenv("TURING_SECRET_KEY");
@@ -54,15 +45,17 @@ import java.util.Map;
  *
  * Map<String, String> secrets = config.getSecretsForHost("web1.example.com", "webservers");
  * String sshKey = secrets.get("ssh_key");
- * String passphrase = secrets.get("ssh_passphrase");
  * }</pre>
+ *
+ * <p>The {@code parse} method returns an {@link IOException} if the file cannot be read or if the decryption fails due
+ * to an incorrect key or corrupted data.</p>
  *
  * @author devteam@scivicslab.com
  * @since 1.0.0
  */
 public class EncryptedSecretConfig {
 
-    /** Secrets defined in the {@code [secrets:all]} section (lowest priority). */
+    /** Secrets defined in the {@code [secrets:all]} section, which have the lowest priority. */
     private final Map<String, String> globalSecrets = new HashMap<>();
 
     /** Secrets defined in {@code [secrets:<groupName>]} sections (medium priority). */
@@ -72,12 +65,12 @@ public class EncryptedSecretConfig {
     private final Map<String, Map<String, String>> hostSecrets = new HashMap<>();
 
     /**
-     * Parses an encrypted secret configuration file.
+     * Returns an {@code EncryptedSecretConfig} containing the decrypted secrets from an encrypted INI file.
      *
-     * @param encryptedInput InputStream of the encrypted file
-     * @param encryptionKey Base64-encoded encryption key
-     * @return parsed EncryptedSecretConfig
-     * @throws IOException if reading or decryption fails
+     * @param encryptedInput the input stream of the encrypted file
+     * @param encryptionKey the Base64-encoded AES-256 key used for decryption
+     * @return an instance of {@code EncryptedSecretConfig} from which secrets can be queried
+     * @throws IOException if the file cannot be read or if decryption fails due to an invalid key or corrupted data
      */
     public static EncryptedSecretConfig parse(InputStream encryptedInput, String encryptionKey) throws IOException {
         try {
@@ -102,11 +95,11 @@ public class EncryptedSecretConfig {
     }
 
     /**
-     * Parses decrypted INI-format content.
+     * Parses the decrypted INI-format content into an {@code EncryptedSecretConfig}.
      *
-     * @param content decrypted INI content
-     * @return parsed EncryptedSecretConfig
-     * @throws IOException if parsing fails
+     * @param content the decrypted string containing INI sections and key-value pairs
+     * @return a new {@code EncryptedSecretConfig} instance populated with the parsed secrets
+     * @throws IOException if the content cannot be read or the format is invalid
      */
     private static EncryptedSecretConfig parseDecrypted(String content) throws IOException {
         EncryptedSecretConfig config = new EncryptedSecretConfig();
@@ -155,12 +148,12 @@ public class EncryptedSecretConfig {
     }
 
     /**
-     * Gets secrets for a specific host, applying priority rules.
-     * Priority: host-specific &gt; group-specific &gt; global
+     * Returns a map of secrets for a specific host, resolving conflicts by applying priority rules where host-specific
+     * secrets override group-specific secrets, which in turn override global secrets.
      *
-     * @param hostname Hostname
-     * @param groupNames Group names this host belongs to
-     * @return Map of secrets for this host
+     * @param hostname the name of the host to look up
+     * @param groupNames the names of the groups the host belongs to, in order of increasing priority
+     * @return a map containing the resolved secrets for the host
      */
     public Map<String, String> getSecretsForHost(String hostname, String... groupNames) {
         Map<String, String> result = new HashMap<>(globalSecrets);
@@ -183,9 +176,9 @@ public class EncryptedSecretConfig {
     }
 
     /**
-     * Gets global secrets.
+     * Returns a map containing the secrets defined in the {@code [secrets:all]} section.
      *
-     * @return Map of global secrets
+     * @return a map of the global secrets
      */
     public Map<String, String> getGlobalSecrets() {
         return new HashMap<>(globalSecrets);

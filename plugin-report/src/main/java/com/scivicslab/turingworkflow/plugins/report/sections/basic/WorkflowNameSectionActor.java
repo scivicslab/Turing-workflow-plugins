@@ -32,10 +32,17 @@ import java.util.Map;
 import java.util.logging.Logger;
 
 /**
- * Actor wrapper for {@link WorkflowNameSection}.
+ * Extracts the name of a workflow from its YAML file and provides it as a section in a report.
  *
- * <p>Exposes the POJO's methods as actions via {@code @Action} annotations.
- * Handles workflow path resolution and YAML parsing.</p>
+ * <ul>
+ * <li>{@code generate} returns an action result containing the workflow name as the section content.</li>
+ * <li>{@code getTitle} returns an action result containing the section title.</li>
+ * </ul>
+ *
+ * <p>One instance may serve a single workflow's report generation.</p>
+ *
+ * <p>If the workflow file cannot be found or the {@code name} field is missing from the YAML, the section content is
+ * empty.</p>
  *
  * @author devteam@scivicslab.com
  * @since 2.16.0
@@ -45,10 +52,8 @@ public class WorkflowNameSectionActor extends IIActorRef<WorkflowNameSection> {
     private static final Logger logger = Logger.getLogger(WorkflowNameSectionActor.class.getName());
 
     /**
-     * Constructs the actor with a new POJO instance.
-     *
-     * @param actorName the actor name
-     * @param system the actor system
+     * Initializes the actor by extracting the workflow name from the YAML file at the path provided by the {@code
+     * nodeGroup} actor.
      */
     public WorkflowNameSectionActor(String actorName, IIActorSystem system) {
         super(actorName, new WorkflowNameSection(), system);
@@ -56,7 +61,8 @@ public class WorkflowNameSectionActor extends IIActorRef<WorkflowNameSection> {
     }
 
     /**
-     * Initializes the POJO with workflow information from nodeGroup.
+     * Sets the workflow path and name in the underlying section by querying the {@code nodeGroup} actor and parsing
+     * the resulting YAML file.
      */
     private void initializeFromWorkflow() {
         String workflowPath = getWorkflowPath();
@@ -107,12 +113,10 @@ public class WorkflowNameSectionActor extends IIActorRef<WorkflowNameSection> {
     }
 
     /**
-     * Generates the workflow name section content.
-     *
-     * <p><strong>Expected args:</strong> unused (may be empty or null).</p>
+     * Returns an action result containing the workflow name section content.
      *
      * @param args unused
-     * @return an {@link ActionResult} with the generated section content
+     * @return an action result that is a success and whose message holds the generated section content
      */
     @Action("generate")
     public ActionResult generate(String args) {
@@ -121,12 +125,11 @@ public class WorkflowNameSectionActor extends IIActorRef<WorkflowNameSection> {
     }
 
     /**
-     * Returns the section title.
-     *
-     * <p><strong>Expected args:</strong> unused (may be empty or null).</p>
+     * Returns a string that is the title of the workflow name section.
      *
      * @param args unused
-     * @return an {@link ActionResult} with the title string (empty if no title)
+     * @return an {@link ActionResult} that is a success and whose message holds the title string, or an empty string
+     * if no title is available
      */
     @Action("getTitle")
     public ActionResult getTitle(String args) {

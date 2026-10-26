@@ -17,31 +17,39 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * OCRサーバへの問い合わせと読み込んだPDF を保持する素のオブジェクト。アクターとして動かすのは OcrActor の役目であり、
- * 「アクターであること」はこのクラスの性質ではない（ActorSuffixAndOwnedActorRef_260722_oo01）。
+ * Sends PDFs to external OCR backends and returns the extracted text.
  *
- * Actor that sends PDFs to external OCR backends and returns the full document text.
- *
- * <p>Two backends are supported, matching what quarkus-exdb2 uses:</p>
  * <ul>
- *   <li><b>Marker</b> ({@code 192.168.5.13:8001}) — English / math-heavy PDFs.
- *       Preserves LaTeX. Processes the full document in one multipart POST.
- *       Returns Markdown with headings, code blocks, and inline math.</li>
- *   <li><b>YomiToku</b> ({@code 192.168.5.17:8013}) — Japanese / mixed-language PDFs.
- *       No math support. Processes one page at a time; pages are concatenated.</li>
+ * <li>{@code setMarkerUrl} configures the Marker endpoint URL.</li>
+ * <li>{@code setYomitokuUrl} configures the YomiToku endpoint URL.</li>
+ * <li>{@code markerOcr} downloads a PDF from a URL and returns its full content as Markdown using the Marker
+ * backend.</li>
+ * <li>{@code yomitokuOcr} downloads a PDF from a URL and returns its full content as plain text using the YomiToku
+ * backend.</li>
+ * <li>{@code ocr} selects a backend via a JSON object containing {@code url} and an optional {@code backend} ("marker"
+ * or "yomitoku").</li>
+ * <li>{@code downloadPdf} downloads a PDF from a URL and holds it in memory for subsequent page-by-page OCR
+ * calls.</li>
+ * <li>{@code markerOcrPage} returns the Markdown text of a single page from the cached PDF using a 0-based index.</li>
+ * <li>{@code writeFile} writes content to a file using a JSON array where the first element is the path and the second
+ * is the content.</li>
  * </ul>
  *
- * <p>Supported actions:</p>
- * <ul>
- *   <li>{@code setMarkerUrl}   — configure Marker endpoint (default: http://192.168.5.13:8001)</li>
- *   <li>{@code setYomitokuUrl} — configure YomiToku endpoint (default: http://192.168.5.17:8013)</li>
- *   <li>{@code markerOcr}     — download PDF from URL and OCR with Marker; returns Markdown</li>
- *   <li>{@code yomitokuOcr}   — download PDF from URL and OCR with YomiToku; returns plain text</li>
- *   <li>{@code ocr}           — auto-select backend via JSON: {"url":"...","backend":"marker|yomitoku"}</li>
- * </ul>
+ * <p>The client holds a cache of the most recently downloaded PDF bytes, which is used by {@link
+ * #markerOcrPage(int)}.</p>
  *
- * <p>PDF protocol: the actor downloads the PDF from the given URL using HTTP GET,
- * then uploads the bytes to the OCR backend. No local filesystem access is required.</p>
+ * <p>One instance may serve several workflows at a time, but actions run one at a time.</p>
+ *
+ * <p>A typical use for page-by-page OCR:</p>
+ * <pre>{@code
+ * downloadPdf: "https://example.com/doc.pdf"
+ * markerOcrPage: 0
+ * markerOcrPage: 1
+ * }</pre>
+ *
+ * <p>If an OCR backend returns a non-200 status or an empty result, the action returns a failure result. {@link
+ * #markerOcrPage(int)} returns a failure if the page index is out of range or if no PDF has been cached via {@link
+ * #downloadPdf(String)}.</p>
  */
 public class OcrClient {
 
@@ -69,7 +77,9 @@ public class OcrClient {
     /**
      * Sets the Marker OCR server base URL.
      *
-     * @param url URL string, e.g. {@code "http://192.168.5.13:8001"}
+     * @param url the URL string for the Marker endpoint, e.g. {@code "http://192.168.5.13:8001"}
+     * @return an action result that is a success with a message containing the new URL, or a failure if the URL is
+     * null or blank
      */
     public ActionResult setMarkerUrl(String url) {
         if (url == null || url.isBlank()) return new ActionResult(false, "URL is required");
@@ -80,7 +90,9 @@ public class OcrClient {
     /**
      * Sets the YomiToku OCR server base URL.
      *
-     * @param url URL string, e.g. {@code "http://192.168.5.17:8013"}
+     * @param url the URL string, e.g. {@code "http://192.168.5.17:8013"}
+     * @return an action result that is a success with a message confirming the new URL, or a failure if the URL is
+     * null or blank
      */
     public ActionResult setYomitokuUrl(String url) {
         if (url == null || url.isBlank()) return new ActionResult(false, "URL is required");
@@ -89,15 +101,13 @@ public class OcrClient {
     }
 
     /**
-     * Downloads a PDF from the given URL and OCRs it with Marker.
+     * Downloads a PDF from the given URL and performs OCR using the Marker backend.
      *
-     * <p>Sends the full PDF binary to {@code POST /marker/upload} with
-     * {@code output_format=markdown}. No page_range is set, so Marker processes
-     * all pages in one pass. Returns the Markdown text of the entire document.</p>
+     * <p>The action returns a success result containing the full document text as Markdown if the PDF is successfully
+     * downloaded and processed; otherwise, it returns a failure result with an error message. If the URL is null or
+     * blank, the action fails.</p>
      *
-     * <p>Expected argument: PDF URL string.</p>
-     *
-     * @param url PDF URL
+     * @param url the URL of the PDF to download and process
      */
     public ActionResult markerOcr(String url) {
         if (url == null || url.isBlank()) return new ActionResult(false, "PDF URL is required");
@@ -113,15 +123,12 @@ public class OcrClient {
     }
 
     /**
-     * Downloads a PDF from the given URL and OCRs it with YomiToku, page by page.
+     * Returns the plain text of a PDF by downloading it from a URL and performing OCR with the YomiToku backend.
      *
-     * <p>Pages are fetched from index 0 upward until YomiToku returns a non-200
-     * response (indicating the page is out of range). Text from all pages is
-     * concatenated with blank-line separators.</p>
+     * <p>The result is the concatenated text of all pages, with blank-line separators between them. If the OCR fails
+     * or the document is empty, it returns an unsuccessful action result with an error message.</p>
      *
-     * <p>Expected argument: PDF URL string.</p>
-     *
-     * @param url PDF URL
+     * @param url the URL of the PDF to process
      */
     public ActionResult yomitokuOcr(String url) {
         if (url == null || url.isBlank()) return new ActionResult(false, "PDF URL is required");
@@ -137,12 +144,14 @@ public class OcrClient {
     }
 
     /**
-     * Downloads a PDF and OCRs it with the backend specified in a JSON argument.
+     * Performs OCR on a PDF from a given URL using the specified backend.
      *
-     * <p>Expected argument: JSON object {@code {"url": "...", "backend": "marker|yomitoku"}}.
-     * Defaults to {@code "marker"} if {@code backend} is absent.</p>
+     * <p>Returns an action result containing the full document text as a message if the OCR succeeds, or an error
+     * message if the download or OCR fails. If the {@code backend} argument is absent or not equal to {@code
+     * "yomitoku"} (case-insensitive), the {@link #markerOcr(String)} action is used.</p>
      *
-     * @param url JSON object with {@code url} and optional {@code backend}
+     * @param url the URL of the PDF to download and process
+     * @param backend the name of the backend to use, either {@code "marker"} or {@code "yomitoku"}
      */
     public ActionResult ocr(String url, String backend) {
         if (url == null || url.isBlank()) return new ActionResult(false, "url is required");
@@ -151,10 +160,14 @@ public class OcrClient {
                 : markerOcr(url);
     }
     /**
-     * Writes text to a file. Accepts a JSON array {@code ["path", "content"]}. Returns success without
-     * writing when path is blank, so callers can use this step unconditionally (no-op in standalone mode).
+     * Writes text to a file.
      *
-     * @param url JSON array: first element is the output file path, second is the content to write
+     * <p>Returns a success result with a message containing the number of characters written if the file was written,
+     * or a success result with a "skipped" message if the path is blank. If an error occurs during writing, returns a
+     * failure result with the error message.</p>
+     *
+     * @param path the file path to write to
+     * @param content the text to write to the file
      */
     public ActionResult writeFile(String path, String content) {
         if (path == null || path.isBlank()) {
@@ -171,13 +184,25 @@ public class OcrClient {
     }
 
     /**
-     * Downloads a PDF from the given URL and caches it in memory for page-by-page processing.
+     * Downloads a PDF from the given URL and stores its bytes in memory.
      *
-     * <p>Call this once before a loop of {@link #markerOcrPage(String)} calls.
-     * The cached bytes persist for the lifetime of this actor instance.</p>
+     * <p>Returns a success result with the number of bytes downloaded if the URL is valid and the content is a PDF;
+     * otherwise, returns a failure result with the error message. If the download fails or the content is not a PDF,
+     * the cached data is not updated.</p>
      *
-     * @param url PDF URL (HTTPS supported; redirects are followed automatically)
-     * @return confirmation string with the byte count
+     * <p>The downloaded bytes are held in memory and persist until the next call to this action or until the actor
+     * instance is destroyed. This is required before calling {@link #markerOcrPage(int)}.</p>
+     *
+     * <pre>{@code
+     * actor: ocr_client
+     * method: downloadPdf
+     * arguments: "https://example.com/document.pdf"
+     * }</pre>
+     *
+     * @param url the URL of the PDF to download
+     *
+     * @return an action result that is a success if the PDF was downloaded and cached, containing the byte count in
+     * the message; otherwise, a failure result with the error message.
      */
     public ActionResult downloadPdf(String url) {
         if (url == null || url.isBlank()) return new ActionResult(false, "PDF URL is required");
@@ -193,19 +218,20 @@ public class OcrClient {
     }
 
     /**
-     * OCRs a single page of the cached PDF with Marker and returns its Markdown text.
+     * Returns the Markdown text of a single page from the cached PDF using the Marker backend.
      *
-     * <p>Uses {@code page_range: "N"} (0-based index) in the multipart upload — the same
-     * protocol that quarkus-exdb2's {@code MarkerClient.ocrPage()} uses.</p>
+     * <p>Returns a success result containing the Markdown text of the page if the index is valid, or a failure result
+     * if the page index is out of range, the page is empty, or the backend returns an error.</p>
      *
-     * <p>Returns {@code ActionResult(false, ...)} when the page index is out of range
-     * (Marker returns non-200 or {@code "success": false}), which drives the paraloop
-     * exit transition in a Turing Workflow.</p>
+     * <p>The page index is a 0-based integer.</p>
      *
-     * <p>Call {@link #downloadPdf(String)} before using this action.</p>
+     * <p>A failure result is returned if the page index is out of range, which can be used to terminate loops in a
+     * workflow.</p>
      *
-     * @param url 0-based page index as a string
-     * @return Markdown text of the requested page
+     * <p>Requires {@link #downloadPdf(String)} to be called first to populate the cache.</p>
+     *
+     * @param pageIndex the 0-based index of the page to OCR
+     * @return a success result with the Markdown text, or a failure result with an error message
      */
     public ActionResult markerOcrPage(int pageIndex) {
         if (cachedPdf == null) {

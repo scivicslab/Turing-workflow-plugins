@@ -18,8 +18,11 @@
 package com.scivicslab.turingworkflow.plugins.vault;
 
 /**
- * {@link VaultBackend} that calls the Vault HTTP API directly.
- * Reads {@code VAULT_ADDR} and {@code VAULT_TOKEN} from environment variables.
+ * Fetches secrets from a HashiCorp Vault KV v2 engine using the Vault HTTP API.
+ *
+ * <p>The class requires the {@code VAULT_ADDR} and {@code VAULT_TOKEN} environment variables to be set.
+ *
+ * <p>One instance may serve several workflows or threads at once.
  */
 public class HttpVaultBackend implements VaultBackend {
 

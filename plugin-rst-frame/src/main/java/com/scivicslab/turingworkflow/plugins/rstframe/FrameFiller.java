@@ -6,62 +6,98 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The parts of filling a frame that need no model and no workflow: finding the next blank in a
- * rule file, expanding a {@code :frame} blank into one copy of the sub-frame per item, writing a
- * sentence into a blank, and building what the writer is asked for each blank
- * ({@code WorkflowFromFrame_261020_oo01}).
+ * Performs the text-based transformations required to fill a rule file by finding blanks, expanding frame blanks into
+ * lists of sub-frames, and writing sentences or code into specific rules.
  *
- * <p>A <em>blank</em> is a rule that carries an {@code :instruction}. A <em>frame blank</em> also
- * carries {@code :frame "file.lisp"}: the writer lists the items to explain, and each item gets a
- * copy of that file's rules, named {@code <blank>/<n>} for the file's first rule and
- * {@code <blank>/<n>/<suffix>} for the rules {@code <root>/<suffix>} under it. A <em>sentence
- * blank</em> is filled with one piece of text.</p>
+ * <ul>
+ * <li>{@code next} returns the next {@link Blank} to be filled in the provided rule file text, or {@code null} if no
+ * more blanks remain.</li>
+ * <li>{@code expand} replaces a frame blank with a list of its copies, expanding the sub-frame for each item, and
+ * returns the updated rule file text.</li>
+ * <li>{@code include} replaces an include blank with a single copy of the specified child frame and returns the
+ * updated rule file text.</li>
+ * <li>{@code fill} writes a single sentence into a blank, replacing its instruction, sample, and frame attributes, and
+ * returns the updated rule file text.</li>
+ * <li>{@code fillList} writes a list of items into a list blank, creating a sequence of numbered item rules, and
+ * returns the updated rule file text.</li>
+ * <li>{@code fillWithFile} writes a code blank as a rule that points to a specific file, and returns the updated rule
+ * file text.</li>
+ * <li>{@code codePrompt} returns a string formatted as a prompt for a local LLM to write code or commands for a
+ * specific {@link Blank}.</li>
+ * <li>{@code listPrompt} returns a string formatted as a prompt for a local LLM to list items for a frame blank.</li>
+ * <li>{@code itemsPrompt} returns a string formatted as a prompt for a local LLM to list items for a list blank.</li>
+ * <li>{@code sentencePrompt} returns a string formatted as a prompt for a local LLM to write a sentence for a sentence
+ * blank.</li>
+ * <li>{@code parseItems} returns a list of item names extracted from a reply, removing bullets and numbering.</li>
+ * <li>{@code parseNames} returns a list of names extracted from a reply, removing bullets, numbering, and trailing
+ * full stops.</li>
+ * <li>{@code codeOf} returns the text of a code reply with the triple-backtick fences removed.</li>
+ * <li>{@code codeFileName} returns the filename a code blank's code is kept in, based on its name.</li>
+ * </ul>
  *
- * <p>Every method takes and returns text; none keeps state, so the workflow that calls them
- * (through the plan runner) holds the rule file in its own state.</p>
+ * <p>This class holds no state; the rule file text is passed into and returned from every operation.</p>
+ *
+ * <p>One instance may serve several workflows or threads at once.</p>
  */
 public final class FrameFiller {
 
     /**
-     * The next thing to write.
+     * Represents a single placeholder in a rule file that a writer must fill or expand.
      *
-     * @param name        the rule's name
+     * <p>The record contains:
+     * <ul>
+     * <li>{@code name}: the name of the rule</li>
+     * <li>{@code instruction}: what to write, as the frame says it</li>
+     * <li>{@code sample}: a model sentence from another document, or {@code ""}</li>
+     * <li>{@code frame}: the sub-frame's file name for a frame blank, else {@code ""}</li>
+     * <li>{@code kind}: the blank's {@code :kind}, e.g. {@code code-block}, or {@code ""}</li>
+     * <li>{@code include}: the child frame's file name for an include blank, else {@code ""}</li>
+     * </ul>
+     *
+     * <p>An instance may serve several workflows or threads at once.
+     *
+     * @param name the rule's name
      * @param instruction what to write, as the frame says it
-     * @param sample      a model sentence from another document, or {@code ""}
-     * @param frame       the sub-frame's file name for a frame blank, else {@code ""}
-     * @param kind        the blank's {@code :kind}, e.g. {@code code-block}, or {@code ""}
-     * @param include     the child frame's file name for an include blank, else {@code ""}
+     * @param sample a model sentence from another document, or {@code ""}
+     * @param frame the sub-frame's file name for a frame blank, else {@code ""}
+     * @param kind the blank's {@code :kind}, e.g. {@code code-block}, or {@code ""}
+     * @param include the child frame's file name for an include blank, else {@code ""}
      */
     public record Blank(String name, String instruction, String sample, String frame, String kind, String include) {
         public Blank(String name, String instruction, String sample, String frame, String kind) {
             this(name, instruction, sample, frame, kind, "");
         }
 
-        /** @return whether this blank is a list of items, each explained with the sub-frame */
+        /** Returns true if this blank is a list of items to be explained using a sub-frame. */
         public boolean isFrame() {
             return !frame.isBlank();
         }
 
-        /** @return whether this blank is one child frame, put in once as it is: nothing is asked for it */
+        /** Returns true if this blank is an include blank, which inserts exactly one copy of a child frame. */
         public boolean isInclude() {
             return !include.isBlank();
         }
 
-        /** @return whether this blank is filled with code, kept in a file of its own and shown as a code block */
+        /** Returns whether this blank is filled with code, kept in a separate file, and shown as a code block. */
         public boolean isCode() {
             return "code-block".equals(kind);
         }
 
-        /** @return whether this blank is filled with the items of a bulleted or numbered list */
+        /** Returns whether this blank is filled with the items of a bulleted or numbered list. */
         public boolean isList() {
             return "bullet".equals(kind) || "number".equals(kind);
         }
     }
 
-    /** A rule named {@code <parent>/<n>/<suffix>}: a leaf of the n-th copy of a sub-frame. */
+    /**
+     * Matches a rule name that is a leaf of the n-th copy of a sub-frame, formatted as {@code <parent>/<n>/<suffix>}.
+     */
     private static final Pattern LEAF = Pattern.compile("^(.+)/(\\d+)/([^/]+)$");
 
-    /** @return the first blank in the file, or {@code null} when every rule has been written */
+    /**
+     * Returns the first {@code Blank} in the rule file that contains an {@code :instruction}, or {@code null} if no
+     * such rule exists.
+     */
     public Blank next(String fileText) {
         for (RuleFile.Rule r : RuleFile.parse(fileText).rules()) {
             String instruction = r.attr(":instruction");
@@ -77,17 +113,18 @@ public final class FrameFiller {
     }
 
     /**
-     * Replaces a frame blank with the list of its copies and adds the copies after it. A blank without a
-     * {@code :heading} gets no list of its own: its copies take its place in the rule that names it. In the
-     * copies, {@code {item}} is replaced by the item's name, so a copy's {@code :heading} can name its item.
+     * Replaces a frame blank with a list of its copies and adds the copies after it. If the blank has a {@code
+     * :heading}, the copies are inserted as a list following the blank; if the blank lacks a {@code :heading}, the
+     * copies replace the blank's position in the rule that names it, and the blank itself is replaced by the names of
+     * the copies. In all copies, the placeholder {@code {item}} is replaced by the item's name.
      *
-     * @param fileText  the rule file as it stands
-     * @param blankName the frame blank
-     * @param frameText the sub-frame's file; its first rule is the root of one copy
-     * @param names     the items; there is one copy per item, numbered from 1
-     * @return the rule file with the copies in it
-     * @throws IllegalArgumentException when the blank is not a frame blank, the sub-frame has no rule,
-     *                                  or there are no items
+     * @param fileText the rule file as it stands
+     * @param blankName the name of the frame blank to expand
+     * @param frameText the sub-frame's file; its first rule becomes the root of each copy
+     * @param names the items to be explained; one copy is created per item, numbered from 1
+     * @return the rule file containing the expanded copies
+     * @throws IllegalArgumentException if blankName is not a frame blank, the sub-frame has no rules, or names is
+     * empty
      */
     public String expand(String fileText, String blankName, String frameText, List<String> names) {
         RuleFile file = RuleFile.parse(fileText);
@@ -129,11 +166,16 @@ public final class FrameFiller {
     }
 
     /**
-     * Replaces an include blank with one copy of the child frame: the child's first rule takes the
-     * blank's name, keeping the blank's other attributes such as {@code :heading}, and the child's other
-     * rules follow it, renamed under the blank's name. The copy's own blanks are filled in turn.
+     * Replaces an include blank with one copy of the child frame.
      *
-     * @throws IllegalArgumentException when the blank is not an include blank, or the child frame has no rule
+     * The child's first rule takes the blank's name, keeping the blank's other attributes such as {@code :heading},
+     * and the child's other rules follow it, renamed under the blank's name.
+     *
+     * @param fileText the rule file as it stands
+     * @param blankName the name of the blank to be replaced
+     * @param frameText the text of the child frame to be included
+     * @return the rule file with the include blank replaced by the child frame's rules
+     * @throws IllegalArgumentException if blankName is not an include blank, or if the child frame has no rule
      */
     public String include(String fileText, String blankName, String frameText) {
         RuleFile file = RuleFile.parse(fileText);
@@ -159,9 +201,15 @@ public final class FrameFiller {
     }
 
     /**
-     * Writes a sentence into a blank, in place of its {@code :instruction}, {@code :sample} and {@code :frame}.
+     * Replaces a blank's instruction, sample, and frame with a single sentence.
      *
-     * @throws IllegalArgumentException when there is no such rule
+     * @param fileText the rule file as it stands
+     * @param blankName the name of the rule to fill
+     * @param sentence the text to write into the blank
+     * @return the rule file with the blank replaced by the sentence, which is enclosed in quotation marks and ends
+     * with a full stop
+     *
+     * @throws IllegalArgumentException if no rule is named blankName
      */
     public String fill(String fileText, String blankName, String sentence) {
         RuleFile file = RuleFile.parse(fileText);
@@ -172,10 +220,17 @@ public final class FrameFiller {
     }
 
     /**
-     * Writes a list blank as a list of item rules {@code <blank>/1}, {@code <blank>/2}, ..., in place
-     * of its {@code :instruction} and {@code :sample}. Its {@code :kind} stays.
+     * Replaces a list blank with a sequence of item rules {@code <blank>/1}, {@code <blank>/2}, ..., in place of its
+     * {@code :instruction} and {@code :sample}, while keeping its {@code :kind}.
      *
-     * @throws IllegalArgumentException when there is no such rule, or there are no items
+     * @param fileText the rule file as it stands
+     * @param blankName the name of the blank to be filled
+     * @param items the list of items to be written, one per rule
+     * @return the rule file with the blank replaced by the list of item rules and the items themselves written as
+     * quoted strings in those rules
+     *
+     * @throws IllegalArgumentException if blankName does not exist in fileText, if the rule is not a blank, or if
+     * items is empty
      */
     public String fillList(String fileText, String blankName, List<String> items) {
         RuleFile file = RuleFile.parse(fileText);
@@ -194,10 +249,14 @@ public final class FrameFiller {
     }
 
     /**
-     * Writes a code blank as a rule that names the file its code is kept in, in place of its
-     * {@code :instruction} and {@code :sample}. Its {@code :kind code-block} stays.
+     * Replaces a code blank's {@code :instruction} and {@code :sample} with a rule that names the file containing the
+     * code, while keeping the {@code :kind code-block} attribute.
      *
-     * @throws IllegalArgumentException when there is no such rule
+     * @param fileText the rule file as it stands
+     * @param blankName the name of the rule to be replaced
+     * @param fileName the name of the file where the code is kept
+     * @return the rule file with the updated rule
+     * @throws IllegalArgumentException if no rule is named blankName
      */
     public String fillWithFile(String fileText, String blankName, String fileName) {
         RuleFile file = RuleFile.parse(fileText);
@@ -207,12 +266,17 @@ public final class FrameFiller {
         return file.replace(blankName, form(blankName, body)).text();
     }
 
-    /** @return the name of the file a code blank's code is kept in, beside the rule file: {@code p-run/code} is {@code p-run_code.txt} */
+    /**
+     * Returns the name of the text file where the code for a code blank is stored, such that {@code p-run/code}
+     * becomes {@code p-run_code.txt}.
+     *
+     * @param blankName the name of the blank whose code file name is to be determined
+     */
     public String codeFileName(String blankName) {
         return blankName.replaceAll("[^A-Za-z0-9._-]", "_") + ".txt";
     }
 
-    /** @return the code in a reply, without the {@code ```} lines a model may put around it */
+    /** Returns the code from a reply, stripping any surrounding Markdown code fences. */
     public String codeOf(String reply) {
         List<String> lines = new ArrayList<>(List.of(reply.strip().split("\\R", -1)));
         if (!lines.isEmpty() && lines.get(0).strip().startsWith("```")) lines.remove(0);
@@ -221,9 +285,12 @@ public final class FrameFiller {
     }
 
     /**
-     * What the writer is asked for a code blank: the code or command alone.
+     * Returns a string that contains the subject material, any sentences already written in the same paragraph as the
+     * blank, the blank's instruction, and a command to write only the code or command itself.
      *
      * @param fileText the rule file as it stands, for the sentences already written in the blank's paragraph
+     * @param blank the blank whose instruction is used
+     * @param subject the material being explained
      */
     public String codePrompt(String fileText, Blank blank, String subject) {
         StringBuilder sb = new StringBuilder("Below is the material that is being explained to a reader.\n\n")
@@ -238,9 +305,13 @@ public final class FrameFiller {
     }
 
     /**
-     * What the writer is asked for a frame blank: the items to explain.
+     * Constructs a text prompt for a local LLM to identify the items that need to be explained in a frame blank.
      *
-     * @param maxItems how many items at most
+     * @param blank the frame blank whose instruction is used in the prompt
+     * @param subject the material to be explained, which is wrapped in a code block
+     * @param maxItems the maximum number of items the LLM should list
+     * @param language the language in which the items must be written
+     * @return a string containing the material, the instruction from the blank, and the constraints on the list format
      */
     public String listPrompt(Blank blank, String subject, int maxItems, String language) {
         return "Below is the material that will be explained to a reader.\n\n"
@@ -252,9 +323,17 @@ public final class FrameFiller {
     }
 
     /**
-     * What the writer is asked for a list blank: its items, one per line.
+     * Returns a string that is a prompt for a local LLM to generate a list of items, one per line, based on the
+     * provided subject and the blank's instruction.
      *
-     * @param fileText the rule file as it stands, for the sentences already written in the blank's paragraph
+     * The prompt includes the subject in a fenced code block, any sentences already written in the same paragraph as
+     * the blank, the blank's instruction, and a model list if the blank contains a {@code :sample}.
+     *
+     * @param fileText the rule file as it stands, used to include sentences already written in the blank's paragraph
+     * @param blank the blank whose instruction and sample are used to build the prompt
+     * @param subject the material to be explained, which is placed in a fenced code block
+     * @param language the language in which the items must be written
+     * @return a string containing the formatted prompt for the LLM
      */
     public String itemsPrompt(String fileText, Blank blank, String subject, String language) {
         StringBuilder sb = new StringBuilder("Below is the material that is being explained to a reader.\n\n")
@@ -273,7 +352,12 @@ public final class FrameFiller {
         return sb.toString();
     }
 
-    /** @return the items in a reply: one per line, bullets and numbering removed */
+    /**
+     * Returns a list of items extracted from a reply, where each item is a single line with any leading bullets or
+     * numbering removed.
+     *
+     * @param reply the text from the model to be parsed
+     */
     public List<String> parseItems(String reply) {
         List<String> items = new ArrayList<>();
         for (String line : reply.split("\\R")) {
@@ -284,21 +368,37 @@ public final class FrameFiller {
     }
 
     /**
-     * What the writer is asked for a sentence blank.
+     * Returns a prompt that asks a writer to produce a sentence or sentences for a specific blank.
      *
-     * <p>A leaf of a sub-frame copy ({@code <blank>/<n>/<suffix>}) is asked about the n-th item and is
-     * shown what the same copy already says; any other blank is asked about the material as a whole.</p>
+     * <p>If the {@code blank} is a leaf of a sub-frame copy (named {@code <parent>/<n>/<suffix>}), the prompt
+     * specifies the n-th item from {@code names} and shows sentences already written for that specific item.
+     * Otherwise, the prompt treats the {@code blank} as a general part of the material and shows sentences already
+     * written in the same paragraph.</p>
      *
      * @param fileText the rule file as it stands
-     * @param names    the items a frame blank was expanded with, in order
+     * @param blank the blank to be filled
+     * @param subject the material being explained
+     * @param names the names of the items if the blank is a sub-frame copy
+     * @param language the language in which the writer must respond
+     * @return a string containing the instructions, the subject, any existing sentences, and a model sentence if
+     * available
      */
     public String sentencePrompt(String fileText, Blank blank, String subject, List<String> names, String language) {
         return sentencePrompt(fileText, blank, subject, names, language, List.of());
     }
 
     /**
-     * What the writer is asked for a sentence blank, with paragraphs of the source books that play the same part
-     * ({@link FrameExamples}) shown after the model sentence.
+     * Generates a text prompt for a local LLM to write a sentence for a specific blank, including the subject
+     * material, any sentences already written in the same paragraph, a model sentence, and examples of how other books
+     * have filled similar roles.
+     *
+     * @param fileText the rule file as it stands, for the sentences already written in the blank's paragraph
+     * @param blank the blank to be filled
+     * @param subject the material being explained
+     * @param names the names of the items if the blank is a leaf of a sub-frame copy
+     * @param language the language the LLM must write in
+     * @param examples a list of examples from other books showing how to fill the same part
+     * @return a string containing the full prompt for the LLM
      */
     public String sentencePrompt(String fileText, Blank blank, String subject, List<String> names, String language,
                                  List<FrameExamples.Example> examples) {
@@ -333,7 +433,18 @@ public final class FrameFiller {
         return sb.toString();
     }
 
-    /** @return the item names in a reply: one per line, numbering and bullets and a trailing full stop removed */
+    /**
+     * Returns a list of item names extracted from a reply.
+     *
+     * The list contains the names from the reply, one per line, with any leading numbering, bullets, or whitespace
+     * removed, and any trailing full stop removed.
+     *
+     * The number of names returned is at most maxItems.
+     *
+     * @param reply the text from the LLM containing the names
+     * @param maxItems the maximum number of names to extract
+     * @return a list of the extracted names
+     */
     public List<String> parseNames(String reply, int maxItems) {
         List<String> names = new ArrayList<>();
         for (String line : reply.split("\\R")) {
@@ -345,9 +456,13 @@ public final class FrameFiller {
     }
 
     /**
-     * @return the sentences already written under the rule that holds {@code blankName} on its right-hand
-     *         side, one line each in that rule's order, or {@code ""} when there are none — what the
-     *         blank's own sentence follows on from ("that command", "after compiling")
+     * Returns a string of sentences that appear in the same rule as {@code blankName} but precede it, with each
+     * sentence on a new line starting with a dash.
+     *
+     * @param fileText the rule file as it stands
+     * @param blankName the name of the rule to find the preceding sentences for
+     * @return a string of sentences from the same rule, or an empty string if no such sentences exist or if {@code
+     * blankName} is not found
      */
     private String writtenInParagraph(String fileText, String blankName) {
         RuleFile file = RuleFile.parse(fileText);
@@ -406,9 +521,11 @@ public final class FrameFiller {
     }
 
     /**
-     * The name a rule of a (sub-)frame takes in a copy rooted at {@code copyRoot}: the root becomes the copy's root, a name
-     * under the root moves under the copy's root, and any other name the frame defines moves under the copy's root as it is,
-     * so that two copies of one frame, or two frames with the same names, never define the same rule twice.
+     * Returns a new rule name that is a descendant of {@code copyRoot} if the original name is the {@code root} or a
+     * descendant of it, or a descendant of {@code copyRoot} if the name is one of the names defined within the frame.
+     *
+     * <p>If the name is not the {@code root}, a descendant of the {@code root}, or in the {@code defined} set, it
+     * returns the name unchanged.
      */
     private static String rename(String name, String root, String copyRoot, java.util.Set<String> defined) {
         if (name.equals(root)) return copyRoot;
@@ -423,7 +540,11 @@ public final class FrameFiller {
         return out;
     }
 
-    /** @return the attributes of a blank that stay when it is filled or expanded, with a leading space; {@code ""} when none */
+    /**
+     * Returns a string containing the parts of a rule that remain after the {@code :instruction}, {@code :sample},
+     * {@code :frame}, and {@code :include} attributes are removed, with each part preceded by a single space. If no
+     * such parts exist, returns an empty string.
+     */
     private static String restOf(List<RuleFile.Token> items) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < items.size(); i++) {
@@ -439,7 +560,14 @@ public final class FrameFiller {
         return sb.toString();
     }
 
-    /** Joins the lines of a sentence: no space where a Japanese character meets the break, one space elsewhere. */
+    /**
+     * Returns a single string by joining the lines of the input text.
+     *
+     * <p>A space is inserted between lines only if neither the last character of the preceding line nor the first
+     * character of the current line is a CJK character. Empty or blank lines are discarded.</p>
+     *
+     * @param text the multi-line string to join
+     */
     private static String oneLine(String text) {
         String[] lines = text.strip().split("\\R");
         StringBuilder sb = new StringBuilder();
@@ -452,7 +580,13 @@ public final class FrameFiller {
         return sb.toString();
     }
 
-    /** @return the sentence ending with a full stop: {@code 。} after a Japanese character, {@code .} otherwise, unless it already ends with one */
+    /**
+     * Ensures the sentence ends with a full stop, using {@code 。} if the last character is a CJK character and {@code
+     * .} otherwise.
+     *
+     * @param sentence the text to be checked and potentially terminated
+     * @return the sentence ending with a full stop, or the original sentence if it already ends with one or is empty
+     */
     private static String withFullStop(String sentence) {
         if (sentence.isEmpty()) return sentence;
         char last = sentence.charAt(sentence.length() - 1);

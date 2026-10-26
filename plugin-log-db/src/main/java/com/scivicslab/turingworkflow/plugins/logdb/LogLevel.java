@@ -18,51 +18,70 @@
 package com.scivicslab.turingworkflow.plugins.logdb;
 
 /**
- * Log levels for distributed logging.
+ * Represents the severity levels used to categorize and filter workflow execution logs.
  *
- * <p>Each level has a numeric priority, where higher values indicate
- * more severe log events. Levels can be compared using {@link #isAtLeast(LogLevel)}
- * to support filtering by minimum severity.</p>
+ * <p>Each level has a numeric priority where higher values indicate more severe events. Levels can be compared to
+ * support filtering by minimum severity.</p>
+ *
+ * <ul>
+ * <li>{@link #getPriority()} returns the integer priority of the level (0 for {@code DEBUG}, 1 for {@code INFO}, 2 for
+ * {@code WARN}, 3 for {@code ERROR}).</li>
+ * <li>{@link #isAtLeast(LogLevel)} returns {@code true} if this level's priority is greater than or equal to the
+ * priority of the specified level.</li>
+ * </ul>
+ *
+ * <p>Example of filtering logs in a workflow action:</p>
+ * <pre>{@code
+ * if (currentLevel.isAtLeast(LogLevel.WARN)) {
+ *     // perform high-severity logic
+ * }
+ * }</pre>
  *
  * @author devteam@scivicslab.com
  * @since 1.0
  */
 public enum LogLevel {
-    /** Debug-level messages for detailed diagnostic information. */
+    /**
+     * DEBUG(0) Detailed diagnostic information for debugging.
+     * INFO(1) Normal operational messages.
+     * WARN(2) Potential issues that do not prevent execution.
+     * ERROR(3) Failures that may require attention.
+     */
     DEBUG(0),
     /** Informational messages indicating normal operation. */
     INFO(1),
     /** Warning messages indicating potential issues that do not prevent execution. */
     WARN(2),
-    /** Error messages indicating failures that may require attention. */
+    /** Error messages indicating failures. */
     ERROR(3);
 
-    /** The numeric priority of this log level (higher = more severe). */
+    /** The numeric priority of this log level, where higher values indicate more severe events. */
     private final int priority;
 
     /**
-     * Constructs a log level with the specified numeric priority.
+     * Assigns a numeric priority to a log level, where higher values indicate more severe log events.
      *
-     * @param priority the numeric priority (higher values indicate more severe levels)
+     * @param priority the numeric priority of the level
      */
     LogLevel(int priority) {
         this.priority = priority;
     }
 
     /**
-     * Returns the numeric priority of this log level.
+     * Returns the numeric priority of this log level, where higher values indicate more severe events.
      *
-     * @return the priority value (0 for DEBUG, 1 for INFO, 2 for WARN, 3 for ERROR)
+     * @return the priority value (0 for {@code DEBUG}, 1 for {@code INFO}, 2 for {@code WARN}, 3 for {@code ERROR})
      */
     public int getPriority() {
         return priority;
     }
 
     /**
-     * Checks whether this log level is at least as severe as the given level.
+     * Returns {@code true} if this log level's priority is greater than or equal to the priority of the specified
+     * level.
      *
      * @param other the log level to compare against
-     * @return {@code true} if this level's priority is greater than or equal to {@code other}'s priority
+     * @return {@code true} if this level is as severe as or more severe than {@code other}
      */
     public boolean isAtLeast(LogLevel other) {
         return this.priority >= other.priority;

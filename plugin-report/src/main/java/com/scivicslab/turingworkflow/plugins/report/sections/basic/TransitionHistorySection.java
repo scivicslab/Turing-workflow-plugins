@@ -29,13 +29,23 @@ import java.util.List;
 import java.util.logging.Logger;
 
 /**
- * POJO section builder that outputs workflow transition history.
+ * Generates a text block of workflow state transitions by querying the log database.
  *
- * <p>Pure business logic - no {@code CallableByActionName}.
- * Use {@link TransitionHistorySectionActor} to expose as an actor.</p>
+ * <p>The main operations are:
+ * <ul>
+ * <li>{@link #generate()} returns a formatted string containing a {@code [Transition History]} block with timestamps,
+ * labels, success/failure indicators, and a summary of succeeded and failed transitions.</li>
+ * <li>{@link #getTitle()} returns {@code null} because the title is embedded within the generated content.</li>
+ * </ul>
  *
- * <p>Retrieves transition logs from the database and displays them
- * in a human-readable format with success/failure status.</p>
+ * <p>It holds a JDBC {@link Connection} and a session ID that must be set before calling {@code generate}.
+ *
+ * <p>One instance may serve several workflows if the connection and session ID are updated accordingly.
+ *
+ * <p>If the connection is {@code null} or the session ID is negative, {@code generate} returns an empty string.
+ *
+ * <p>If {@code includeChildren} is {@code true} and the target actor is {@code "nodeGroup"}, it aggregates transitions
+ * for all child nodes under their respective headers.
  *
  * @author devteam@scivicslab.com
  * @since 2.16.0
@@ -51,7 +61,7 @@ public class TransitionHistorySection implements SectionBuilder {
     private boolean includeChildren = false;
 
     /**
-     * Sets the database connection for log queries.
+     * Assigns the JDBC connection used to query the H2 log database for transition records.
      *
      * @param connection the JDBC connection to the H2 log database
      */
@@ -60,44 +70,49 @@ public class TransitionHistorySection implements SectionBuilder {
     }
 
     /**
-     * Sets the session ID to query logs from.
+     * Sets the session ID used to query logs for the transition history.
      *
-     * @param sessionId the session ID
+     * @param sessionId the unique identifier of the workflow session
      */
     public void setSessionId(long sessionId) {
         this.sessionId = sessionId;
     }
 
     /**
-     * Sets the target actor name to display transitions for.
+     * Sets the name of the actor whose transitions are displayed in the report.
      *
-     * @param targetActorName the target actor name (e.g., "nodeGroup", "node-server1")
+     * @param targetActorName the name of the actor to query, such as "node-server1" or "nodeGroup"
      */
     public void setTargetActorName(String targetActorName) {
         this.targetActorName = targetActorName;
     }
 
     /**
-     * Sets whether to include child nodes in the output.
+     * Sets whether the report aggregates transitions from all child nodes when the target actor is {@code
+     * "nodeGroup"}.
      *
-     * @param includeChildren true to include children
+     * @param includeChildren true to include child nodes in the output, false to only show the target actor.
      */
     public void setIncludeChildren(boolean includeChildren) {
         this.includeChildren = includeChildren;
     }
 
     /**
-     * {@inheritDoc}
+     * Returns a string containing a formatted history of state transitions found in the log database.
      *
-     * <p>Generates a {@code [Transition History]} block by querying the log database
-     * for state transition records. Each transition is displayed with a success/failure
-     * indicator ({@code o}/{@code x}), timestamp, label, optional note, and error message.
-     * A summary line with counts of succeeded and failed transitions is appended.</p>
+     * The string contains a {@code [Transition History]} block for the target actor, where each entry shows a success
+     * or failure indicator ({@code o} or {@code x}), a timestamp, the transition label, an optional note, and an error
+     * message if the transition failed. A summary line with the total number of transitions and the counts of
+     * succeeded and failed transitions is appended at the end.
      *
-     * <p>If {@code includeChildren} is {@code true} and the target is {@code "nodeGroup"},
-     * all child node transitions are aggregated under their respective node headers.</p>
+     * If {@code includeChildren} is {@code true} and the target actor is {@code "nodeGroup"}, the result aggregates
+     * transitions from all child nodes under their respective headers.
      *
-     * @return the formatted transition history content, or empty string if none found
+     * If the connection is not set, the session ID is negative, or no transition records are found for the target
+     * actor, the method returns an empty string.
+     *
+     * @return the formatted transition history content, or an empty string if no transitions are found or if the
+     * database cannot be queried.
      */
     @Override
     public String generate() {
@@ -123,7 +138,17 @@ public class TransitionHistorySection implements SectionBuilder {
     }
 
     /**
-     * Builds output for a single actor.
+     * Returns a formatted string containing the transition history for a single actor.
+     *
+     * <p>The result is a text block starting with a header {@code [Transition History: <targetActorName>]} followed by
+     * a list of transitions. Each line shows a success or failure indicator ({@code o} or {@code x}), the timestamp,
+     * the transition label, an optional note in brackets, and an optional error message for failed transitions. The
+     * block ends with a summary line stating the total number of transitions and the counts of succeeded and failed
+     * ones.</p>
+     *
+     * <p>If no transitions are found for the specified actor, the method returns an empty string.</p>
+     *
+     * @throws Exception if a database error occurs during the query.
      */
     private String buildSingleActorOutput() throws Exception {
         List<TransitionEntry> entries = queryTransitions(targetActorName);
@@ -163,7 +188,11 @@ public class TransitionHistorySection implements SectionBuilder {
     }
 
     /**
-     * Builds aggregated output for nodeGroup and all children.
+     * Returns a string that aggregates the transition histories of the {@code nodeGroup} and all its child nodes.
+     *
+     * <p>The result is a formatted block where each child node's transitions are grouped under its own header,
+     * followed by a total summary of all transitions across all nodes. If no nodes with transition logs are found, it
+     * returns an empty string.</p>
      */
     private String buildAggregatedOutput() throws Exception {
         List<String> sources = queryDistinctSources();
@@ -212,7 +241,12 @@ public class TransitionHistorySection implements SectionBuilder {
     }
 
     /**
-     * Queries transition logs for a specific actor.
+     * Returns a list of transition entries found in the log database for the specified actor.
+     *
+     * @param source the name of the actor (the {@code node_id} in the logs) to query
+     * @return a list of {@code TransitionEntry} objects containing the timestamp, label, note, success status, and
+     * error message for each transition found; an empty list if no transitions are found for the given source or
+     * session
      */
     private List<TransitionEntry> queryTransitions(String source) throws Exception {
         List<TransitionEntry> entries = new ArrayList<>();
@@ -256,7 +290,12 @@ public class TransitionHistorySection implements SectionBuilder {
     }
 
     /**
-     * Queries distinct actor sources that have transition logs.
+     * Returns a list of actor names that have recorded state transitions in the log database for the current session.
+     *
+     * @return a list of {@code node_id} strings that have entries in the {@code logs} table matching the current
+     * {@code sessionId} and containing a transition message.
+     *
+     * @throws Exception if a database access error occurs.
      */
     private List<String> queryDistinctSources() throws Exception {
         List<String> sources = new ArrayList<>();
@@ -279,9 +318,15 @@ public class TransitionHistorySection implements SectionBuilder {
     }
 
     /**
-     * Extracts transition and note from message.
+     * Splits a log message into a transition description and an optional note.
      *
-     * @return String[2] where [0]=transition, [1]=note
+     * Returns a two-element array where the first element is the transition (e.g., {@code "S1 -> S2"}) and the second
+     * element is the text found within square brackets (e.g., {@code "my note"}).
+     *
+     * If the message does not contain the string {@code "Transition "} or does not follow the {@code "Transition ...:
+     * ..."} format, returns an array containing {@code "unknown"} and an empty string.
+     *
+     * @param message the log message to parse
      */
     private String[] extractTransitionAndNote(String message) {
         if (message == null) return new String[]{"unknown", ""};
@@ -314,10 +359,10 @@ public class TransitionHistorySection implements SectionBuilder {
     }
 
     /**
-     * {@inheritDoc}
+     * Returns {@code null}.
      *
-     * <p>Always returns {@code null} because the title is embedded within the
-     * generated content.</p>
+     * <p>The section title is embedded directly within the string returned by {@link #generate()} rather than being
+     * returned separately.</p>
      */
     @Override
     public String getTitle() {
@@ -325,10 +370,10 @@ public class TransitionHistorySection implements SectionBuilder {
     }
 
     /**
-     * Immutable data holder for a single workflow state transition entry.
+     * Holds the details of a single state transition extracted from the log database.
      *
-     * <p>Contains the timestamp, transition label, optional annotation note,
-     * success/failure status, and an optional error message for failed transitions.</p>
+     * <p>It contains the timestamp, the transition label (such as {@code "S1 -> S2"}), an optional annotation note,
+     * the success status, and an optional error message for failed transitions.
      */
     private static class TransitionEntry {
         /** The formatted timestamp of the transition. */
@@ -337,19 +382,19 @@ public class TransitionHistorySection implements SectionBuilder {
         final String label;
         /** An optional annotation note extracted from the log message. */
         final String note;
-        /** Whether the transition succeeded. */
+        /** Indicates if the state transition was a success. */
         final boolean success;
-        /** The error message for failed transitions, or {@code null} if successful. */
+        /** The error message for failed transitions, or {@code null} if the transition succeeded. */
         final String errorMessage;
 
         /**
-         * Constructs a new transition entry.
+         * Initializes a record of a single state transition.
          *
-         * @param timestamp    the formatted timestamp
-         * @param label        the transition label
-         * @param note         optional annotation note (may be null)
-         * @param success      whether the transition succeeded
-         * @param errorMessage the error message for failures (may be null)
+         * @param timestamp the formatted time of the transition
+         * @param label the transition description (e.g., {@code "S1 -> S2"})
+         * @param note an optional annotation extracted from the log
+         * @param success whether the transition succeeded
+         * @param errorMessage the error message if the transition failed, or {@code null} if it succeeded
          */
         TransitionEntry(String timestamp, String label, String note, boolean success, String errorMessage) {
             this.timestamp = timestamp;

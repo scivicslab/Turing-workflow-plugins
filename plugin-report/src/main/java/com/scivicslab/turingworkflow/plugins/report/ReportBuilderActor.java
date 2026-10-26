@@ -36,17 +36,16 @@ import java.util.Map;
 import java.util.logging.Logger;
 
 /**
- * Actor for building and outputting workflow reports.
+ * Assembles and outputs a multi-section execution report containing workflow metadata, actor states, and transition
+ * history.
  *
- * <p>This actor wraps a {@link ReportBuilder} POJO and provides workflow-callable
- * actions via {@code @Action} annotations.</p>
+ * <ul><li>{@code addWorkflowInfo} - Adds a section with the name and description extracted from the workflow YAML
+ * file.</li><li>{@code addJsonStateSection} - Adds a YAML-formatted section containing the state of a specific
+ * actor.</li><li>{@code report} - Combines all added sections into a single report and sends it to the {@code
+ * outputMultiplexer}.</li></ul>
  *
- * <h2>Actions:</h2>
- * <ul>
- *   <li>{@code addWorkflowInfo} - Add workflow metadata section</li>
- *   <li>{@code addJsonStateSection} - Add actor's JsonState as YAML</li>
- *   <li>{@code report} - Build and output the report</li>
- * </ul>
+ * <p>One instance of this actor may serve several workflows at once, as it builds a report from the sections added
+ * during a single execution sequence.</p>
  *
  * @author devteam@scivicslab.com
  * @since 2.15.0
@@ -57,12 +56,11 @@ public class ReportBuilderActor extends IIActorRef<ReportBuilder> {
     private static final Logger logger = Logger.getLogger(CLASS_NAME);
 
     /**
-     * Constructs a new ReportBuilderActor with a new POJO instance.
+     * Initializes a new {@code ReportBuilderActor} with a fresh {@link ReportBuilder} and links it to the provided
+     * actor system.
      *
-     * <p>Required by {@code loader.createChild} for dynamic instantiation.</p>
-     *
-     * @param actorName the actor name
-     * @param system the actor system
+     * @param actorName the name to assign to this actor
+     * @param system the actor system to which this actor belongs
      */
     public ReportBuilderActor(String actorName, IIActorSystem system) {
         super(actorName, new ReportBuilder(), system);
@@ -71,20 +69,20 @@ public class ReportBuilderActor extends IIActorRef<ReportBuilder> {
     }
 
     /**
-     * Constructs a new ReportBuilderActor.
+     * Initializes a new {@code ReportBuilderActor} with the specified name and builder.
      *
      * @param name the actor name
-     * @param builder the ReportBuilder POJO to wrap
+     * @param builder the {@link ReportBuilder} instance to be used for assembling the report
      */
     public ReportBuilderActor(String name, ReportBuilder builder) {
         super(name, builder);
     }
 
     /**
-     * Constructs a new ReportBuilderActor with actor system.
+     * Initializes a new {@code ReportBuilderActor} using a specific {@link ReportBuilder} and an actor system.
      *
      * @param name the actor name
-     * @param builder the ReportBuilder POJO to wrap
+     * @param builder the report builder instance
      * @param system the actor system
      */
     public ReportBuilderActor(String name, ReportBuilder builder, IIActorSystem system) {
@@ -108,11 +106,10 @@ public class ReportBuilderActor extends IIActorRef<ReportBuilder> {
      * @return an {@link ActionResult} indicating success or failure with a descriptive message
      */
     /**
-     * Which actor's {@link JsonState} to place in the report.
+     * Arguments for adding an actor's state to the report.
      *
-     * @param actor the actor's name
-     * @param path  a JSON path narrowing the section to one part of that state;
-     *              the whole state is used when this is absent
+     * @param actor the name of the actor whose state is to be captured
+     * @param path a JSON path narrowing the section to one part of that state; if absent, the whole state is used
      */
     public record JsonStateSectionArgs(@NotNull String actor, String path) {}
 
@@ -155,13 +152,14 @@ public class ReportBuilderActor extends IIActorRef<ReportBuilder> {
     }
 
     /**
-     * Adds a JsonState section for the specified actor to the report.
+     * Appends a section to the report containing the specified actor's state in YAML format.
      *
-     * <p>Retrieves the target actor's {@link JsonState} and converts it to YAML format.
-     * The resulting {@link JsonStateSection} is appended to the report.</p>
+     * @param args a record containing the name of the actor to inspect and an optional JSON path to a specific part of
+     * its state
      *
-     * @param args which actor to read, and which part of its state
-     * @return an {@link ActionResult} indicating success or failure with a descriptive message
+     * @return an {@link ActionResult} that is a success with a message "JsonState section added for [actor]" if the
+     * actor was found and had a state, or a failure if the actor system is unavailable, the actor does not exist, or
+     * the actor has no {@link JsonState}
      */
     @Action(value = "addJsonStateSection", argsType = JsonStateSectionArgs.class)
     public ActionResult addJsonStateSection(JsonStateSectionArgs args) {
@@ -191,16 +189,15 @@ public class ReportBuilderActor extends IIActorRef<ReportBuilder> {
     }
 
     /**
-     * Builds the complete report and sends it to the output multiplexer.
+     * Assembles the final report from all added sections and returns it as a single text block.
      *
-     * <p>Delegates to {@link ReportBuilder#build()} to assemble all sections (both legacy
-     * and child actor sections), then forwards the result to the {@code outputMultiplexer}
-     * actor with source {@code "report-builder"} and type {@code "plugin-result"}.</p>
-     *
-     * <p><strong>Expected args:</strong> unused (may be empty or null).</p>
+     * <p>The result is a string containing the complete report, including all manually added sections and the output
+     * from all registered child actor sections. If the report is successfully built, the action succeeds and the
+     * result string holds the full report content.</p>
      *
      * @param args unused
-     * @return an {@link ActionResult} with {@code success=true} and the full report content as the result string
+     * @return an {@link ActionResult} that is a success with the full report content as the result string, or a
+     * failure if the report could not be built
      */
     @Action("report")
     public ActionResult report(String args) {
@@ -217,7 +214,10 @@ public class ReportBuilderActor extends IIActorRef<ReportBuilder> {
     // ========================================================================
 
     /**
-     * Gets workflow path from nodeGroup actor.
+     * Returns the workflow file path by querying the {@code nodeGroup} actor.
+     *
+     * <p>Returns the path string if the {@code nodeGroup} actor is found and successfully responds to the {@code
+     * getWorkflowPath} action; otherwise, returns {@code null}.</p>
      */
     private String getWorkflowPathFromNodeGroup() {
         if (system() == null) return null;
@@ -231,7 +231,13 @@ public class ReportBuilderActor extends IIActorRef<ReportBuilder> {
     }
 
     /**
-     * Outputs report to outputMultiplexer.
+     * Sends the assembled report text to the {@code outputMultiplexer} actor.
+     *
+     * <p>The report is sent as a JSON string containing the source {@code "report-builder"}, the type {@code
+     * "plugin-result"}, and the report text itself. If the actor system or the {@code outputMultiplexer} actor is not
+     * available, the method does nothing.</p>
+     *
+     * @param data the full text of the report to be sent
      */
     private void reportToMultiplexer(String data) {
         if (system() == null) return;

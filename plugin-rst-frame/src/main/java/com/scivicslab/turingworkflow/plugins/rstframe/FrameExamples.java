@@ -12,44 +12,40 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The paragraphs of the source books a blank can be shown as examples, besides its one {@code :sample}
- * ({@code FramesAndSamplesFromBooks_261021_oo01}, "関係で指したお手本を引く").
- *
- * <p>An integrated frame says, in its {@code ;;; roles:} table, which paragraph of each frame it integrates plays each of
- * its parts: the row {@code p-what: the-system p-system-what / - / p-what p-functions} names, for the part
- * {@code p-what}, rules of the books those frames were made from. A concrete frame names its books in
- * {@code ;;; made-from:} (a sub-frame adds the lines of its top frame). This class reads both and, for a blank, finds
- * the row whose part the blank belongs to and returns the text of every rule the row names that is a paragraph of one
- * of those books. A row may instead name a rule of an integrated concrete frame (the table of {@code explain-data-type}
- * does); such a rule carries the book's own sentences as {@code :sample}, and those are returned.</p>
+ * Finds and returns text from books or other frames to serve as examples for a specific part of a frame.
  *
  * <ul>
- *   <li>A blank of an integrated frame (or of one of its sub-frames) belongs to the part whose name is one of the
- *       segments of the blank's name: {@code p-what/n} to {@code p-what}, {@code flows/2/flow-what/n} to
- *       {@code flow-what}. The nearest segment that is a part wins. A segment that is a part's name followed by
- *       {@code -} and more ({@code what-definition}) belongs to that part ({@code what}), the longest such name
- *       winning.</li>
- *   <li>A blank of a concrete frame belongs to every row, in the integrated frames that take that concrete frame in,
- *       that names one of the blank's segments; the examples are the row's other paragraphs, from the other frames'
- *       books.</li>
+ * <li>{@code forBlank(frame, blank, max)} returns a list of up to {@code max} {@link Example}s that illustrate the
+ * part of the frame named by {@code blank}. The examples are chosen by matching the segments of {@code blank} against
+ * the frame's roles table or its edge list, prioritizing the most specific part.</li>
  * </ul>
  *
- * <p>Where the library has an edge list ({@code rst-on-lisp/links/*.tsv}, {@code FrameLinks_261022_oo01}) for a frame,
- * the edges are used instead of the roles table: {@code integrates} edges join a rule of an integrated frame and a rule
- * of a concrete frame (an integrated frame is one under {@code explanation/}), {@code made-from} edges join a rule of a concrete frame and a paragraph of a book, and both are
- * followed either way. A rule with no {@code made-from} edge gives its {@code :sample} sentences.</p>
+ * <p>One instance may serve several workflows or threads at once.</p>
  *
- * <p>Pure: frames are handed in as texts by their path under {@code frames/}, the edge lists as texts, and the books
- * are read through {@code readWorks}, which takes a path under the works directory and returns the text or null.</p>
+ * <pre>{@code
+ * // Returns examples for the 'what' part of a 'flow-what' segment in a frame
+ * List<Example> examples = frameExamples.forBlank("explanation/explain-program.lisp", "flows/2/flow-what", 5);
+ * }</pre>
+ *
+ * <p>If no examples are found for the specified blank, an empty list is returned. If the frame path does not exist, an
+ * empty list is returned.</p>
  */
 public final class FrameExamples {
 
-    /** One example: where it is from, and its text. */
+    /**
+     * A single example consisting of its source and its text.
+     *
+     * @param source the source of the example, such as a book and rule name
+     * @param text the text of the example, truncated to 700 characters if necessary
+     */
     public record Example(String source, String text) {
     }
 
     private static final Pattern KEYED = Pattern.compile("([A-Za-z][A-Za-z0-9-]*)( \\([^)]*\\))?:(.*)");
-    /** The head line of a roles table; its colon may be left out after the parenthesis ({@code ;;; roles (role: a / b)}). */
+    /**
+     * Matches the header line of a roles table, such as {@code ;;; roles (role: a / b)}, where the colon may be
+     * omitted if a parenthesis follows.
+     */
     private static final Pattern ROLES_HEAD = Pattern.compile("roles( \\(.*\\))?:?\\s*");
     private static final Pattern ROW = Pattern.compile("^\\s*([A-Za-z][A-Za-z0-9_/-]*):\\s+(.*)$");
     private static final Pattern WORD = Pattern.compile("[A-Za-z][A-Za-z0-9_/.-]*");
@@ -65,23 +61,39 @@ public final class FrameExamples {
     private final List<Group> groups = new ArrayList<>();
 
     /**
-     * @param frames    every frame file, by its path under {@code frames/} ({@code explanation/explain-program.lisp})
-     * @param readWorks reads a path under the works directory; null when there is no such file
+     * Initializes a search engine that finds paragraphs from books to serve as examples for specific parts of a frame.
+     *
+     * @param frames a map of every frame file, keyed by its path under {@code frames/} (e.g., {@code
+     * explanation/explain-program.lisp})
+     *
+     * @param readWorks a function that takes a path under the works directory and returns the file text, or null if
+     * the file does not exist
      */
     public FrameExamples(Map<String, String> frames, Function<String, String> readWorks) {
         this(frames, List.of(), readWorks);
     }
 
-    /** One end of an edge: a rule of a file, the file by its path under {@code frames/} or under the works directory. */
+    /**
+     * Represents one end of an edge in the frame link graph.
+     *
+     * @param file the path to the file, either under {@code frames/} or under the works directory
+     * @param rule the name of the rule within that file
+     */
     private record End(String file, String rule) {
     }
 
-    /** Every edge, from both of its ends: an end, to the ends joined to it, by kind. */
+    /** Maps each end of an edge to its connected ends, grouped by the kind of relationship. */
     private final Map<End, Map<String, List<End>>> edges = new LinkedHashMap<>();
 
     /**
-     * @param links the edge lists ({@code links/**}{@code /*.tsv}), as texts: five tab-separated columns
-     *              {@code a_file a_rule b_file b_rule kind}, lines starting with {@code #} left out
+     * Initializes an actor that finds paragraphs of source books to serve as examples for a blank, using edge lists to
+     * connect frames and rules.
+     *
+     * @param frames every frame file, by its path under {@code frames/} ({@code explanation/explain-program.lisp})
+     * @param links the edge lists ({@code links/**}{@code /*.tsv}), as texts: five tab-separated columns {@code a_file
+     * a_rule b_file b_rule kind}, lines starting with {@code #} left out
+     *
+     * @param readWorks reads a path under the works directory; null when there is no such file
      */
     public FrameExamples(Map<String, String> frames, List<String> links, Function<String, String> readWorks) {
         this.frames = frames;
@@ -117,10 +129,28 @@ public final class FrameExamples {
     }
 
     /**
-     * @param frame the frame being filled, by its path under {@code frames/}
-     * @param blank the blank's name as it stands in the rule file being filled
-     * @param max   how many examples at most
-     * @return the examples, nearest part first; empty when none is known
+     * Returns a list of examples that can be used to illustrate a blank in a frame.
+     *
+     * <ul>
+     * <li>If the frame is an integrated frame, it returns the paragraphs of the concrete rules it integrates that
+     * match the blank's name or its segments, with the nearest parts appearing first.</li>
+     * <li>If the frame is a concrete frame, it returns the other paragraphs from the integrated frames that use this
+     * frame, matching the blank's segments.</li>
+     * <li>If no edges exist, it searches the roles tables of the frame's group to find the row matching the blank's
+     * segments.</li>
+     * <li>If the frame is not part of a group, it returns the {@code :sample} sentences of the rule named by the
+     * blank.</li>
+     * </ul>
+     *
+     * <p>The list contains at most {@code max} examples. If no examples are found, an empty list is returned.</p>
+     *
+     * <pre>{@code
+     * List<Example> examples = frameExamples.forBlank("explanation/explain-program.lisp", "p-what/n", 5);
+     * }</pre>
+     *
+     * @param frame the path of the frame being filled, under {@code frames/}
+     * @param blank the name of the blank as it appears in the rule file
+     * @param max the maximum number of examples to return
      */
     public List<Example> forBlank(String frame, String blank, int max) {
         List<String> segments = segments(blank);
@@ -180,10 +210,7 @@ public final class FrameExamples {
         return out;
     }
 
-    /**
-     * The examples a row names: for each name, the paragraph of that name in the first book that has it; failing that,
-     * the {@code :sample} sentences of the rule of that name in the first integrated concrete frame that has it.
-     */
+    /** Returns true if the frame has any edges defined in the edge lists. */
     private boolean hasEdges(String frame) {
         for (End e : edges.keySet()) if (e.file().equals(frame)) return true;
         return false;
@@ -193,7 +220,16 @@ public final class FrameExamples {
         return edges.getOrDefault(at, Map.of()).getOrDefault(kind, List.of());
     }
 
-    /** The book paragraphs a concrete rule was made from, joined; failing those, the rule's {@code :sample} sentences. */
+    /**
+     * Returns an {@link Example} containing the text of the paragraphs a concrete rule was made from, or the rule's
+     * own {@code :sample} sentences if no source paragraphs are found.
+     *
+     * @param concrete the rule of a concrete frame being queried
+     * @param seen a set of previously visited rule identifiers to prevent infinite loops or redundant processing
+     * @return an {@link Example} whose {@code source} lists the book files and rule names, and whose {@code text}
+     * contains the joined paragraph text (truncated to 700 characters), or {@code null} if the rule has already been
+     * processed or contains no valid text.
+     */
     private Example paragraphsOf(End concrete, Set<String> seen) {
         if (!seen.add(concrete.file() + "#" + concrete.rule())) return null;
         List<String> texts = new ArrayList<>();
@@ -211,7 +247,10 @@ public final class FrameExamples {
         return e;
     }
 
-    /** The row of a part named {@code seg}, or of the longest part {@code seg} starts with followed by {@code -}. */
+    /**
+     * Returns a list of names from the table of roles that correspond to the part named {@code seg}, or to the longest
+     * part whose name is a prefix of {@code seg} followed by a hyphen.
+     */
     private static List<String> rowOf(Map<String, List<String>> rows, String seg) {
         if (rows.containsKey(seg)) return rows.get(seg);
         String best = null;
@@ -244,7 +283,26 @@ public final class FrameExamples {
         return null;
     }
 
-    /** The {@code :sample} sentences of a concrete frame's rule and of the rules under it ({@code p-what/n}), in file order. */
+    /**
+     * Returns an {@link Example} consisting of the {@code :sample} sentences from a rule and its sub-rules (those
+     * named {@code name/n}) within the specified concrete frames.
+     *
+     * The result is the first such example found in file order, where the source is the frame path and the rule name,
+     * and the text is the joined {@code :sample} attributes.
+     *
+     * If no rules match the name, or if the rules have no non-blank {@code :sample} attributes, or if all matching
+     * rules belong to books in {@code skipBooks}, or if the frame has already been visited in this call, returns
+     * {@code null}.
+     *
+     * @param name the name of the rule to find, or a prefix of a rule name (e.g., {@code p-what} matches {@code
+     * p-what/n})
+     *
+     * @param concrete the set of frame paths to search within
+     * @param skipBooks the set of book paths to ignore
+     * @param seen the set of strings used to track visited frames and rules to avoid duplicates
+     * @return an {@link Example} containing the source and the joined sample text, or {@code null} if no valid example
+     * is found
+     */
     private Example fromFrames(String name, Set<String> concrete, Set<String> skipBooks, Set<String> seen) {
         for (String frame : concrete) {
             String text = frames.get(frame);
@@ -274,7 +332,10 @@ public final class FrameExamples {
         });
     }
 
-    /** The books a concrete frame was made from: its own {@code made-from} lines, then its top frame's. */
+    /**
+     * Returns a list of the book files that a concrete frame was made from, including those from its own {@code
+     * made-from} lines and those from its top frame's.
+     */
     private List<String> booksOf(String frame) {
         List<String> lines = new ArrayList<>();
         if (frames.containsKey(frame)) lines.addAll(header(frames.get(frame), "made-from"));
@@ -285,7 +346,14 @@ public final class FrameExamples {
         return out;
     }
 
-    /** Every string a rule holds and the strings of the rules it names, attributes such as {@code :heading} left out. */
+    /**
+     * Collects all text content from a rule and any sub-rules it references, excluding attribute values.
+     *
+     * @param f the rule file containing the rule
+     * @param name the name of the rule to process
+     * @param seen a set of names already processed to prevent infinite recursion in circular rule references
+     * @return a list of strings containing the text of the rule and its descendants
+     */
     private static List<String> textOf(RuleFile f, String name, Set<String> seen) {
         List<String> out = new ArrayList<>();
         RuleFile.Rule r = f.rule(name);
@@ -306,7 +374,21 @@ public final class FrameExamples {
     private static final Set<String> ATTRIBUTES = Set.of(":heading", ":kind", ":file", ":alt", ":doc", ":relation",
             ":instruction", ":sample", ":frame", ":include", ":source", ":rank");
 
-    /** {@code p-what/n} → [p-what]; {@code flows/2/flow-what/n} → [flow-what, flows]: the parts, nearest first. */
+    /**
+     * Returns a list of the names of the parts contained in a blank's name.
+     *
+     * The list contains the segments of the {@code blank} string separated by slashes, excluding empty strings,
+     * numeric strings, and the letter {@code n}, ordered from the most specific (rightmost) to the most general
+     * (leftmost).
+     *
+     * <pre>{@code
+     * // If blank is "flows/2/flow-what/n"
+     * segments("flows/2/flow-what/n"); // returns ["flow-what", "flows"]
+     *
+     * // If blank is "p-what/n"
+     * segments("p-what/n"); // returns ["p-what"]
+     * }</pre>
+     */
     static List<String> segments(String blank) {
         String[] parts = blank.split("/");
         List<String> out = new ArrayList<>();
@@ -318,7 +400,14 @@ public final class FrameExamples {
         return out;
     }
 
-    /** The rows of a {@code ;;; roles} table: each part, with every word its cells name. */
+    /**
+     * Parses a {@code ;;; roles} table from text into a mapping of part names to the words that occupy their cells.
+     *
+     * @param text the text containing the roles table, where the table begins with a header line like {@code ;;; roles
+     * (role: a / b)} and rows are indented with three spaces.
+     *
+     * @return a map where each key is a part name and the value is a list of words found in that part's cells.
+     */
     static Map<String, List<String>> rows(String text) {
         Map<String, List<String>> out = new LinkedHashMap<>();
         boolean in = false;
@@ -343,7 +432,13 @@ public final class FrameExamples {
         return out;
     }
 
-    /** Every value of a header key, a value continued on the next {@code ;;;} lines joined with spaces. */
+    /**
+     * Extracts all values associated with a specific header key from a frame file text, joining values that continue
+     * on subsequent {@code ;;;} lines with spaces.
+     *
+     * @param text the frame file text to parse
+     * @param key the name of the header key to extract
+     */
     static List<String> header(String text, String key) {
         List<String> out = new ArrayList<>();
         String current = null;
@@ -364,7 +459,10 @@ public final class FrameExamples {
         return out;
     }
 
-    /** The frame paths of {@code ;;; integrates:}, under {@code frames/}. */
+    /**
+     * Returns a list of paths under {@code frames/} for the frames that the given text's {@code ;;; integrates:}
+     * header specifies.
+     */
     static List<String> integrates(String text) {
         List<String> out = new ArrayList<>();
         for (String v : header(text, "integrates")) {
@@ -375,8 +473,10 @@ public final class FrameExamples {
     }
 
     /**
-     * The book files a {@code made-from} value names: the part before {@code " / "}, entries starting with
-     * {@code doc_}; an entry ending in {@code .lisp} is the file, any other is a directory holding a file of its own name.
+     * Returns a list of file paths for the books that a {@code made-from} value refers to.
+     *
+     * @param madeFrom the text of the {@code made-from} line, where the part before {@code " / "} contains names of
+     * entries starting with {@code doc_}
      */
     static List<String> sourceFiles(String madeFrom) {
         int slash = madeFrom.indexOf(" / ");
@@ -391,13 +491,22 @@ public final class FrameExamples {
         return out;
     }
 
-    /** @return true for {@code design.lisp}, false for {@code design.use-case.lisp} */
+    /**
+     * Returns true if the frame at the given path is a top-level frame.
+     *
+     * @param path the path of the frame under {@code frames/}
+     */
     static boolean isTop(String path) {
         String name = path.substring(path.lastIndexOf('/') + 1);
         return name.indexOf('.') == name.lastIndexOf('.');
     }
 
-    /** @return the top frame a frame belongs to: {@code design.lisp} for {@code design.use-case.lisp} */
+    /**
+     * Returns the path of the top-level frame that the given frame belongs to.
+     *
+     * If the path is already a top-level frame, the result is the same as the input. For a sub-frame like {@code
+     * explanation/design.use-case.lisp}, it returns the path to the top-level frame {@code explanation/design.lisp}.
+     */
     static String topOf(String path) {
         int slash = path.lastIndexOf('/');
         String name = path.substring(slash + 1);

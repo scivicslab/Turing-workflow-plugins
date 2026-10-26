@@ -17,24 +17,51 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The registry of generalized frames, grown one concrete frame at a time. It starts empty and is kept across books and
- * runs. Each concrete frame of a book (a concept of a section, with the questions its section answers about it) is
- * matched against the generalized frames already made: when one explains the same kind of subject, so that one frame
- * of questions can explain both (an integer type and a floating-point type are both data types), the concrete frame is
- * put into it; otherwise it starts a new generalized frame with a new id, which is a number, not a name. Each time a new
- * id is given, the concept tree is looked at again around it: whether the new frame is a kind of a frame already made,
- * or frames already made are kinds of it. When every concrete frame is placed, a generalized frame with several concrete
- * frames is asked its items over their material put together, the same question as for a concrete frame.
+ * The registry of generalized frames that grows by matching concrete frames from textbooks into a concept tree. It
+ * takes concrete frames—a concept from a section and the questions its section answers—and either matches them to an
+ * existing generalized frame or starts a new one.
+ *
+ * <ul>
+ * <li>{@code placeAll} places every unplaced concrete frame of a book into the registry, one by one, following the
+ * book's order.</li>
+ * <li>{@code relateAll} connects the generalized frames by recording the relations between the concepts they
+ * hold.</li>
+ * <li>{@code nameAll} names every generalized frame that contains multiple concrete frames.</li>
+ * <li>{@code itemsAll} generates a list of items for every generalized frame that contains multiple concrete frames,
+ * based on their combined material.</li>
+ * </ul>
+ *
+ * <p>One instance of this registry is kept across books and runs, growing as new frames are added.</p>
  */
 public final class FrameRegistry {
 
     private FrameRegistry() {
     }
 
-    /** A concrete frame to place: where it is, and the questions its section answers about it. */
+    /**
+     * A concrete frame to be placed in the registry, containing its location in a book and the questions its section
+     * answers about its subject.
+     *
+     * @param at the registry member identifying the book, section number, and subject concept
+     * @param questions the list of questions that the section's text answers about the subject
+     */
     public record Concrete(BookStore.RegistryMember at, List<String> questions) {}
 
-    /** What the registry holds of a generalized frame while it grows: its name, parent, concrete frames' names and questions. */
+    /**
+     * Holds the growing state of a single generalized frame, including its identity, its position in the concept tree,
+     * and the collection of concepts and questions it covers.
+     *
+     * <p>It is used by the registry to track:
+     * <ul>
+     * <li>The frame's unique identifier and name.</li>
+     * <li>The identifier of its parent frame in the concept tree.</li>
+     * <li>The list of concepts that fall under this frame.</li>
+     * <li>The list of questions that characterize the frame.</li>
+     * <li>A set of words derived from the concepts and questions to facilitate matching.</li>
+     * </ul>
+     *
+     * <p>One instance represents exactly one generalized frame.
+     */
     public static final class Frame {
         final String id;
         String name;
@@ -64,7 +91,10 @@ public final class FrameRegistry {
             "with", "its", "that", "this", "from", "into", "used", "use", "using", "be", "of", "is", "an", "in", "to", "or",
             "do", "you", "it", "by", "on", "as", "there", "their", "they", "should", "must", "not", "will", "has", "have", "been");
 
-    /** @return the words of a text that say what it is about: lower case, three letters or more, the common ones left out */
+    /**
+     * Returns a set of significant words from the text, consisting of lowercase terms that are at least three
+     * characters long and are not in the stop list.
+     */
     static Set<String> words(String text) {
         Set<String> out = new HashSet<>();
         for (String w : text.toLowerCase(Locale.ROOT).split("[^a-z0-9]+")) {
@@ -73,10 +103,18 @@ public final class FrameRegistry {
         return out;
     }
 
-    /** How many generalized frames are shown to the model when a concrete frame is matched. */
+    /** The number of generalized frames shown to the model when a concrete frame is matched. */
     static final int CANDIDATES = 6;
 
-    /** @return the generalized frames that share the most words with the concrete frame, those that share none left out */
+    /**
+     * Finds the generalized frames that share the most words with the given concrete frame, prioritizing those that
+     * already contain a concept with the same name.
+     *
+     * @param c the concrete frame to match
+     * @param frames the list of existing generalized frames to search through
+     * @return a list of up to {@value #CANDIDATES} frames that are most similar to the concrete frame, including any
+     * frames that already match the concept name exactly
+     */
     static List<Frame> candidates(Concrete c, List<Frame> frames) {
         // a frame that already holds a concept of the same name is always shown
         String name = GeneralFrames.norm(c.at().concept());
@@ -107,7 +145,19 @@ public final class FrameRegistry {
         return sb.toString();
     }
 
-    /** @return the question whether a concrete frame fits one of the generalized frames */
+    /**
+     * Returns a string that asks a local LLM whether a concrete frame fits one of the provided generalized frames.
+     *
+     * <p>The returned string contains a description of the subject and questions from the {@code c} frame, followed by
+     * a list of candidate frames with their subjects and a subset of their questions. It instructs the model to choose
+     * one of three answers: {@code match} if the subject is the same or a subject of the same kind, {@code kind} if
+     * the subject is a kind of a frame's subject, or {@code new} if none of the candidates apply.
+     *
+     * @param c the concrete frame to be matched, containing its location and questions
+     * @param candidates the list of generalized frames to be shown to the model for comparison
+     * @return a formatted prompt for the LLM to determine the relationship between the concrete frame and the
+     * candidates
+     */
     public static String matchQuestion(Concrete c, List<Frame> candidates) {
         StringBuilder sb = new StringBuilder();
         for (Frame f : candidates) sb.append(describe(f));
@@ -130,8 +180,13 @@ public final class FrameRegistry {
     }
 
     /**
-     * @return the question whether a concept is the same thing as the concept of the same name a generalized frame holds:
-     *         asked before the match question, since two sections about one subject ask different questions about it
+     * Returns a question that asks whether a concept in a specific section is the same thing as the subject held by a
+     * generalized frame of the same name.
+     *
+     * @param c the concrete frame containing the concept and section information to check
+     * @param f the generalized frame to compare against
+     * @return a string containing the question to be posed to the model, including the section's questions and the
+     * frame's description
      */
     public static String sameQuestion(Concrete c, Frame f) {
         StringBuilder qs = new StringBuilder();
@@ -144,12 +199,25 @@ public final class FrameRegistry {
     }
 
     /**
-     * The reply to a match question: the id matched ({@code null} for a new frame), a new name when one is given, and the
-     * frame a new frame goes under when it is a kind of that frame's subject.
+     * The reply to a match question: the matched frame's ID, a new name for a new frame, or the ID of the frame a new
+     * frame is a kind of.
+     *
+     * @param id the ID of a matched frame, or {@code null} if a new frame is created
+     * @param name a new name for a new frame, or {@code null} if none is given
+     * @param kindOf the ID of a frame that the new frame is a kind of, or {@code null} if it is not a kind of any
+     * existing frame
      */
     public record Match(String id, String name, String kindOf) {}
 
-    /** @return what the reply says; an id not among the candidates counts as no match */
+    /**
+     * Extracts the result of a match question from a model's reply, returning the matched frame's ID, a new name, or
+     * the ID of a frame that the new frame is a kind of.
+     *
+     * @param reply the text returned by the model
+     * @param candidates the list of frames that were shown to the model
+     * @return a {@link Match} containing the matched ID (null if no match was found), a new name (if provided), and
+     * the ID of the parent frame (if the result is a "kind" match)
+     */
     public static Match readMatch(String reply, List<Frame> candidates) {
         Matcher m = Pattern.compile("(?im)^\\W*match\\W*[:=]\\s*\\W*(F\\d+)").matcher(reply);
         String id = null;
@@ -167,7 +235,18 @@ public final class FrameRegistry {
         return new Match(id, name == null || name.isBlank() ? null : name, null);
     }
 
-    /** @return the question how a new generalized frame stands in the concept tree among frames already made */
+    /**
+     * Returns a string that asks a local LLM how a new generalized frame stands in the concept tree among the frames
+     * in the provided list.
+     *
+     * <p>The string includes a description of the new frame and the nearby frames, then asks the model to identify if
+     * the new frame is a kind of one of them, if any of the nearby frames are kinds of it, or if it is unrelated. The
+     * model is expected to respond with "parent: " and the ID of the parent, "children: " and a comma-separated list
+     * of IDs of the children, or "none".
+     *
+     * @param f the new generalized frame to be placed in the tree
+     * @param near the list of nearby frames to be shown to the model for comparison
+     */
     public static String treeQuestion(Frame f, List<Frame> near) {
         StringBuilder sb = new StringBuilder();
         for (Frame n : near) sb.append(describe(n));
@@ -182,10 +261,22 @@ public final class FrameRegistry {
                 + "kinds of it, separated by commas, if any; or \"none\". Write nothing else.";
     }
 
-    /** Where a new frame stands: the frame above it, and the frames that go under it. */
+    /**
+     * The position of a new generalized frame in the concept tree, specifying its parent and its children.
+     *
+     * @param parent the id of the frame that is a kind of the new frame, or null if it has no parent
+     * @param children the list of ids of the frames that are kinds of the new frame
+     */
     public record Place(String parent, List<String> children) {}
 
-    /** @return what the reply says, keeping only ids among the near frames */
+    /**
+     * Parses a reply to a tree question to determine where a new generalized frame stands in the concept tree among
+     * the near frames. Returns a {@link Place} containing the ID of the parent frame and a list of IDs of the frames
+     * that are kinds of the new frame. An ID that is not among the near frames is ignored.
+     *
+     * @param reply the text from the model containing the placement information
+     * @param near the list of generalized frames that were shown to the model to provide context
+     */
     public static Place readPlace(String reply, List<Frame> near) {
         Set<String> ids = new HashSet<>();
         for (Frame n : near) ids.add(n.id);
@@ -201,7 +292,10 @@ public final class FrameRegistry {
         return new Place(parent, children);
     }
 
-    /** @return whether {@code above} is {@code id} or stands above it in the tree, so that making it a child would close a cycle */
+    /**
+     * Returns true if {@code above} is the same as {@code id} or is an ancestor of {@code id} in the concept tree,
+     * which indicates that making {@code id} a child of {@code above} would create a cycle.
+     */
     static boolean above(String above, String id, Map<String, Frame> byId) {
         Set<String> seen = new HashSet<>();
         for (String x = id; x != null && seen.add(x); x = byId.containsKey(x) ? byId.get(x).parent : null) {
@@ -210,7 +304,17 @@ public final class FrameRegistry {
         return false;
     }
 
-    /** @return the concrete frames of a book in its order: section by section, concept by concept, those with items */
+    /**
+     * Returns the concrete frames of a book in their natural order: section by section, and within each section,
+     * concept by concept. Only frames that are marked as kept and contain at least one rule are included.
+     *
+     * @param store the database containing the book's content and rules
+     * @param book the name of the book to process
+     * @return a list of {@link Concrete} frames, each containing a registry member and a list of questions derived
+     * from the section's rules
+     *
+     * @throws Exception if there is an error accessing the book's data in the store
+     */
     static List<Concrete> concretes(BookStore store, String book) throws Exception {
         Map<String, Map<String, List<BookStore.FrameItem>>> items = store.frameItems(book);
         Map<String, List<BookStore.FrameConcept>> frames = store.frameConcepts(book);
@@ -226,11 +330,29 @@ public final class FrameRegistry {
     }
 
     /**
-     * Places every concrete frame of the book not placed yet, one at a time, in the book's order. {@code only} holding
-     * {@code reset} empties the registry first. Each model question waits for the one before: the registry it matches
-     * against is what the questions before it made.
+     * Places every concrete frame of the specified book that has not yet been placed into the registry, processing
+     * them one at a time in the book's order. If {@code only} contains {@code reset}, the registry is emptied before
+     * starting.
      *
-     * @return how many concrete frames were placed, how many generalized frames they made, in one line
+     * <ul>
+     * <li>{@code placeAll} returns a single line stating how many concrete frames were placed, how many of those
+     * resulted in new generalized frames, and how many failed.</li>
+     * </ul>
+     *
+     * <p>One instance of this registry may serve several workflows, but the placement process itself is sequential for
+     * the frames of a single book to ensure the registry grows consistently. Each model question generated by the
+     * {@code writer} waits for the completion of the previous one.</p>
+     *
+     * @param store the book store containing the registry and the book's data
+     * @param book the name of the book to process
+     * @param only a list of control strings; if it contains {@code reset}, the registry is cleared first
+     * @param writer a function that takes a question string and returns the model's response string
+     * @param parallel the number of threads to use for certain sub-tasks (though the main loop is sequential)
+     * @param log a consumer for progress and error messages
+     * @return a summary line: "X concrete frame(s) of [book] placed: Y matched into frames already made, Z new;
+     * [total] generalized frame(s) in the registry, [failed] failed"
+     *
+     * @throws Exception if an error occurs during the placement or if the model's response cannot be processed
      */
     public static String placeAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
             Consumer<String> log) throws Exception {
@@ -330,12 +452,25 @@ public final class FrameRegistry {
     }
 
     /**
-     * Gives the relations the book's sections found between their concepts (steps 6 and 7, as the review left them) to
-     * the generalized frames those concepts were put into: the network beside the is-a tree. A concept folded into
-     * another (a feature, a part, an operation) stands for the frame of the one it was folded into; a relation whose two
-     * ends fall into one frame, or whose ends are in no frame, is left out. Asks the model nothing.
+     * Connects the generalized frames of a book into a network of relations based on the connections found between
+     * their concepts in the text.
      *
-     * @return how many relations the network got, by kind, in one line
+     * <ul>
+     * <li>Relates all valid connections between concepts that belong to different generalized frames, or connections
+     * where one end is a concept folded into another frame.</li>
+     * </ul>
+     *
+     * <p>A relation is ignored if both its ends fall into the same generalized frame, or if one of its ends does not
+     * belong to any frame. A concept that was folded into another (as a part, feature, or operation) is treated as
+     * representing the frame it was folded into.</p>
+     *
+     * @param store the book store containing the registry and relations
+     * @param book the name of the book to process
+     * @param only a list of special commands, such as "reset"
+     * @param writer a function to call the local LLM
+     * @param parallel the number of threads to use
+     * @param log a consumer for progress messages
+     * @return a string stating how many relations were saved, categorized by kind
      */
     public static String relateAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
             Consumer<String> log) throws Exception {
@@ -370,7 +505,11 @@ public final class FrameRegistry {
         return out.size() + " relation(s) between generalized frames from " + book + ": " + byKind;
     }
 
-    /** @return the question for the name of a generalized frame, from all its concrete frames */
+    /**
+     * Returns a string that asks a model to name a generalized frame based on the subjects of its concrete frames. The
+     * string lists the distinct concepts held by the frame's members and instructs the model to provide a short name
+     * that describes the kind of subject they all are.
+     */
     public static String nameQuestion(BookStore.RegistryFrame f) {
         List<String> concepts = f.members().stream().map(BookStore.RegistryMember::concept).distinct().toList();
         return "A generalized frame explains these subjects, from sections of a textbook: " + String.join("; ", concepts) + ".\n"
@@ -378,7 +517,17 @@ public final class FrameRegistry {
                 + "\"exception\"). When one of them names them all, use it. Write \"name: \" and the name. Write nothing else.";
     }
 
-    /** Names every generalized frame with several concrete frames from all of them; a frame of one keeps its concept's name. */
+    /**
+     * Assigns a name to every generalized frame that contains more than one concrete frame.
+     *
+     * @param store the registry of frames and books
+     * @param book the name of the book to use for context
+     * @param only a list of filter strings; if "reset" is present, the registry is emptied first
+     * @param writer a function that takes a question string and returns the model's reply
+     * @param parallel the number of concurrent calls to the writer
+     * @param log a consumer for progress and error messages
+     * @return a string stating how many frames were named and how many failed
+     */
     public static String nameAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
             Consumer<String> log) throws Exception {
         List<BookStore.RegistryFrame> several = store.registry().stream().filter(r -> r.members().size() > 1).toList();
@@ -410,8 +559,17 @@ public final class FrameRegistry {
     }
 
     /**
-     * Asks the items of every generalized frame of the registry with several concrete frames, over their material put
-     * together; a frame of one concrete frame keeps that frame's items.
+     * Generates a list of explanatory items for every generalized frame in the registry that contains multiple
+     * concrete frames, by asking a model to identify what the combined material of those frames explains.
+     *
+     * @param store the H2 database store containing the registry and book data
+     * @param book the name of the book to process
+     * @param only a list of strings to filter the work, such as "reset"
+     * @param writer a function that takes a question string and returns the model's response
+     * @param parallel the number of frames to process at a time
+     * @param log a consumer for progress and error messages
+     * @return a summary string stating how many generalized frames were processed, how many items were found, and how
+     * many failed
      */
     public static String itemsAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
             Consumer<String> log) throws Exception {

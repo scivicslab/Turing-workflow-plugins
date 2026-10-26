@@ -29,17 +29,27 @@ import java.sql.Connection;
 import java.util.logging.Logger;
 
 /**
- * Actor wrapper for {@link TransitionHistorySection}.
+ * Generates a text section showing the chronological history of state transitions for a specific actor or group of
+ * actors.
  *
- * <p>Exposes the POJO's methods as actions via {@code @Action} annotations.
- * Handles database connection and session ID retrieval from the system.</p>
+ * <ul><li>{@code generate} returns an action result containing the formatted transition history text.</li><li>{@code
+ * getTitle} returns an action result containing the section title.</li><li>{@code setTargetActor} sets the name of the
+ * actor whose transitions are tracked.</li><li>{@code setIncludeChildren} sets whether the transitions of the target
+ * actor's children are also included in the report.</li></ul>
  *
- * <p>The actor name encodes target actor and options:</p>
- * <ul>
- *   <li>"transitions" - target=nodeGroup, includeChildren=false</li>
- *   <li>"trans:node-server1" - target=node-server1, includeChildren=false</li>
- *   <li>"trans:nodeGroup:children" - target=nodeGroup, includeChildren=true</li>
- * </ul>
+ * <p>The actor name can specify the target and whether to include children using a colon-separated format, such as
+ * {@code "trans:node-server1:children"}.</p>
+ *
+ * <p>One instance may serve several workflows at once.</p>
+ *
+ * <p>Example workflow step:</p>
+ * <pre>{@code
+ * actor: transition-history-actor
+ * method: generate
+ * }</pre>
+ *
+ * <p>If the database connection cannot be established or the session ID cannot be retrieved from the {@code nodeGroup}
+ * actor, the section may be empty or fail to show recent history.</p>
  *
  * @author devteam@scivicslab.com
  * @since 2.16.0
@@ -49,10 +59,13 @@ public class TransitionHistorySectionActor extends IIActorRef<TransitionHistoryS
     private static final Logger logger = Logger.getLogger(TransitionHistorySectionActor.class.getName());
 
     /**
-     * Constructs the actor with a new POJO instance.
+     * Creates an actor that produces a text section showing the chronological history of state transitions for a
+     * specific actor or group of actors.
      *
-     * @param actorName the actor name (may encode target actor)
-     * @param system the actor system
+     * @param actorName the name of the actor to track, which may include a prefix to specify a target actor or the
+     * inclusion of children (e.g., "trans:node-server1" or "trans:nodeGroup:children")
+     *
+     * @param system the actor system used to retrieve the session ID from the {@code nodeGroup} actor
      */
     public TransitionHistorySectionActor(String actorName, IIActorSystem system) {
         super(actorName, new TransitionHistorySection(), system);
@@ -61,7 +74,12 @@ public class TransitionHistorySectionActor extends IIActorRef<TransitionHistoryS
     }
 
     /**
-     * Parses the actor name to extract target actor and options.
+     * Sets the target actor and whether to include its children based on the actor name.
+     *
+     * <p>If the actor name is {@code null} or does not contain a colon, the target actor is set to {@code nodeGroup}.
+     * If the name follows the format {@code prefix:targetActor} or {@code prefix:targetActor:children}, the target
+     * actor is set to the second part, and the inclusion of children is enabled only if the third part is {@code
+     * children}.</p>
      */
     private void parseActorName(String actorName) {
         if (actorName == null) {
@@ -83,7 +101,11 @@ public class TransitionHistorySectionActor extends IIActorRef<TransitionHistoryS
     }
 
     /**
-     * Initializes the POJO with database connection and session ID.
+     * Sets the database connection and the session ID for the underlying section.
+     *
+     * <p>It retrieves a {@link java.sql.Connection} from the {@link DistributedLogStore} and the session ID by calling
+     * {@code getSessionId} on the {@code nodeGroup} actor. If the connection or the session ID cannot be retrieved,
+     * they are not set.</p>
      */
     private void initializeFromSystem() {
         // Get database connection from DistributedLogStore
@@ -105,7 +127,10 @@ public class TransitionHistorySectionActor extends IIActorRef<TransitionHistoryS
     }
 
     /**
-     * Retrieves session ID from nodeGroup actor.
+     * Returns the session ID of the {@code nodeGroup} actor, or -1 if the ID cannot be retrieved.
+     *
+     * <p>A failure to find the {@code nodeGroup} actor or a failure in the {@code getSessionId} action results in -1.
+     * If the returned value is not a valid long, -1 is returned.</p>
      */
     private long getSessionIdFromNodeGroup() {
         if (actorSystem == null || !(actorSystem instanceof IIActorSystem)) {
@@ -138,16 +163,16 @@ public class TransitionHistorySectionActor extends IIActorRef<TransitionHistoryS
      * @return an {@link ActionResult} with the generated section content
      */
     /**
-     * Whose transitions this section shows.
+     * Arguments for setting the target actor for the transition history section.
      *
-     * @param actor the actor's name
+     * @param actor the name of the actor whose transitions are to be shown
      */
     public record TargetActorArgs(@NotNull String actor) {}
 
     /**
-     * Whether the transitions of the child actors are shown too.
+     * Indicates whether the transitions of the target actor's children should be included in the report.
      *
-     * @param includeChildren true to show the children's transitions as well
+     * @param includeChildren true to include the transitions of child actors, false otherwise.
      */
     public record IncludeChildrenArgs(@NotNull Boolean includeChildren) {}
 
@@ -158,12 +183,11 @@ public class TransitionHistorySectionActor extends IIActorRef<TransitionHistoryS
     }
 
     /**
-     * Returns the section title.
-     *
-     * <p><strong>Expected args:</strong> unused (may be empty or null).</p>
+     * Returns the title of the transition history section.
      *
      * @param args unused
-     * @return an {@link ActionResult} with the title string (empty if no title)
+     * @return an {@link ActionResult} that is a success and whose message holds the title string, or an empty string
+     * if the title is null
      */
     @Action("getTitle")
     public ActionResult getTitle(String args) {
@@ -172,10 +196,20 @@ public class TransitionHistorySectionActor extends IIActorRef<TransitionHistoryS
     }
 
     /**
-     * Sets the target actor name dynamically.
+     * Sets the target actor name for the transition history section.
      *
-     * @param args the target actor name
-     * @return action result
+     * Returns an action result that is a success with the message "Target actor set".
+     *
+     * If the provided actor name is empty, the target actor name remains unchanged.
+     *
+     * <pre>{@code
+     * actor: transition-history-actor
+     * method: setTargetActor
+     * arguments:
+     *   actor: "node-server1"
+     * }</pre>
+     *
+     * @param args a record containing the target actor name to be set
      */
     @Action(value = "setTargetActor", argsType = TargetActorArgs.class)
     public ActionResult setTargetActor(TargetActorArgs args) {
@@ -186,10 +220,11 @@ public class TransitionHistorySectionActor extends IIActorRef<TransitionHistoryS
     }
 
     /**
-     * Sets whether to include children.
+     * Sets whether the transitions of the child actors are included in the section.
      *
-     * @param args whether the children are included
-     * @return action result
+     * @param args a record containing the boolean value to set for includeChildren
+     *
+     * @return an action result that is a success with a message stating the new inclusion status
      */
     @Action(value = "setIncludeChildren", argsType = IncludeChildrenArgs.class)
     public ActionResult setIncludeChildren(IncludeChildrenArgs args) {

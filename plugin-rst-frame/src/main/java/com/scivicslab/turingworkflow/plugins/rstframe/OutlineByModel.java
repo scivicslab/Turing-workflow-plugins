@@ -11,15 +11,37 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * A book's table of contents read by the model, for a book whose headings no rule reads well (chapters headed in many
- * ways, sidebars and captions marked like sections, titles left as plain lines by the OCR). The candidate lines are the
- * book's markdown headings outside code, and, in a book with few headings, its short lines that could be titles; the
- * model is shown them in order, a chunk at a time, each with its file, and says which are chapters, sections or
- * subsections. The code numbers them in the order they come: the model decides the levels, not the numbers.
+ * Identifies the book's hierarchy of chapters, sections, and subsections by showing a local LLM a sequence of
+ * candidate lines from the book's files and interpreting its classification of those lines.
+ *
+ * <ul>
+ * <li>{@code inBookOrder(files)} returns a map of file contents sorted by the book's natural reading order (front
+ * matter, chapters, then appendices/index).</li>
+ * <li>{@code candidates(files)} returns a list of {@link Candidate} objects representing markdown headings or short
+ * plain lines that may be titles.</li>
+ * <li>{@code question(book, chunk, first, lastChapter)} returns a formatted prompt for the LLM that describes a chunk
+ * of candidates and instructs the model on how to label them.</li>
+ * <li>{@code read(reply)} returns a map of line numbers to their identified levels (e.g., "chapter 4", "section",
+ * "subsection") based on the model's response.</li>
+ * <li>{@code outline(candidates, levels)} returns a {@link BookOutline.Outline} containing the structured nodes and
+ * any notes for lines that were not classified.</li>
+ * <li>{@code read(book, files, writer, log)} returns a {@link BookOutline.Outline} by orchestrating the full process
+ * of chunking candidates, querying the LLM, and parsing the results.</li>
+ * </ul>
+ *
+ * <p>One instance may serve several workflows or threads at once.</p>
  */
 public final class OutlineByModel {
 
-    /** One line that may be a title: its file, its text without heading marks, and whether it was a markdown heading. */
+    /**
+     * A single line from the book that may be a title: its file, its text without heading marks, and whether it was a
+     * markdown heading.
+     *
+     * @param file the file containing the line
+     * @param text the text of the line without heading marks
+     * @param heading whether the line was a markdown heading
+     * @param textBefore the number of lines of text before this line in the file
+     */
     public record Candidate(String file, String text, boolean heading, int textBefore) {
 
         public Candidate(String file, String text, boolean heading) {
@@ -27,7 +49,7 @@ public final class OutlineByModel {
         }
     }
 
-    /** How many candidates one question shows. */
+    /** The maximum number of candidate lines shown to the local LLM in a single question. */
     public static final int CHUNK = 150;
     /** A chapter's line that gives only its number: "27", "CHAPTER ONE", "Chapter 3", "第3章". */
     private static final Pattern ONLY_A_NUMBER = Pattern.compile("(?i)^(?:(?:chapter|part)\\s+)?(?:\\d{1,3}|[ivxlc]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\\.?$|^第\\s*[0-9０-９一二三四五六七八九十百]+\\s*[章部]$");
@@ -40,7 +62,12 @@ public final class OutlineByModel {
     }
 
     /** @return the lines of the book that may be titles, in reading order */
-    /** @return the book's files in the book's order: front matter, then the chapters, then appendices, answers, glossary and index */
+    /**
+     * Returns a map of the book's files sorted by their logical reading order: front matter, then chapters, then
+     * appendices, answers, glossary, and index.
+     *
+     * @param files a map of file paths to their content
+     */
     public static Map<String, String> inBookOrder(Map<String, String> files) {
         List<String> keys = new ArrayList<>(files.keySet());
         java.util.function.ToIntFunction<String> part = k -> {
@@ -94,7 +121,31 @@ public final class OutlineByModel {
         return all;
     }
 
-    /** @return the question for one chunk of candidates, numbered from {@code first} */
+    /**
+     * Returns a text prompt that instructs a local LLM to identify which lines in a chunk of candidates are titles of
+     * chapters, sections, or subsections.
+     *
+     * <p>The prompt includes the book title, the file names for each candidate, and the text of the candidates
+     * preceded by their line numbers and the number of lines of text appearing before them. If {@code lastChapter} is
+     * not null, the prompt also mentions the name of the chapter preceding these lines. The prompt specifies the
+     * allowed levels—chapter, section, subsection, or name—and provides an example of the required output format.
+     *
+     * <p>An example of the generated prompt:
+     * <pre>{@code
+     * Below are lines from the book "Core Java 14", in reading order...
+     * L12 | chapter 4
+     * L13 | name
+     * L14 | section
+     * L20 | subsection
+     * Write "none" when none of these lines is a title. Write nothing else.
+     * }</pre>
+     *
+     * @param book the title of the book
+     * @param chunk the list of candidate lines to be presented to the model
+     * @param first the starting line number for the first candidate in the chunk
+     * @param lastChapter the name of the chapter preceding this chunk, or null if none exists
+     * @return a string containing the full instruction and the candidate lines for the LLM
+     */
     public static String question(String book, List<Candidate> chunk, int first, String lastChapter) {
         StringBuilder sb = new StringBuilder();
         String file = null;
@@ -128,7 +179,18 @@ public final class OutlineByModel {
                 + "Write \"none\" when none of these lines is a title. Write nothing else.";
     }
 
-    /** @return the level the reply gives each candidate it names, by its number */
+    /**
+     * Parses a model's reply to extract the identified levels for each candidate line.
+     *
+     * Returns a map where each key is the line number (the integer after {@code L}) and the value is the level (one of
+     * {@code chapter}, {@code section}, {@code subsection}, or {@code name}) and, for chapters, the chapter number if
+     * provided.
+     *
+     * A reply containing only {@code none} results in an empty map.
+     *
+     * @param reply the text from the model containing one line per title in the format {@code L<number> | <level>
+     * [<chapter number>]}
+     */
     public static Map<Integer, String> read(String reply) {
         Map<Integer, String> out = new LinkedHashMap<>();
         Matcher m = Pattern.compile("(?im)^\\W*L(\\d+)\\W*\\|\\s*\\W*(chapter|section|subsection|name)\\b(?:\\s+(\\d{1,3}))?").matcher(reply);
@@ -138,8 +200,18 @@ public final class OutlineByModel {
     }
 
     /**
-     * Numbers the titles the model chose, in order: a chapter takes the next chapter number, a section the next number in
-     * its chapter, a subsection the next in its section; a title met again in the same chapter is left out.
+     * Assigns hierarchical numbers to the chosen titles to create a structured outline.
+     *
+     * <p>Returns a {@link BookOutline.Outline} where chapters, sections, and subsections are numbered based on the
+     * sequence of candidates and the levels provided in the map. If a chapter lacks an explicit number, it is
+     * positioned relative to the nearest numbered chapter. Duplicate titles within the same chapter are omitted.
+     *
+     * @param candidates the list of potential title lines from the book
+     * @param levels a map from the candidate index to its identified level (e.g., "chapter 4", "section",
+     * "subsection")
+     *
+     * @return an outline containing the hierarchical nodes and any notes about lines appearing before the first
+     * chapter
      */
     public static BookOutline.Outline outline(List<Candidate> candidates, Map<Integer, String> levels) {
         // the chapters, each with its titles, in the order read; put in the book's order when most of them have their number
@@ -228,7 +300,16 @@ public final class OutlineByModel {
         return new BookOutline.Outline(nodes, notes);
     }
 
-    /** Reads the book's outline with the model, one chunk at a time in order. */
+    /**
+     * Constructs a structured outline of a book by asking a model to identify chapters, sections, and subsections from
+     * a list of candidate lines.
+     *
+     * @param book the name of the book being outlined
+     * @param files a map of file paths to their text content, used to extract candidate lines
+     * @param writer a function that takes a formatted question string and returns the model's text reply
+     * @param log a consumer for progress messages, such as the number of candidates found or titles identified
+     * @return an {@link BookOutline.Outline} containing the hierarchical nodes and any notes about skipped lines
+     */
     public static BookOutline.Outline read(String book, Map<String, String> files, Function<String, String> writer, Consumer<String> log) {
         List<Candidate> cands = candidates(inBookOrder(files));
         Map<Integer, String> levels = new LinkedHashMap<>();

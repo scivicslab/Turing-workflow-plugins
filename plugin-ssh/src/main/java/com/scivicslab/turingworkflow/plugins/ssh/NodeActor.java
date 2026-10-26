@@ -37,57 +37,58 @@ import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 
 /**
- * Interpreter-interfaced actor reference for {@link NodeInterpreter} instances.
+ * An actor reference for {@link NodeInterpreter} that executes workflow control logic and remote shell commands.
  *
- * <p>This class provides a concrete implementation of {@link IIActorRef}
- * specifically for {@link NodeInterpreter} objects. It handles action invocations
- * by name, supporting both workflow execution actions (inherited from Interpreter)
- * and infrastructure actions (SSH command execution).</p>
+ * <p>The following actions are available to a workflow:
+ * <ul>
+ * <li>{@code execCode} - executes the loaded workflow code</li>
+ * <li>{@code readYaml} - loads a YAML workflow from a file path</li>
+ * <li>{@code readJson} - loads a JSON workflow from a file path</li>
+ * <li>{@code readXml} - loads an XML workflow from a file path</li>
+ * <li>{@code reset} - clears the interpreter state and loaded code</li>
+ * <li>{@code runUntilEnd} - runs the loaded workflow until completion or a specified iteration limit</li>
+ * <li>{@code call} - loads and prepares a sub-workflow from a file</li>
+ * <li>{@code apply} - applies a JSON transformation to the current state</li>
+ * <li>{@code executeCommand} - runs a command and streams output to the accumulator</li>
+ * <li>{@code executeCommandQuiet} - runs a command and returns the exit code and output as a string without
+ * streaming</li>
+ * <li>{@code executeSudoCommand} - runs a command with sudo privileges and streams output to the accumulator</li>
+ * <li>{@code executeSudoCommandQuiet} - runs a command with sudo privileges and returns the exit code and output as a
+ * string without streaming</li>
+ * <li>{@code sleep} - pauses execution for a specified number of milliseconds</li>
+ * <li>{@code print} - prints a text message to standard output</li>
+ * <li>{@code doNothing} - returns the input argument unchanged</li>
+ * <li>{@code detectDocumentChanges} - identifies changed documents via git comparison</li>
+ * <li>{@code cloneChangedDocuments} - clones the documents identified by {@code detectDocumentChanges}</li>
+ * <li>{@code buildChangedDocuments} - builds the documents identified by {@code detectDocumentChanges}</li>
+ * <li>{@code deployChangedDocuments} - copies the builds of changed documents to the public directory</li>
+ * <li>{@code printJson} - sends the current state as a formatted JSON string to the accumulator</li>
+ * <li>{@code printYaml} - sends the current state as a formatted YAML string to the accumulator</li>
+ * </ul>
  *
- * <p><strong>Supported actions:</strong></p>
- * <p><em>Workflow actions (from Interpreter):</em></p>
- * <ul>
- *   <li>{@code execCode} - Executes the loaded workflow code</li>
- *   <li>{@code readYaml} - Reads a YAML workflow definition from a file path</li>
- *   <li>{@code readJson} - Reads a JSON workflow definition from a file path</li>
- *   <li>{@code readXml} - Reads an XML workflow definition from a file path</li>
- *   <li>{@code reset} - Resets the interpreter state</li>
- * </ul>
- * <p><em>Infrastructure actions (Node-specific):</em></p>
- * <ul>
- *   <li>{@code executeCommand} - Executes a command and reports to accumulator (default)</li>
- *   <li>{@code executeCommandQuiet} - Executes a command without reporting</li>
- *   <li>{@code executeSudoCommand} - Executes sudo command and reports to accumulator (default)</li>
- *   <li>{@code executeSudoCommandQuiet} - Executes sudo command without reporting</li>
- * </ul>
+ * <p>One instance may serve several workflows at once, as actions are executed one at a time via the underlying
+ * interpreter.</p>
  *
  * @author devteam@scivicslab.com
  * @since 2.0.0
  */
 public class NodeActor extends IIActorRef<NodeInterpreter> {
 
-    /** Logger instance named after the actor for context-aware logging. */
+    /** A logger instance used to record the actor's activities and errors. */
     Logger logger = null;
 
     /**
-     * Constructs a new NodeActor with the specified actor name and node interpreter object.
+     * Initializes a new actor reference for a {@link NodeInterpreter} with a specific name.
      *
-     * @param actorName the name of this actor
-     * @param object the {@link NodeInterpreter} instance managed by this actor reference
+     * @param actorName the name used to call this actor in a workflow
+     * @param object the {@link NodeInterpreter} instance this actor controls
      */
     public NodeActor(String actorName, NodeInterpreter object) {
         super(actorName, object);
         logger = Logger.getLogger(actorName);
     }
 
-    /**
-     * Constructs a new NodeActor with the specified actor name, node interpreter object,
-     * and actor system.
-     *
-     * @param actorName the name of this actor
-     * @param object the {@link NodeInterpreter} instance managed by this actor reference
-     * @param system the actor system managing this actor
-     */
+    /** Initializes a new {@code NodeActor} with a name, a {@link NodeInterpreter} instance, and an actor system. */
     public NodeActor(String actorName, NodeInterpreter object, IIActorSystem system) {
         super(actorName, object, system);
         logger = Logger.getLogger(actorName);
@@ -109,23 +110,23 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      * @return ActionResult with the execution outcome
      */
     /**
-     * A path in the file system.
+     * Represents a path in the file system.
      *
      * @param path the path to read
      */
     public record PathArgs(@NotNull String path) {}
 
     /**
-     * A piece of text.
+     * Represents a piece of text.
      *
-     * @param text the text
+     * @param text the text content
      */
     public record TextArgs(@NotNull String text) {}
 
     /**
-     * How long to wait.
+     * Pauses execution for the specified duration.
      *
-     * @param millis milliseconds to wait
+     * @param millis the number of milliseconds to wait
      */
     public record SleepArgs(@NotNull Long millis) {}
 
@@ -137,38 +138,38 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     public record MaxIterationsArgs(Integer maxIterations) {}
 
     /**
-     * Which workflow to run.
+     * The path to a workflow file.
      *
-     * @param workflowFile path of the workflow file
+     * @param workflowFile the path to the workflow file
      */
     public record WorkflowFileArgs(@NotNull String workflowFile) {}
 
     /**
-     * Which workflow to run and how many steps it may take.
+     * Specifies a workflow file to run and the maximum number of steps allowed.
      *
-     * @param workflowFile  path of the workflow file
-     * @param maxIterations the limit; omit for 10000
+     * @param workflowFile the path of the workflow file
+     * @param maxIterations the limit of steps; if null, defaults to 10000
      */
     public record RunWorkflowArgs(@NotNull String workflowFile, Integer maxIterations) {}
 
     /**
-     * Which overlay to apply.
+     * Applies a JSON transformation to the interpreter's state.
      *
-     * @param overlay the overlay to apply
+     * @param overlay the JSON transformation to apply
      */
     public record OverlayArgs(@NotNull String overlay) {}
 
     /**
-     * Which list of documents to work through.
+     * The path to a file containing a list of documents.
      *
-     * @param documentList path of the file listing the documents
+     * @param documentList the path to the file listing the documents
      */
     public record DocumentListArgs(@NotNull String documentList) {}
 
     /**
-     * A shell command to run on the node.
+     * Represents the command-line string to be executed on the node.
      *
-     * @param command the command line
+     * @param command the command to run
      */
     public record CommandArgs(@NotNull String command) {}
 
@@ -182,15 +183,15 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     }
 
     /**
-     * Reads a YAML workflow definition from a file path.
+     * Loads a YAML workflow definition from a file path.
      *
-     * <p>If an overlay directory is configured on the interpreter, the YAML
-     * is loaded with overlay variable substitution applied.</p>
+     * <p>If an overlay directory is configured on the interpreter, the YAML is loaded with overlay variable
+     * substitution applied.</p>
      *
      * <p>JSON args format: {@code ["path/to/workflow.yaml"]}</p>
      *
-     * @param args JSON array containing the file path as the first element
-     * @return ActionResult indicating success or failure with error details
+     * @param args a {@link PathArgs} containing the file path to read
+     * @return an {@link ActionResult} indicating success or failure with error details
      */
     @Action(value = "readYaml", argsType = PathArgs.class)
     public ActionResult readYaml(PathArgs args) {
@@ -232,12 +233,10 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     }
 
     /**
-     * Resets the interpreter state, clearing the loaded workflow code and current state.
+     * Clears the interpreter state, including the loaded workflow code and the current state.
      *
-     * <p>JSON args format: ignored (no arguments required).</p>
-     *
-     * @param args JSON array string (unused)
-     * @return ActionResult indicating success or failure
+     * @param args a JSON array string (unused)
+     * @return an ActionResult indicating success or failure
      */
     @Action("reset")
     public ActionResult reset(String args) {
@@ -250,13 +249,15 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     }
 
     /**
-     * Runs the loaded workflow until it reaches an end state or exceeds the iteration limit.
+     * Runs the loaded workflow until it reaches an end state or exceeds the specified iteration limit.
      *
-     * <p>JSON args format: {@code [maxIterations]} where maxIterations is optional
-     * (defaults to 10000).</p>
+     * <p>The result is an {@link ActionResult} indicating whether the workflow completed successfully or failed, with
+     * the message containing the execution outcome.</p>
      *
-     * @param args JSON array optionally containing the max iterations as the first element
-     * @return ActionResult with the workflow execution outcome
+     * <p>If the first argument in the JSON array is omitted, the limit is 10000 iterations.</p>
+     *
+     * @param args a JSON array containing the optional maximum number of iterations as its first element.
+     * @return an {@link ActionResult} describing the workflow's execution outcome.
      */
     @Action(value = "runUntilEnd", argsType = MaxIterationsArgs.class)
     public ActionResult runUntilEnd(MaxIterationsArgs args) {
@@ -269,12 +270,13 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     }
 
     /**
-     * Calls (loads and prepares) a sub-workflow from a file.
+     * Loads and prepares a sub-workflow from a file.
+     *
+     * <p>Returns an {@link ActionResult} indicating the outcome of the sub-workflow execution.</p>
      *
      * <p>JSON args format: {@code ["path/to/sub-workflow.yaml"]}</p>
      *
-     * @param args JSON array containing the workflow file path as the first element
-     * @return ActionResult with the call outcome
+     * @param args a {@link WorkflowFileArgs} containing the path to the workflow file
      */
     @Action(value = "call", argsType = WorkflowFileArgs.class)
     public ActionResult call(WorkflowFileArgs args) {
@@ -289,11 +291,14 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     /**
      * Loads and runs a workflow file to completion in a single action.
      *
-     * <p>JSON args format: {@code ["path/to/workflow.yaml"]} or
-     * {@code ["path/to/workflow.yaml", maxIterations]}.</p>
+     * <p>The action returns an {@link ActionResult} indicating the outcome of the workflow execution. If the workflow
+     * fails, the result message contains the error details.</p>
      *
-     * @param args JSON array with workflow file path and optional max iterations
-     * @return ActionResult with the workflow execution outcome
+     * <p>JSON args format: {@code ["path/to/workflow.yaml"]} or {@code ["path/to/workflow.yaml", maxIterations]}.</p>
+     *
+     * @param args a record containing the path to the workflow file and an optional maximum number of iterations
+     *
+     * @return an ActionResult with the workflow execution outcome
      */
     @Action(value = "runWorkflow", argsType = RunWorkflowArgs.class)
     public ActionResult runWorkflow(RunWorkflowArgs args) {
@@ -310,12 +315,12 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     }
 
     /**
-     * Applies a JSON patch or transformation to the interpreter's JSON state.
+     * Applies a JSON transformation to the interpreter's state.
      *
-     * <p>JSON args format: a JSON string representing the transformation to apply.</p>
+     * <p>Returns an ActionResult indicating whether the transformation was successfully applied to the current
+     * state.</p>
      *
-     * @param args the JSON transformation arguments
-     * @return ActionResult with the apply outcome
+     * @param args a single argument containing the JSON transformation (as a patch or string) to apply
      */
     @Action(value = "apply", argsType = OverlayArgs.class)
     public ActionResult apply(OverlayArgs args) {
@@ -331,15 +336,16 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     // ========================================================================
 
     /**
-     * Executes a command on the remote node and reports output to the accumulator.
+     * Executes a command on the remote node and streams its output to the accumulator.
      *
-     * <p>Output is streamed in real-time to the outputMultiplexer if available.
-     * After execution, the full result is reported to the accumulator.</p>
+     * <p>Output is streamed in real-time to the {@code outputMultiplexer} if available. After execution, the combined
+     * stdout and stderr are reported to the accumulator and returned in the result message.</p>
      *
      * <p>JSON args format: {@code ["command-to-execute"]}</p>
      *
-     * @param args JSON array containing the command as the first element
-     * @return ActionResult with success status and combined stdout/stderr
+     * @param args a {@link CommandArgs} containing the command string to run
+     * @return an {@link ActionResult} that is a success if the command exit code is 0, with the combined stdout and
+     * stderr as the message; otherwise, a failure with the combined output as the message
      */
     @Action(value = "executeCommand", argsType = CommandArgs.class)
     public ActionResult executeCommand(CommandArgs args) {
@@ -365,15 +371,14 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     }
 
     /**
-     * Executes a command on the remote node without reporting to the accumulator.
+     * Executes a command on the remote node and returns the exit code and output as a single string.
      *
-     * <p>Unlike {@code executeCommand}, this action does not stream output or
-     * report results to the outputMultiplexer.</p>
+     * <p>Unlike {@code executeCommand}, this action does not stream output to the accumulator or report results to the
+     * {@code outputMultiplexer}.</p>
      *
-     * <p>JSON args format: {@code ["command-to-execute"]}</p>
-     *
-     * @param args JSON array containing the command as the first element
-     * @return ActionResult with exit code, stdout, and stderr in the result string
+     * @param args a JSON array containing the command as the first element
+     * @return an ActionResult that is a success if the command ran, with a message containing the exit code, stdout,
+     * and stderr; otherwise, a failure result with the error details
      */
     @Action(value = "executeCommandQuiet", argsType = CommandArgs.class)
     public ActionResult executeCommandQuiet(CommandArgs args) {
@@ -396,15 +401,16 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     }
 
     /**
-     * Executes a command with sudo privileges and reports output to the accumulator.
+     * Executes a command with sudo privileges and reports the combined stdout and stderr to the outputMultiplexer.
      *
-     * <p>Requires the {@code SUDO_PASSWORD} environment variable to be set.
-     * Output is streamed in real-time to the outputMultiplexer if available.</p>
+     * <p>Requires the {@code SUDO_PASSWORD} environment variable to be set. Output is sent to the accumulator in
+     * real-time as it is produced.</p>
      *
      * <p>JSON args format: {@code ["command-to-execute"]}</p>
      *
-     * @param args JSON array containing the command as the first element
-     * @return ActionResult with success status and combined stdout/stderr
+     * @param args a JSON array containing the command as the first element
+     * @return an ActionResult that is a success if the command exited with code 0, with a message containing the
+     * combined stdout and stderr; otherwise, a failure result with an error message
      */
     @Action(value = "executeSudoCommand", argsType = CommandArgs.class)
     public ActionResult executeSudoCommand(CommandArgs args) {
@@ -441,15 +447,16 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     }
 
     /**
-     * Executes a command with sudo privileges without reporting to the accumulator.
+     * Executes a command with sudo privileges without reporting output to the accumulator.
      *
-     * <p>Requires the {@code SUDO_PASSWORD} environment variable to be set.
-     * Unlike {@code executeSudoCommand}, this action does not stream output.</p>
+     * <p>Requires the {@code SUDO_PASSWORD} environment variable to be set. Unlike {@code executeSudoCommand}, this
+     * action does not stream output to the outputMultiplexer.</p>
      *
      * <p>JSON args format: {@code ["command-to-execute"]}</p>
      *
-     * @param args JSON array containing the command as the first element
-     * @return ActionResult with exit code, stdout, and stderr in the result string
+     * @param args a JSON array containing the command as the first element
+     * @return an ActionResult that is a success if the command exits with code 0, with a message containing the exit
+     * code, stdout, and stderr; otherwise, a failure result with the error details
      */
     @Action(value = "executeSudoCommandQuiet", argsType = CommandArgs.class)
     public ActionResult executeSudoCommandQuiet(CommandArgs args) {
@@ -476,12 +483,16 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     // ========================================================================
 
     /**
-     * Pauses execution for the specified number of milliseconds.
+     * Pauses the current actor's execution for a specified duration.
      *
-     * <p>JSON args format: {@code ["milliseconds"]} (e.g., {@code ["5000"]} for 5 seconds).</p>
+     * <p>Returns an ActionResult that is a success if the sleep completed, or a failure if the thread was interrupted.
      *
-     * @param args JSON array containing the sleep duration in milliseconds
-     * @return ActionResult indicating success or failure if interrupted
+     * <p>The duration is the number of milliseconds specified in the first element of the JSON array argument.
+     *
+     * @param args a SleepArgs object containing the number of milliseconds to wait
+     *
+     * @return an ActionResult that is a success with a message stating the duration slept, or a failure if the sleep
+     * was interrupted
      */
     @Action(value = "sleep", argsType = SleepArgs.class)
     public ActionResult sleep(SleepArgs args) {
@@ -498,12 +509,10 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     }
 
     /**
-     * Prints a text message to standard output.
+     * Writes a text message to the standard output.
      *
-     * <p>JSON args format: {@code ["text to print"]}</p>
-     *
-     * @param args JSON array containing the text to print as the first element
-     * @return ActionResult with the printed text
+     * @param args the object containing the text to be printed
+     * @return an ActionResult that is a success and contains the printed text as its message
      */
     @Action(value = "print", argsType = TextArgs.class)
     public ActionResult print(TextArgs args) {
@@ -513,14 +522,12 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     }
 
     /**
-     * A no-op action that always succeeds, returning the first argument as the result.
+     * Returns the provided text as a successful action result.
      *
-     * <p>Useful as a placeholder or pass-through in workflow definitions.</p>
+     * <p>The result is the text passed in the argument.</p>
      *
-     * <p>JSON args format: {@code ["optional message"]}</p>
-     *
-     * @param args JSON array containing an optional message
-     * @return ActionResult with success and the first argument as the result
+     * @param args the text to return
+     * @return an ActionResult that is a success and holds the input text as its message
      */
     @Action(value = "doNothing", argsType = TextArgs.class)
     public ActionResult doNothing(TextArgs args) {
@@ -534,10 +541,10 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     /**
      * Detects which documents have changed by comparing local and remote git state.
      *
-     * <p>JSON args format: {@code ["path/to/doc-list.txt"]}</p>
+     * <p>Returns an ActionResult where a success indicates the comparison completed, and the message holds the number
+     * of changed documents detected.</p>
      *
-     * @param args JSON array containing the document list file path
-     * @return ActionResult with the number of changed documents detected
+     * @param args a record containing the path to the file listing the documents to check
      */
     @Action(value = "detectDocumentChanges", argsType = DocumentListArgs.class)
     public ActionResult detectDocumentChanges(DocumentListArgs args) {
@@ -556,15 +563,18 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     }
 
     /**
-     * Clones documents that were detected as changed from their git repositories.
+     * Clones documents that were detected as changed from their git repositories, returning the number of documents
+     * successfully cloned.
      *
-     * <p>Only processes documents previously identified by {@code detectDocumentChanges}.
-     * Performs a fresh clone (removes existing directory first) to avoid conflicts.</p>
+     * <p>This action only processes documents previously identified by {@code detectDocumentChanges}. It performs a
+     * fresh clone by removing any existing directory for a document before pulling the new version to avoid
+     * conflicts.</p>
      *
      * <p>JSON args format: {@code ["path/to/doc-list.txt"]}</p>
      *
-     * @param args JSON array containing the document list file path
-     * @return ActionResult with the number of documents cloned
+     * @param args a JSON array containing the path to the file listing the documents as the first element
+     * @return an ActionResult that is a success with the number of cloned documents as the message, or a failure with
+     * an error message if an IO error occurs or the process is interrupted
      */
     @Action(value = "cloneChangedDocuments", argsType = DocumentListArgs.class)
     public ActionResult cloneChangedDocuments(DocumentListArgs args) {
@@ -583,14 +593,13 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     }
 
     /**
-     * Builds changed Docusaurus documents using yarn install and yarn build.
+     * Builds Docusaurus documents that were previously identified as changed.
      *
-     * <p>Only processes documents previously identified by {@code detectDocumentChanges}.</p>
+     * <p>Only processes documents listed in the file provided by the argument.</p>
      *
-     * <p>JSON args format: {@code ["path/to/doc-list.txt"]}</p>
-     *
-     * @param args JSON array containing the document list file path
-     * @return ActionResult with the number of documents built
+     * @param args a record containing the path to the file listing the documents to build
+     * @return an ActionResult that is a success with a message containing the number of documents built, or a failure
+     * with an error message if the build fails
      */
     @Action(value = "buildChangedDocuments", argsType = DocumentListArgs.class)
     public ActionResult buildChangedDocuments(DocumentListArgs args) {
@@ -609,15 +618,12 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     }
 
     /**
-     * Deploys changed document builds to the public_html directory.
+     * Deploys the build output of changed documents to the {@code ~/public_html/} directory.
      *
-     * <p>Copies the build output of each changed document to {@code ~/public_html/}.
-     * Only processes documents previously identified by {@code detectDocumentChanges}.</p>
+     * <p>Only processes documents previously identified by {@code detectDocumentChanges}.
      *
-     * <p>JSON args format: {@code ["path/to/doc-list.txt"]}</p>
-     *
-     * @param args JSON array containing the document list file path
-     * @return ActionResult with the number of documents deployed
+     * @param args a JSON array containing the path to the file listing the documents
+     * @return an action result indicating whether the deployment succeeded and the result of the operation
      */
     @Action(value = "deployChangedDocuments", argsType = DocumentListArgs.class)
     public ActionResult deployChangedDocuments(DocumentListArgs args) {
@@ -640,10 +646,11 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     // ========================================================================
 
     /**
-     * Outputs JSON State at the given path in pretty JSON format via outputMultiplexer.
+     * Returns a pretty-printed JSON string of the current state at the specified path.
      *
-     * @param args the path to output (from JSON array)
-     * @return ActionResult with the formatted JSON
+     * @param args a single-element array containing the file path to the output destination
+     * @return an ActionResult that is a success and holds the formatted JSON string, or a failure if the state could
+     * not be serialized or the path is invalid
      */
     @Action(value = "printJson", argsType = PathArgs.class)
     public ActionResult printJson(PathArgs args) {
@@ -654,10 +661,11 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     }
 
     /**
-     * Outputs JSON State at the given path in YAML format via outputMultiplexer.
+     * Sends the current workflow state as a YAML string to the {@code outputMultiplexer} at the specified file path.
      *
-     * @param args the path to output (from JSON array)
-     * @return ActionResult with the formatted YAML
+     * @param args a {@link PathArgs} containing the file path to the output destination
+     * @return an {@link ActionResult} that is a success and holds the formatted YAML string, or a failure if the state
+     * could not be serialized or the path is invalid
      */
     @Action(value = "printYaml", argsType = PathArgs.class)
     public ActionResult printYaml(PathArgs args) {
@@ -669,9 +677,7 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
         return new ActionResult(true, formatted);
     }
 
-    /**
-     * Sends formatted output to the outputMultiplexer, line by line.
-     */
+    /** Sends a formatted string to the {@code outputMultiplexer} actor. */
     private void sendToMultiplexer(String formatted) {
         ActorHelper.sendToMultiplexer((IIActorSystem) this.system(), this.getName(), formatted);
     }
@@ -681,7 +687,11 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     // ========================================================================
 
     /**
-     * Handles exceptions and returns an appropriate ActionResult.
+     * Returns an unsuccessful {@link ActionResult} containing a descriptive error message when an exception occurs
+     * during an action.
+     *
+     * <p>The result message is the message from the exception, or the root cause message if the exception is an {@link
+     * ExecutionException}.</p>
      */
     private ActionResult handleException(Exception e) {
         String message;
@@ -696,7 +706,11 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
 
 
     /**
-     * Creates an OutputCallback that forwards output to the multiplexer accumulator.
+     * Returns a callback that sends command output to the {@code outputMultiplexer} actor.
+     *
+     * <p>Each line of stdout or stderr received by the callback is wrapped in a JSON object containing the source
+     * actor's name, the output type, and the line text, then sent to the {@code outputMultiplexer} via its {@code add}
+     * action. If no {@code outputMultiplexer} is found in the actor system, the returned callback has no effect.</p>
      */
     private Node.OutputCallback createOutputCallback(String nodeName) {
         IIActorSystem sys = (IIActorSystem) this.system();
@@ -728,7 +742,11 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     }
 
     /**
-     * Reports command result to the multiplexer accumulator actor if available.
+     * Sends the combined stdout and stderr of a command execution to the {@code outputMultiplexer} actor.
+     *
+     * <p>If an actor named {@code outputMultiplexer} is present in the system, it sends a JSON object containing the
+     * source actor's name, the current transition YAML type, and the combined output string. If no such actor exists,
+     * the method does nothing.</p>
      */
     private void reportToAccumulator(Node.CommandResult result) {
         IIActorSystem sys = (IIActorSystem) this.system();
@@ -743,7 +761,14 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     }
 
     /**
-     * Reports a message to the multiplexer accumulator.
+     * Sends an error message to the {@code outputMultiplexer} actor.
+     *
+     * <p>The method checks if an actor named {@code outputMultiplexer} is available in the system; if so, it
+     * constructs a JSON object containing the source node name, the type {@code "error"}, and the provided message,
+     * then calls the {@code add} action on the multiplexer with this JSON string.</p>
+     *
+     * @param nodeName the name of the node reporting the error
+     * @param message the error text to be sent
      */
     private void reportOutputToMultiplexer(String nodeName, String message) {
         IIActorSystem sys = (IIActorSystem) this.system();
@@ -758,15 +783,14 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
     }
 
     /**
-     * Combines stdout and stderr into a single output string.
+     * Returns a single string containing both the standard output and the standard error from a command execution
+     * result.
      */
     private String combineOutput(Node.CommandResult result) {
         return ActorHelper.combineOutput(result);
     }
 
-    /**
-     * Extracts a meaningful error message from an ExecutionException.
-     */
+    /** Returns a string containing the root cause message from the provided {@code ExecutionException}. */
     private String extractRootCauseMessage(ExecutionException e) {
         return ActorHelper.extractRootCauseMessage(e);
     }

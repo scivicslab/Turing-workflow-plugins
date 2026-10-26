@@ -37,16 +37,27 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 /**
- * Copies several log databases into one.
+ * Combines multiple H2 log databases into a single target database, deduplicating sessions based on their workflow
+ * name and start time.
  *
- * <p>Separate from {@link MergeLogsCLI} because the merge has two callers with nothing else in
- * common: the {@code log-merge} subcommand, which prints to a terminal, and a long-running program
- * that keeps a merged database up to date and reports through its own screen. Neither can use the
- * other's output, so what they share is this: the copying, and a result they each present their own
- * way.</p>
+ * <p>The class provides the following operations:
+ * <ul>
+ * <li>{@link #scan(Path, List)} finds log databases in a directory, returning their paths without the {@code .mv.db}
+ * suffix.</li>
+ * <li>{@link #count(Path)} returns a {@link Count} describing the number of sessions, logs, and node results in a
+ * source, or a problem message if the source cannot be read.</li>
+ * <li>{@link #merge(Path, List)} copies sessions and their associated logs and node results from several sources into
+ * a target, skipping sessions already present in the target.</li>
+ * <li>{@link #exists(Path)} checks if a database file exists at the given path.</li>
+ * </ul>
  *
- * <p>Every method here is static and holds no state between calls. One merge's counters live in the
- * {@link Report} it returns.</p>
+ * <p>Every method is static and holds no state between calls. One merge's counters live in the {@link Report} it
+ * returns.
+ *
+ * <p>A session is considered a duplicate if its workflow name and start time are identical.
+ *
+ * <p>The target database is created if it does not exist. If a source database is also listed as the target, it is
+ * skipped.
  *
  * @author devteam@scivicslab.com
  * @since 4.1.0
@@ -57,36 +68,38 @@ public final class LogMerger {
     }
 
     /**
-     * What one merge did.
+     * Records the results of a single merge operation.
      *
-     * @param sessionsMerged  how many sessions were copied
-     * @param sessionsSkipped how many were already in the target
-     * @param logsMerged      how many log rows were copied
-     * @param nodeResultsMerged how many node-result rows were copied
-     * @param problems        one line per source that could not be read; empty when all were read
+     * @param sessionsMerged the number of sessions copied from sources to the target
+     * @param sessionsSkipped the number of sessions already present in the target
+     * @param logsMerged the number of log rows copied
+     * @param nodeResultsMerged the number of node-result rows copied
+     * @param problems a list of error messages, one per source that could not be read; empty if all sources were read
+     * successfully
      */
     public record Report(int sessionsMerged, int sessionsSkipped, int logsMerged,
                          int nodeResultsMerged, List<String> problems) {}
 
     /**
-     * How much one source holds, without copying anything.
+     * Represents the contents of a single log database.
      *
-     * @param database the source, as a path with no {@code .mv.db} extension
-     * @param sessions how many sessions it holds
-     * @param logs     how many log rows it holds
-     * @param nodeResults how many node-result rows it holds
-     * @param problem  what went wrong reading it, or {@code ""} when nothing did
+     * @param database the path to the database, with the {@code .mv.db} extension removed
+     * @param sessions the number of sessions it holds
+     * @param logs the number of log rows it holds
+     * @param nodeResults the number of node-result rows it holds
+     * @param problem a description of what went wrong reading it, or an empty string if it was read successfully
      */
     public record Count(Path database, int sessions, int logs, int nodeResults, String problem) {}
 
     /**
-     * Finds the log databases under a directory.
+     * Returns a list of paths to log databases found within a directory.
      *
-     * @param directory    the directory to walk
-     * @param namePrefixes keep only files whose name starts with one of these; empty keeps every
-     *                     {@code .mv.db} file found, including databases other programs wrote
-     * @return the databases, as paths with no {@code .mv.db} extension
-     * @throws IOException when the directory cannot be walked
+     * @param directory the directory to walk
+     * @param namePrefixes a list of prefixes to filter filenames; an empty list or null keeps every {@code .mv.db}
+     * file found
+     *
+     * @return a list of paths to the databases, with the {@code .mv.db} suffix removed
+     * @throws IOException if the directory cannot be walked
      */
     public static List<Path> scan(Path directory, List<String> namePrefixes) throws IOException {
         List<Path> found = new ArrayList<>();
@@ -101,11 +114,12 @@ public final class LogMerger {
     }
 
     /**
-     * Answers whether a scanned database is one the caller asked for.
+     * Returns true if the fileName starts with any of the provided prefixes.
      *
-     * @param fileName the file name, extension included
-     * @param prefixes the accepted prefixes; empty means every name is accepted
-     * @return true when the name starts with one of the prefixes, or when there are no prefixes
+     * If the prefixes list is empty or null, the method returns true.
+     *
+     * @param fileName the name of the file to check, including its extension
+     * @return true if the name matches one of the prefixes or if no prefixes were specified, false otherwise
      */
     public static boolean nameMatches(String fileName, List<String> prefixes) {
         if (prefixes == null || prefixes.isEmpty()) {
@@ -119,17 +133,18 @@ public final class LogMerger {
         return false;
     }
 
-    /** @return the path with the {@code .mv.db} extension removed */
+    /** Returns a path to the database with the {@code .mv.db} extension removed. */
     private static Path withoutSuffix(Path databaseFile) {
         String s = databaseFile.toString();
         return Path.of(s.substring(0, s.length() - ".mv.db".length()));
     }
 
     /**
-     * Counts what a source holds, without copying anything.
+     * Returns a {@link Count} that describes the number of sessions, logs, and node results held in a database.
      *
      * @param source the source, as a path with no {@code .mv.db} extension
-     * @return the counts, or a {@link Count} carrying the problem when the source cannot be read
+     * @return a {@link Count} containing the counts for each table, or a {@link Count} where all counts are 0 and the
+     * problem field contains the error message if the source cannot be read
      */
     public static Count count(Path source) {
         try (Connection conn = open(source, false)) {
@@ -147,17 +162,18 @@ public final class LogMerger {
     }
 
     /**
-     * Copies every source into {@code target}, skipping sessions the target already holds.
+     * Copies all sessions and their associated logs and node results from the sources into the target.
      *
-     * <p>A session is the same session when its name and start time are the same, so running this
-     * again over the same sources adds nothing.</p>
+     * <p>A session is considered a duplicate and skipped if a session with the same workflow name and start time
+     * already exists in the target. The target is skipped if it is included in the sources list.</p>
      *
-     * @param target  the database to write, as a path with no {@code .mv.db} extension. Created
-     *                when absent
-     * @param sources the databases to read, as paths with no {@code .mv.db} extension. The target
-     *                is skipped when it appears among them
-     * @return what was copied
-     * @throws SQLException when the target cannot be opened or written
+     * <p>Returns a {@link Report} detailing the number of sessions, logs, and node results merged or skipped, along
+     * with a list of error messages for any sources that could not be read.</p>
+     *
+     * @param target the database to write to, as a path with no {@code .mv.db} extension; created if it does not exist
+     * @param sources the databases to read from, as paths with no {@code .mv.db} extension
+     * @return a report containing the counts of merged and skipped items and any error messages
+     * @throws SQLException if the target database cannot be opened or written to
      */
     public static Report merge(Path target, List<Path> sources) throws SQLException {
         int sessionsMerged = 0;
@@ -193,14 +209,12 @@ public final class LogMerger {
     }
 
     /**
-     * Opens one database.
+     * Returns a connection to the specified database with auto-commit disabled.
      *
      * @param database the database, as a path with no {@code .mv.db} extension
-     * @param compress true for the target, which is the only database written here. The sources
-     *                 were written with MVStore compression on, so a target without it comes out
-     *                 larger than every source added together
-     * @return the open connection, with auto-commit off
-     * @throws SQLException when the database cannot be opened
+     * @param compress if true, enables MVStore compression for the target database
+     * @return a {@link Connection} to the database
+     * @throws SQLException if the database cannot be opened
      */
     static Connection open(Path database, boolean compress) throws SQLException {
         // AUTO_SERVER=TRUE is required, not optional: H2LogStore opens every log database with it,
@@ -213,7 +227,10 @@ public final class LogMerger {
         return conn;
     }
 
-    /** Creates the tables the target needs, plus the column that records where a session came from. */
+    /**
+     * Sets up the target database tables and adds a column to the {@code sessions} table to record the name of the
+     * source database from which a session was copied.
+     */
     private static void initializeSchema(Connection conn) throws SQLException {
         H2LogStore.initSchema(conn);
         try (Statement stmt = conn.createStatement()) {
@@ -222,7 +239,16 @@ public final class LogMerger {
         conn.commit();
     }
 
-    /** @return a key per session already in the target, so the same session is not copied twice */
+    /**
+     * Returns a set of keys for sessions already present in the database.
+     *
+     * <p>Each key is a string combining the workflow name and the session start time, ensuring that a session is not
+     * copied more than once during a merge.</p>
+     *
+     * @param conn the connection to the database to query
+     * @return a set of strings, where each string is a unique identifier for a session in the database
+     * @throws SQLException if a database access error occurs
+     */
     private static Set<String> loadExistingSessions(Connection conn) throws SQLException {
         Set<String> existing = new HashSet<>();
         try (Statement stmt = conn.createStatement();
@@ -235,10 +261,14 @@ public final class LogMerger {
     }
 
     /**
-     * Identifies a session across databases.
+     * Returns a string that uniquely identifies a session by combining its name and start time.
      *
-     * <p>The name alone does not: {@code quarkus-chat-ui} reuses one name for every conversation it
-     * records. The start time is written to the microsecond, so two conversations never share one.</p>
+     * <p>The name alone is not sufficient for uniqueness, as many different sessions may share the same name; the
+     * start time is included to the microsecond to ensure that no two sessions share a key.
+     *
+     * @param workflowName the name of the workflow, or null if the name is not set
+     * @param startedAt the timestamp of the session start, or null if the start time is not set
+     * @return a string consisting of the workflow name and the start time, separated by a pipe character
      */
     private static String sessionKey(String workflowName, Timestamp startedAt) {
         return (workflowName == null ? "" : workflowName) + "|"
@@ -261,7 +291,23 @@ public final class LogMerger {
         }
     }
 
-    /** Copies one source's sessions, adding each session's key to {@code existing} as it goes. */
+    /**
+     * Copies the sessions, logs, and node results from a single source database into the target database, skipping any
+     * sessions that are already present in the target.
+     *
+     * <p>A session is considered already present if its workflow name and start time match a session in the target.
+     * For every new session found, it copies the session record, all associated log entries, and all associated node
+     * results. It also records the source database name in the new session's {@code source_db} column.</p>
+     *
+     * @param source the source database connection
+     * @param target the target database connection
+     * @param existing a set of keys for sessions already present in the target to prevent duplicates
+     * @param sourceName the name of the source database to be recorded in the {@code source_db} column
+     * @return a {@link Report} containing the number of sessions, logs, and node results merged, and the number of
+     * sessions skipped
+     *
+     * @throws SQLException if a database access error occurs during the copy process
+     */
     private static Report mergeOne(Connection source, Connection target, Set<String> existing,
                                    String sourceName) throws SQLException {
         if (!tableExists(source, "sessions")) {
@@ -291,12 +337,7 @@ public final class LogMerger {
         return new Report(merged, skipped, logs, nodeResults, List.of());
     }
 
-    /**
-     * Returns the column names one source's {@code sessions} query produced, upper-cased.
-     *
-     * <p>A database written by an older schema does not have every column this copies, and asking
-     * a {@link ResultSet} for a column it does not have throws rather than answering null.</p>
-     */
+    /** Returns the set of column labels from the query results, converted to upper case. */
     private static Set<String> columnsOf(ResultSet rs) throws SQLException {
         Set<String> names = new HashSet<>();
         ResultSetMetaData meta = rs.getMetaData();
@@ -306,7 +347,14 @@ public final class LogMerger {
         return names;
     }
 
-    /** @return the column's value, or null when this source has no such column */
+    /**
+     * Returns the value of the specified column, or {@code null} if the column is not present in the source.
+     *
+     * @param rs the {@link ResultSet} to read from
+     * @param columns the set of column names available in the current result set
+     * @param name the name of the column to retrieve
+     * @return the string value of the column, or {@code null} if the name is not in the {@code columns} set
+     */
     private static String stringOrNull(ResultSet rs, Set<String> columns, String name)
             throws SQLException {
         return columns.contains(name.toUpperCase()) ? rs.getString(name) : null;
@@ -418,7 +466,11 @@ public final class LogMerger {
         return count;
     }
 
-    /** @return whether a database file exists at this path */
+    /**
+     * Returns true if the H2 database file exists at the given path.
+     *
+     * @param database the path to the database, as a path with no {@code .mv.db} extension
+     */
     public static boolean exists(Path database) {
         return new File(database.toAbsolutePath() + ".mv.db").isFile();
     }

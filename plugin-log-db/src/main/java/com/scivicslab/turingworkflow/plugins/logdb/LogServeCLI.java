@@ -39,19 +39,19 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
 /**
- * Definition of the {@code log-serve} subcommand: starts an HTTP server that serves a web log
- * viewer over the H2 log database, plus an optional H2 TCP server for shared database access.
+ * Starts an HTTP server that serves a web log viewer over an H2 log database and an optional H2 TCP server for shared
+ * database access.
  *
  * <p>The HTTP server exposes:</p>
  * <ul>
- *   <li>{@code /info} — a liveness endpoint returning HTTP 200 (used by {@code db-clear} to
- *       detect a running log server and refuse to delete a database that is in use);</li>
- *   <li>{@code /} — an HTML index listing recent sessions;</li>
- *   <li>{@code /session?id=N} — an HTML view of the logs for one session.</li>
+ * <li>{@code /} — an HTML index listing recent sessions;</li>
+ * <li>{@code /session?id=N} — an HTML view of the logs for session N;</li>
+ * <li>{@code /info} — a liveness endpoint returning HTTP 200 (used by {@code db-clear} to detect a running log server
+ * and refuse to delete a database that is in use).</li>
  * </ul>
  *
- * <p>The H2 TCP server (default port 29090) lets readers such as {@code log-search --server}
- * connect to the same database concurrently while it is being written.</p>
+ * <p>The H2 TCP server (default port 29090) lets readers such as {@code log-search --server} connect to the same
+ * database concurrently while it is being written.</p>
  *
  * @author devteam@scivicslab.com
  * @since 1.5.0
@@ -63,9 +63,12 @@ public class LogServeCLI {
     private static final ZoneId ZONE = ZoneId.systemDefault();
 
     /**
-     * Registers the "log-serve" command with the given repository.
+     * Adds the {@code log-serve} command to the provided command repository.
      *
-     * @param repo the command repository
+     * <p>The command allows starting an HTTP log viewer server and an optional H2 TCP server to provide web-based
+     * access to the H2 log database.</p>
+     *
+     * @param repo the repository where the command is registered
      */
     public static void registerCommand(CommandRepository repo) {
         Options opts = new Options();
@@ -96,9 +99,11 @@ public class LogServeCLI {
     }
 
     /**
-     * Executes the log-serve command. Blocks until the process is interrupted (Ctrl-C).
+     * Starts an HTTP log viewer and an optional H2 TCP server to serve the log database.
      *
-     * @param cl the parsed command line
+     * Blocks until the process is interrupted.
+     *
+     * @param cl the parsed command line containing the database path, HTTP port, and TCP port options
      */
     public void execute(CommandLine cl) {
         Path dbPath = Path.of(cl.getOptionValue("db")).toAbsolutePath();

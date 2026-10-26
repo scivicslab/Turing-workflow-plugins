@@ -16,25 +16,31 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * quarkus-chat-ui3 への問い合わせと、進行中のSSE接続を保持する素のオブジェクト。
- * アクターとして動かすのは ChatUi3Actor の役目であり、「アクターであること」はこのクラスの
- * 性質ではない（ActorSuffixAndOwnedActorRef_260722_oo01）。
+ * Communicates with a quarkus-chat-ui3 server to send messages to an LLM and manage its configuration.
  *
- * Turing Workflow actor that calls quarkus-chat-ui3 primitives.
+ * <ul><li>{@code setBaseUrl} - sets the server's base URL</li><li>{@code chat} - sends a message and returns the LLM's
+ * response text via an SSE stream</li><li>{@code getTrace} - returns a JSON array of all I/O records for the current
+ * session</li><li>{@code updateConfig} - performs a partial update of the server configuration</li><li>{@code
+ * getConfig} - returns the current configuration as a JSON object</li><li>{@code clearHistory} - deletes the
+ * conversation history and trace</li><li>{@code getModels} - returns a JSON object containing available model
+ * IDs</li><li>{@code stopChat} - aborts an active chat session</li></ul>
  *
- * <p>Supported actions:</p>
- * <ul>
- *   <li>{@code setBaseUrl}    - Set quarkus-chat-ui3 base URL (default: http://localhost:18090)</li>
- *   <li>{@code chat}          - Send a message via POST /api/chat, receive result via SSE</li>
- *   <li>{@code getTrace}      - GET /api/trace — full I/O record of the session</li>
- *   <li>{@code updateConfig}  - POST /api/config (partial update)</li>
- *   <li>{@code clearHistory}  - DELETE /api/history</li>
- *   <li>{@code getModels}     - GET /api/models</li>
- * </ul>
+ * <p>The client holds an active SSE connection during a {@code chat} call, which can be closed by {@code stopChat} or
+ * {@code shutdown}.</p>
  *
- * <p><b>SSE note:</b> {@code chat} opens a new SSE connection for each call.
- * An existing browser connection to /api/chat/stream will be displaced.
- * Use this actor in automation contexts where no browser UI is simultaneously connected.</p>
+ * <p>One instance may serve several workflows at once, but only one {@code chat} call can be active per instance; a
+ * new {@code chat} call will displace any existing SSE connection.</p>
+ *
+ * <p>Example workflow step:</p>
+ * <pre>{@code
+ * actor: chat_ui_client
+ * method: chat
+ * arguments:
+ *   message: "Hello, how are you?"
+ * }</pre>
+ *
+ * <p>If a {@code chat} call fails, the action result is not a success and the message holds the error description or
+ * the HTTP status code.</p>
  */
 public class ChatUi3Client {
 
@@ -50,13 +56,7 @@ public class ChatUi3Client {
             .connectTimeout(Duration.ofSeconds(10))
             .build();
 
-    /**
-     * The SSE response body stream of an in-flight {@code chat()} call, or {@code null}.
-     * Published by {@code chat()} while it reads the stream so that {@link #stopSse()} can
-     * close it from another thread and force a blocked read to abort. Marked {@code volatile}
-     * because it is written by the pool thread running {@code chat()} and read/closed by the
-     * thread that runs {@link #close()} or the {@code stopChat} action.
-     */
+    /** The SSE response body stream of an in-flight {@code chat()} call, or {@code null} if no chat is active. */
     private volatile InputStream activeSse;
 
 
@@ -71,10 +71,10 @@ public class ChatUi3Client {
      * {@code System.exit}.</p>
      */
     /**
-     * 動いているSSEを止め、HTTPクライアントを閉じる。アクター終了時に呼ばれる。
+     * Stops any active SSE stream and closes the HTTP client.
      *
-     * <p>{@code java.net.http.HttpClient} は非デーモンのスレッドを持つので、閉じないと
-     * ワークフローが終わってもJVMが終わらない。</p>
+     * <p>This is called during workflow shutdown to ensure the underlying HTTP client's non-daemon threads are
+     * terminated, allowing the JVM to exit. If a chat is in progress, the stream is aborted first.</p>
      */
     public void shutdown() {
         stopSse();
@@ -82,13 +82,11 @@ public class ChatUi3Client {
     }
 
     /**
-     * Force-terminates the in-flight SSE stream of an active {@code chat()} call, if any.
+     * Terminates the in-flight SSE stream of an active {@code chat()} call, if any.
      *
-     * <p>Closing the underlying stream makes the blocked {@code readLine()} inside
-     * {@code chat()} throw, so {@code chat()} returns instead of waiting forever for a
-     * {@code result} event that never arrives. This is called from {@link #close()} during
-     * shutdown, and is also exposed as the {@code stopChat} action so an external controller
-     * can command this actor to stop a stuck chat without waiting for a timeout.</p>
+     * <p>Closing the underlying stream causes the blocked read inside {@code chat()} to throw, allowing that action to
+     * return instead of waiting indefinitely for a result. This is used during shutdown or via the {@code stopChat}
+     * action to abort a stuck chat.
      */
     public void stopSse() {
         InputStream s = this.activeSse;
@@ -102,10 +100,9 @@ public class ChatUi3Client {
     }
 
     /**
-     * Action wrapper for {@link #stopSse()}: lets a Turing Workflow (or an external
-     * supervisor) command this actor to abort a stuck {@code chat()} via a message.
+     * Aborts an active {@code chat()} call by force-closing its underlying SSE stream.
      *
-     * @return success result
+     * Returns an action result that is a success with the message "SSE stream stopped".
      */
     public ActionResult stopChat() {
         stopSse();
@@ -115,9 +112,10 @@ public class ChatUi3Client {
     // ── Configuration ─────────────────────────────────────────────────────────
 
     /**
-     * Sets the quarkus-chat-ui3 base URL.
+     * Sets the base URL for the quarkus-chat-ui3 service.
      *
      * @param url the base address, e.g. "http://192.168.5.14:18090"
+     * @return an ActionResult that is a success and contains the trimmed URL if the setting succeeded.
      */
     public ActionResult setBaseUrl(String url) {
         this.baseUrl = url.trim();
@@ -130,16 +128,9 @@ public class ChatUi3Client {
     /**
      * Sends a message to the LLM via quarkus-chat-ui3 and returns the response text.
      *
-     * <p>Internally:
-     * <ol>
-     *   <li>Opens GET /api/chat/stream (SSE) — returns after headers received</li>
-     *   <li>Sends POST /api/chat with the message</li>
-     *   <li>Reads the SSE stream until a {@code result} or {@code error} event arrives</li>
-     * </ol>
-     * </p>
-     *
      * @param message the text sent to the model
-     * @return ActionResult with the LLM response text
+     * @return an action result that is a success with the LLM response text in its message, or a failure with an error
+     * message if the connection fails, the stream ends without a result, or the server returns an error event
      */
     public ActionResult chat(String message) {
 
@@ -218,9 +209,10 @@ public class ChatUi3Client {
     // ── Trace ─────────────────────────────────────────────────────────────────
 
     /**
-     * Returns all I/O records for the current session (GET /api/trace).
+     * Returns a JSON array of all I/O records for the current session.
      *
-     * @return ActionResult with JSON array of IoPair objects
+     * @return an ActionResult containing a JSON array of IoPair objects if successful, or a failure message if the
+     * request fails.
      */
     public ActionResult getTrace() {
         return get("/api/trace");
@@ -229,13 +221,16 @@ public class ChatUi3Client {
     // ── Config ────────────────────────────────────────────────────────────────
 
     /**
-     * Updates configuration fields (POST /api/config, partial update).
+     * Performs a partial update of the server configuration.
      *
-     * @param vllmBaseUrl where the vLLM server listens; left alone when null
-     * @param modelId     which model answers; left alone when null
-     * @param temperature how much the sampling varies; left alone when null
-     * @param maxTokens   the longest answer the model may produce; left alone when null
-     * @return ActionResult indicating success
+     * Returns an ActionResult that is a success if the configuration was updated, or a failure with an error message
+     * if no fields were provided or the server rejected the request.
+     *
+     * @param vllmBaseUrl the address of the vLLM server, or {@code null} to leave it unchanged
+     * @param modelId the identifier of the model to use, or {@code null} to leave it unchanged
+     * @param temperature the sampling temperature, or {@code null} to leave it unchanged
+     * @param maxTokens the maximum number of tokens for an answer, or {@code null} to leave it unchanged
+     * @return an ActionResult indicating success or the error message from the server
      */
     public ActionResult updateConfig(String vllmBaseUrl, String modelId,
                                     Double temperature, Integer maxTokens) {
@@ -251,9 +246,10 @@ public class ChatUi3Client {
     }
 
     /**
-     * Returns the current configuration (GET /api/config).
+     * Returns a JSON object containing the current configuration settings via GET /api/config.
      *
-     * @return ActionResult with JSON config object
+     * @return an ActionResult that is a success with a message holding the JSON configuration object, or a failure
+     * with an error message if the request fails.
      */
     public ActionResult getConfig() {
         return get("/api/config");
@@ -262,9 +258,10 @@ public class ChatUi3Client {
     // ── History ───────────────────────────────────────────────────────────────
 
     /**
-     * Resets the conversation history and trace (DELETE /api/history).
+     * Resets the conversation history and the I/O trace on the server.
      *
-     * @return ActionResult indicating success
+     * @return an action result that is a success if the history was deleted, or contains an error message if the
+     * server returned a non-success status code.
      */
     public ActionResult clearHistory() {
         return delete("/api/history");
@@ -273,9 +270,10 @@ public class ChatUi3Client {
     // ── Models ────────────────────────────────────────────────────────────────
 
     /**
-     * Returns the list of models available on the vLLM server (GET /api/models).
+     * Returns an action result containing a JSON object of available model IDs from the vLLM server.
      *
-     * @return ActionResult with JSON object containing model IDs
+     * @return an action result that is a success with a message holding a JSON object of model IDs, or a failure if
+     * the request fails
      */
     public ActionResult getModels() {
         return get("/api/models");

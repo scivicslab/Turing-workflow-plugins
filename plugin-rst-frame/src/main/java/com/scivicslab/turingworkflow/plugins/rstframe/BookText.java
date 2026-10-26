@@ -8,29 +8,35 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Reads one file of a book's OCR'd markdown into headings, paragraphs of sentences, code and lists,
- * and takes one sub-section out of it ({@code FramesAndSamplesFromBooks_261021_oo01}).
+ * Parses a book's OCR'd markdown file into a sequence of structured blocks, such as headings, paragraphs, code, and
+ * lists.
  *
- * <p>What it takes away is what the page put there and the book did not say: the front matter,
- * images, page numbers, the running heads repeated at the top of the pages, and the markdown marks
- * of emphasis and links. What it puts back together is the lines folded inside a paragraph. A
- * paragraph cut by a page is left as two; a frame is made from one sub-section, and a sub-section
- * that runs over a file's end is not read. It does not correct a word; an OCR misreading is left
- * for the writer to correct.</p>
+ * <ul>
+ * <li>{@code read(file)} returns the file's blocks in order, stripping front matter, images, page numbers, and running
+ * heads.</li>
+ * <li>{@code subsection(file, heading)} returns the blocks belonging to the sub-section starting with the specified
+ * {@code heading} and ending before the next heading.</li>
+ * <li>{@code sentences(text)} returns a list of sentences extracted from the given text.</li>
+ * </ul>
+ *
+ * <p>A paragraph split by a page break is returned as two separate blocks. A sub-section that extends beyond the end
+ * of a file is not read. OCR misreadings and errors are not corrected.</p>
  */
 public final class BookText {
 
     private BookText() {}
 
-    /** What a block of the book is. */
+    /** Categorizes a block of the book into its structural type. */
     public enum Kind { HEADING, PARAGRAPH, CODE, FORMULA, LIST }
 
     /**
-     * One block of the book.
+     * Represents a single unit of content from a book, such as a heading, paragraph, code block, formula, or list.
      *
-     * @param kind      what it is
-     * @param text      a heading's title, a paragraph's text, a code block's or formula's lines, a list's items joined by newlines
-     * @param sentences a paragraph's sentences, a list's items, or empty
+     * @param kind the type of the block
+     * @param text the content of the block: a heading's title, a paragraph's text, a code block's or formula's lines,
+     * or a list's items joined by newlines
+     *
+     * @param sentences a paragraph's sentences, a list's items, or an empty list
      */
     public record Block(Kind kind, String text, List<String> sentences) {}
 
@@ -41,23 +47,30 @@ public final class BookText {
     private static final Pattern LIST_ITEM = Pattern.compile("^(?:[-*]\\s+)?(?:\\d+[.)]\\s+|[-*]\\s+)(.*)$");
     private static final Pattern LINK = Pattern.compile("\\[([^\\]]*)\\]\\([^)]*\\)");
     private static final Pattern ANGLE_URL = Pattern.compile("<(https?://[^>]*)>");
-    /** A figure's or table's caption, standing alone: the figure is not in the text, so neither is its label. */
+    /**
+     * Matches a standalone caption for a figure or table, such as "Fig. 1" or "Table 2", followed by up to 40
+     * characters of text.
+     */
     private static final Pattern CAPTION = Pattern.compile("^(?:図|表|Fig\\.?|Figure|Table)\\s*\\d[\\d.]*\\s+.{1,40}$");
-    /** A sub-heading the OCR left without #: "(c) 計算量", "2.4 2分探索木", standing alone and short. */
+    /**
+     * Matches short, standalone lines that the OCR left as sub-headings without a {@code #} prefix, such as "(c)
+     * Complexity" or "2.4 Binary Search Tree".
+     */
     private static final Pattern SUBHEADING = Pattern.compile("^(?:\\([a-z0-9]\\)|\\d+(?:\\.\\d+)*\\.?)\\s*\\S.{0,24}$");
-    /** A line that starts with a label such as (a). */
+    /** Matches a line that starts with a label such as (a). */
     private static final Pattern LABEL = Pattern.compile("^\\([a-z0-9]\\)\\s+.*$");
-    /** The longest line taken for a running head when it appears more than once. */
+    /** The maximum number of characters used to identify a line as a running head. */
     private static final int RUNNING_HEAD_MAX = 30;
 
     /**
-     * The blocks of one sub-section: those after the heading whose title is {@code heading}, up to
-     * the next heading. A frame is made from one sub-section, so that is all that is read.
+     * Returns the blocks of a single sub-section from a book's markdown file.
      *
-     * @param file    one file of a book's markdown
-     * @param heading the sub-section's title as the file writes it, without {@code #} or emphasis
-     * @return the sub-section's blocks, in order, without its heading
-     * @throws IllegalArgumentException when the file has no heading with that title
+     * The sub-section begins after the block whose title matches {@code heading} and continues until the next heading
+     * is encountered.
+     *
+     * The result is a list of {@link Block} objects, in order, excluding the heading itself.
+     *
+     * Throws an {@link IllegalArgumentException} if the file does not contain a heading with the specified title.
      */
     public static List<Block> subsection(String file, String heading) {
         List<Block> all = read(file);
@@ -73,8 +86,14 @@ public final class BookText {
     }
 
     /**
-     * @param file one file of a book's markdown
-     * @return the file's blocks, in order
+     * Returns a list of the blocks that make up a book's markdown file, in order.
+     *
+     * <p>The list contains {@link Block} objects representing headings, paragraphs, code, formulas, and lists. The
+     * process removes front matter, images, page numbers, and running heads, and strips marks of emphasis and links
+     * from the text. Paragraphs are reconstructed from lines, and adjacent code or list blocks are merged.
+     *
+     * @param file the path to the book's markdown file
+     * @return a list of the file's blocks in order
      */
     public static List<Block> read(String file) {
         List<String> lines = new ArrayList<>();
@@ -125,7 +144,7 @@ public final class BookText {
         return mergeAdjacent(blocks);
     }
 
-    /** Drops images, page numbers, and short lines that come back on several pages (running heads). */
+    /** Removes images, page numbers, and repeating running heads from a list of lines. */
     private static List<String> withoutPageFurniture(List<String> lines) {
         Map<String, Integer> seen = new HashMap<>();
         for (String line : lines) {
@@ -191,7 +210,12 @@ public final class BookText {
         pending.clear();
     }
 
-    /** Code lines that OCR left as separate blocks are one piece of code; labelled lines in a row are one list. */
+    /**
+     * Combines adjacent blocks of the same kind into a single block.
+     *
+     * <p>Consecutive {@link Block} objects that are both {@link Kind#CODE} or both {@link Kind#LIST} are merged into
+     * one, with their text and sentences joined together.</p>
+     */
     private static List<Block> mergeAdjacent(List<Block> blocks) {
         List<Block> out = new ArrayList<>();
         for (Block b : blocks) {
@@ -215,7 +239,10 @@ public final class BookText {
         return ".!?。．！？:：".indexOf(last) >= 0;
     }
 
-    /** Joins folded lines: nothing where a Japanese character meets the break, one space elsewhere. */
+    /**
+     * Concatenates a list of lines into a single string, inserting a space between lines only if neither the end of
+     * the first line nor the start of the second line contains a Japanese character.
+     */
     private static String joinLines(List<String> lines) {
         StringBuilder sb = new StringBuilder();
         for (String line : lines) {
@@ -227,7 +254,12 @@ public final class BookText {
         return sb.toString();
     }
 
-    /** Removes the marks of emphasis and links, and the space OCR leaves before closing punctuation. */
+    /**
+     * Cleans a string by removing markdown emphasis, links, and angle-bracketed URLs, and strips the space that OCR
+     * often leaves before closing punctuation.
+     *
+     * @param s the text to be cleaned
+     */
     private static String inline(String s) {
         String t = LINK.matcher(s).replaceAll("$1");
         t = ANGLE_URL.matcher(t).replaceAll("$1");
@@ -237,8 +269,14 @@ public final class BookText {
     }
 
     /**
-     * Splits a paragraph into sentences: after {@code 。．！？}, and after {@code .!?} followed by a
-     * space where the next sentence starts or the text before is Japanese.
+     * Returns a list of strings that are the sentences of the given text.
+     *
+     * The sentences are delimited by {@code 。．！？}, or by {@code .!?} followed by a space when the following character
+     * is an uppercase letter, a quote, or an opening parenthesis. A {@code .} is also treated as a delimiter if it is
+     * preceded by a Japanese character, or if it is followed by a Japanese character and not preceded by a digit.
+     *
+     * @param text the text to be split into sentences
+     * @return a list of the sentences found in the text, in order
      */
     public static List<String> sentences(String text) {
         List<String> out = new ArrayList<>();
@@ -272,7 +310,15 @@ public final class BookText {
         return out;
     }
 
-    /** One line with no Japanese, ending as a statement or a signature does: {@code IO.println(...);}, {@code public static void main(String[] args)}. */
+    /**
+     * Determines if a single line of text is a code fragment by checking for the absence of Japanese characters and
+     * the presence of specific syntactic markers.
+     *
+     * Returns {@code true} if the line contains no CJK characters and ends with a semicolon, an opening or closing
+     * brace, or matches a method signature pattern; otherwise returns {@code false}.
+     *
+     * @param line the line of text to test
+     */
     private static boolean looksLikeCode(String line) {
         String t = line.replace("$", "").strip();
         if (t.chars().anyMatch(ch -> isCjk((char) ch))) return false;

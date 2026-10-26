@@ -16,20 +16,34 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * How a section explains its main concept, by the blocks of its heading rule ({@code (defrule s1 -> b1 b2 b3 b4 :heading ...)},
- * whose items are only listed): one question per section of two blocks or more, showing the blocks by name, asking for
- * each block what the thing it takes up is to the concept: a kind of it (is-a), a part of it, a step of it, or an aspect
- * of it. The relation most blocks bear gives the section's pattern:
+ * Identifies the pattern by which a book section explains its main concept and extracts the relationship of each block
+ * to that concept.
+ *
  * <ul>
- * <li>{@code partition}: most blocks take up a kind of it; they divide it, a set, into its kinds;</li>
- * <li>{@code structure}: most take up a part of it; they take it apart;</li>
- * <li>{@code sequence}: most take up a step of it, a process; they go through its steps in order;</li>
- * <li>{@code aspects}: most take up an aspect of it (what it is, its syntax, how it is used, what to watch out for):
- * the slots of the concept's frame.</li>
+ * <li>{@code blocks(String rules, Map<String, String> code)} returns the blocks of the section's heading rule in
+ * order; returns an empty list if the file has no heading rule.</li>
+ * <li>{@code question(BookOutline.Node node, List<Block> blocks)} returns a text prompt for a local LLM to identify
+ * the section's concept and the role of each block.</li>
+ * <li>{@code question(BookOutline.Node node, List<Block> blocks, String examples)} returns a text prompt for a local
+ * LLM, including the provided examples.</li>
+ * <li>{@code read(String reply, List<Block> blocks)} returns a {@link Layout} containing the identified concept, the
+ * dominant pattern, and the list of members extracted from the LLM's reply.</li>
+ * <li>{@code askAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
+ * Consumer<String> log, String examples)} asks the pattern of every section of two blocks or more that has none yet,
+ * or the specified sections, and stores each as soon as it is read; returns a summary line of how many sections were
+ * asked and how many took each pattern.</li>
  * </ul>
  *
- * <p>The model names the main concept first, from the section's title and its text: the thing the section as a whole
- * explains.
+ * <p>The pattern is determined by the relation most blocks bear, with a tie-breaking order of kind, part, step, and
+ * then aspect. The patterns are:
+ * <ul>
+ * <li>{@code partition}: most blocks are a kind of the concept, dividing it into a set;</li>
+ * <li>{@code structure}: most blocks are a part of the concept, taking it apart;</li>
+ * <li>{@code sequence}: most blocks are a step in a process, following an order;</li>
+ * <li>{@code aspects}: most blocks describe an aspect of the concept, such as its definition, syntax, or
+ * behavior.</li>
+ * </ul>
+ * </p>
  */
 public final class SectionPattern {
 
@@ -39,28 +53,55 @@ public final class SectionPattern {
     public static final String ASPECTS = "aspects";
 
     /**
-     * One block of the section and what the thing it takes up is to the concept: a kind of it, a part of it, a step of
-     * it, or an aspect of it.
+     * Represents a single block of a section and its relationship to the section's main concept.
+     *
+     * @param block the name of the block (e.g., b1, b2)
+     * @param relation one of {@link #KIND}, {@link #PART}, {@link #STEP}, {@link #ASPECT}, or {@link #OPERATION}
+     * @param name the name of the thing the block takes up (e.g., a specific type, a part, or a step)
      */
     public record Member(String block, String relation, String name) {
         public static final String KIND = "kind";
         public static final String PART = "part";
         public static final String STEP = "step";
         public static final String ASPECT = "aspect";
-        /** A method or an operation that acts on the concept: what can be done with it, one of its aspects. */
+        /** A method, a constructor, or an operation that acts on the concept. */
         public static final String OPERATION = "operation";
     }
 
-    /** How the section explains {@code concept}: the pattern, and the blocks that are the concept's steps, parts or kinds. */
+    /**
+     * The pattern of how a section explains its {@code concept}, including the pattern and the blocks that are the
+     * concept's steps, parts, or kinds.
+     *
+     * @param concept the name of the main thing the section explains
+     * @param pattern the pattern of the relation most blocks bear (partition, structure, sequence, or aspects)
+     * @param members the list of blocks and how each relates to the concept
+     */
     public record Layout(String concept, String pattern, List<Member> members) {}
 
-    /** One block of the section: its rule name and its text, the sentences and code of the rules under it. */
+    /**
+     * One block of the section: its rule name and its text, the sentences and code of the rules under it.
+     *
+     * @param name the name of the block (e.g., b1, b2)
+     * @param text the text of the block, including sentences and code
+     */
     public record Block(String name, String text) {}
 
     private SectionPattern() {
     }
 
-    /** @return the blocks of the section's heading rule, in order; empty when the file has no heading rule */
+    /**
+     * Returns the blocks of the section's heading rule, in order; an empty list is returned if the file has no heading
+     * rule.
+     *
+     * <p>The blocks are extracted from the rule containing the {@code :heading} attribute. For each block, the text is
+     * gathered by following the symbols in the rule, including any code from files specified via the {@code :file}
+     * attribute.
+     *
+     * @param rules the text of the section rules
+     * @param code a mapping from file names to their text content
+     * @return a list of {@link Block} objects representing the heading rule's items, in order; empty if no heading
+     * rule is found
+     */
     public static List<Block> blocks(String rules, Map<String, String> code) {
         RuleFile f = RuleFile.parse(rules);
         RuleFile.Rule head = null;
@@ -95,15 +136,36 @@ public final class SectionPattern {
         }
     }
 
-    /** @return the question for one section */
+    /**
+     * Returns a prompt string that instructs a local LLM to identify the main concept of a textbook section and
+     * describe how its blocks relate to that concept.
+     *
+     * <p>The resulting string contains the section's title and number, the text of each block, and instructions to
+     * name the concept and categorize each block as a kind, part, step, aspect, or operation.
+     *
+     * <p>If the blocks list is empty, the returned string contains only the section header and instructions without
+     * any block text.
+     *
+     * <p>Example:
+     * <pre>{@code
+     * String prompt = SectionPattern.question(node, blocks);
+     * }</pre>
+     */
     public static String question(BookOutline.Node node, List<Block> blocks) {
         return question(node, blocks, "");
     }
 
     /**
-     * @param examples worked examples of the cases that are easy to get wrong (how a section's blocks should be answered,
-     *                 and why), put before the closing instruction; none when blank
-     * @return the question for one section
+     * Returns a prompt for a local LLM to identify the main concept of a textbook section and how its blocks relate to
+     * that concept.
+     *
+     * @param node the section node containing the section number and title
+     * @param blocks the list of blocks in the section, each containing a name and text
+     * @param examples optional worked examples of how blocks should be answered, to be placed before the closing
+     * instruction; if null or blank, no examples are included
+     *
+     * @return a string containing the prompt, which includes the section's title, the text of its blocks, and
+     * instructions for naming the concept and the relation of each block (kind, part, step, aspect, or operation)
      */
     public static String question(BookOutline.Node node, List<Block> blocks, String examples) {
         StringBuilder text = new StringBuilder();
@@ -149,7 +211,10 @@ public final class SectionPattern {
                 + "Write nothing else.";
     }
 
-    /** The pattern each relation makes when most blocks bear it, in the order a tie is settled. */
+    /**
+     * Defines the priority order for resolving ties when determining a section's pattern from the relations of its
+     * blocks. The order is {@code kind}, then {@code part}, then {@code step}, and finally {@code aspect}.
+     */
     private static final Map<String, String> PATTERN_OF = new LinkedHashMap<>();
     static {
         PATTERN_OF.put(Member.KIND, PARTITION);
@@ -159,11 +224,14 @@ public final class SectionPattern {
     }
 
     /**
-     * @return what the reply says: the things the blocks take up with their relation to the concept, in block order, and
-     *         the pattern of the relation most
-     *         of them bear (a tie goes to kind, then part, then step; kind, part and step count only when two blocks or
-     *         more bear them), with the concept the reply names; the pattern is {@code null} when the reply names no
-     *         concept or relates no block to it
+     * Parses a text reply from an LLM to extract the section's main concept, the relationship of each block to that
+     * concept, and the overall pattern of the section.
+     *
+     * @param reply the text returned by the LLM containing the concept and the block relations
+     * @param blocks the list of blocks available in the section to be matched against the reply
+     * @return a {@link Layout} containing the named concept, the pattern of the relation most blocks bear, and a list
+     * of {@link Member}s for each block mentioned in the reply; the pattern is {@code null} if the reply names no
+     * concept or relates no block to it
      */
     public static Layout read(String reply, List<Block> blocks) {
         Matcher c = Pattern.compile("(?im)^\\W*concept\\W*[:=]\\s*(.+)$").matcher(reply);
@@ -203,18 +271,39 @@ public final class SectionPattern {
         return x.equals(y);
     }
 
-    /** As {@link #askAll(BookStore, String, List, Function, int, Consumer, String)}, with no examples. */
+    /** As {@link #askAll(BookStore, String, List, Function, int, Consumer, String, String)} with no examples. */
     public static String askAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
             Consumer<String> log) throws Exception {
         return askAll(store, book, only, writer, parallel, log, "");
     }
 
     /**
-     * Asks the pattern of every section of two blocks or more that has none yet ({@code only} empty), or of the
-     * sections named, {@code parallel} at a time, and stores each as soon as it is read. A section that fails, or
-     * whose reply relates no block to the concept, is reported and left out, so a run started again goes on with it.
+     * Determines the pattern and concept of every section in a book that lacks a pattern or is specifically named,
+     * using a provided writer to generate questions and a book store to save the results.
      *
-     * @return how many sections were asked and how many took each pattern, in one line
+     * <ul>
+     * <li>If {@code only} is empty, it processes every section in the book that has two or more blocks and no existing
+     * pattern; otherwise, it only processes the sections listed in {@code only}.</li>
+     * <li>It executes up to {@code parallel} requests at a time.</li>
+     * <li>A section that fails to produce a valid pattern or a concept is reported in the log and skipped.</li>
+     * </ul>
+     *
+     * <p>Returns a single line stating how many sections were successfully processed, a tally of how many sections
+     * fell into each pattern (e.g., {@code {partition=10, sequence=5}`), and how many sections failed.</p>
+     *
+     * <pre>{@code
+     * askAll(store, "core-java-14-vol1", List.of("1.2.5"), writer, 4, System.out::println, "Example: ...")
+     * }</pre>
+     *
+     * @param store the book store to read rules from and save patterns to
+     * @param book the name of the book to process
+     * @param only a list of section numbers to process; if empty, all sections without a pattern are processed
+     * @param writer a function that takes a question string and returns a response string
+     * @param parallel the maximum number of sections to process concurrently
+     * @param log a consumer for progress and error messages
+     * @param examples optional text to include in the questions to guide the writer
+     * @return a string summarizing the number of sections processed, the count per pattern, and the number of failures
+     * @throws Exception if an error occurs during the orchestration of the workflow
      */
     public static String askAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
             Consumer<String> log, String examples) throws Exception {

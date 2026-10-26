@@ -18,18 +18,15 @@
 package com.scivicslab.turingworkflow.plugins.report;
 
 /**
- * POJO interface for section builders.
+ * Defines the logic for generating a dynamic section of a workflow execution report.
  *
- * <p>This is a pure POJO interface - it does NOT extend {@code CallableByActionName}.
- * Each section builder POJO should be wrapped by a corresponding Actor class that
- * exposes actions via {@code @Action} annotations.</p>
- *
- * <h2>Design principle:</h2>
  * <ul>
- *   <li>POJO contains business logic only</li>
- *   <li>Actor handles String argument parsing and action dispatch</li>
- *   <li>This separation enables distributed actor messaging (messages are always strings)</li>
+ * <li>{@code generate()} returns the text content of the section.</li>
+ * <li>{@code getTitle()} returns the title of the section.</li>
  * </ul>
+ *
+ * <p>If {@code getTitle()} returns null or an empty string, the section content is included in the report without a
+ * title line.</p>
  *
  * @author devteam@scivicslab.com
  * @since 2.16.0
@@ -37,18 +34,16 @@ package com.scivicslab.turingworkflow.plugins.report;
 public interface SectionBuilder {
 
     /**
-     * Generates the section content.
+     * Returns a string containing the body of the report section.
      *
      * @return the section content as a string
      */
     String generate();
 
     /**
-     * Returns the section title.
+     * Returns the title of the section.
      *
-     * <p>If null or empty, the section content is output without a title line.</p>
-     *
-     * @return the section title, or null for no title
+     * @return the section title, or {@code null} if there is no title
      */
     default String getTitle() {
         return null;

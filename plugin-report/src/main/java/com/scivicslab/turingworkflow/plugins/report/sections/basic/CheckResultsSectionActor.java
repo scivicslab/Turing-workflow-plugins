@@ -27,10 +27,17 @@ import java.sql.Connection;
 import java.util.logging.Logger;
 
 /**
- * Actor wrapper for {@link CheckResultsSection}.
+ * Generates a report section summarizing check results from the log database.
  *
- * <p>Exposes the POJO's methods as actions via {@code @Action} annotations.
- * Handles database connection and session ID retrieval from the system.</p>
+ * <ul>
+ * <li>`generate` returns an action result containing the section content as a string.</li>
+ * <li>`getTitle` returns an action result containing the section title as a string, or an empty string if no title is
+ * set.</li>
+ * </ul>
+ *
+ * <p>The actor holds a database connection and a session ID retrieved from the {@code nodeGroup} actor.</p>
+ *
+ * <p>One instance may serve one workflow at a time.</p>
  *
  * @author devteam@scivicslab.com
  * @since 2.16.0
@@ -40,10 +47,12 @@ public class CheckResultsSectionActor extends IIActorRef<CheckResultsSection> {
     private static final Logger logger = Logger.getLogger(CheckResultsSectionActor.class.getName());
 
     /**
-     * Constructs the actor with a new POJO instance.
+     * Initializes a new actor that produces a report section summarizing the success or failure of checks (labeled
+     * `verify-*`) found in the log database.
      *
-     * @param actorName the actor name
-     * @param system the actor system
+     * @param actorName the name to be used for this actor in the workflow
+     * @param system the actor system used to retrieve the database connection and the session ID from the {@code
+     * nodeGroup} actor
      */
     public CheckResultsSectionActor(String actorName, IIActorSystem system) {
         super(actorName, new CheckResultsSection(), system);
@@ -51,7 +60,11 @@ public class CheckResultsSectionActor extends IIActorRef<CheckResultsSection> {
     }
 
     /**
-     * Initializes the POJO with database connection and session ID.
+     * Sets the database connection and session ID in the underlying section object by retrieving them from the actor
+     * system and the log store.
+     *
+     * @implNote It obtains a {@link java.sql.Connection} from {@link DistributedLogStore} and calls the {@code
+     * nodeGroup} actor to retrieve a session ID via the {@code getSessionId} action.
      */
     private void initializeFromSystem() {
         // Get database connection from DistributedLogStore
@@ -73,7 +86,10 @@ public class CheckResultsSectionActor extends IIActorRef<CheckResultsSection> {
     }
 
     /**
-     * Retrieves session ID from nodeGroup actor.
+     * Returns the session ID of the current workflow by querying the {@code nodeGroup} actor.
+     *
+     * @return the session ID as a long, or -1 if the {@code nodeGroup} actor cannot be found, the system is
+     * unavailable, or the returned ID is not a valid number.
      */
     private long getSessionIdFromNodeGroup() {
         if (actorSystem == null || !(actorSystem instanceof IIActorSystem)) {
@@ -98,12 +114,11 @@ public class CheckResultsSectionActor extends IIActorRef<CheckResultsSection> {
     }
 
     /**
-     * Generates the check results section content.
-     *
-     * <p><strong>Expected args:</strong> unused (may be empty or null).</p>
+     * Returns a text block containing the results of checks labeled with {@code verify-}, showing the success or
+     * failure of each node.
      *
      * @param args unused
-     * @return an {@link ActionResult} with the generated section content
+     * @return an action result that is a success containing the generated section content as a string
      */
     @Action("generate")
     public ActionResult generate(String args) {
@@ -112,12 +127,11 @@ public class CheckResultsSectionActor extends IIActorRef<CheckResultsSection> {
     }
 
     /**
-     * Returns the section title.
-     *
-     * <p><strong>Expected args:</strong> unused (may be empty or null).</p>
+     * Returns the title of the check results section.
      *
      * @param args unused
-     * @return an {@link ActionResult} with the title string (empty if no title)
+     * @return an {@link ActionResult} that is a success and whose message holds the title string, or an empty string
+     * if no title is available
      */
     @Action("getTitle")
     public ActionResult getTitle(String args) {

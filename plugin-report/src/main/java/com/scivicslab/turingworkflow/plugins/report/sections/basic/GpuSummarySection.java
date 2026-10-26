@@ -30,13 +30,19 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * POJO section builder that summarizes GPU information from logs.
+ * Generates a formatted summary of GPU hardware information extracted from workflow execution logs.
  *
- * <p>Pure business logic - no {@code CallableByActionName}.
- * Use {@link GpuSummarySectionActor} to expose as an actor.</p>
+ * <ul><li>{@code generate()} returns a string containing a {@code [GPU Summary]} block with per-node details (name,
+ * VRAM, driver, toolkit, and architecture) and a total count of NVIDIA, AMD, and other GPUs.</li><li>{@code
+ * getTitle()} returns {@code null} because the title is embedded within the generated content.</li></ul>
  *
- * <p>Parses GPU information from workflow execution logs, supporting
- * both NVIDIA (nvidia-smi) and AMD (ROCm) GPU data formats.</p>
+ * <p>The section relies on a JDBC {@link java.sql.Connection} to the H2 log database and a valid session ID to be set
+ * via {@link #setConnection(java.sql.Connection)} and {@link #setSessionId(long)} before calling {@code generate}.</p>
+ *
+ * <p>One instance may serve several workflows, provided the session ID is updated for each.</p>
+ *
+ * <p>If the connection is not set, the session ID is negative, or a database error occurs, {@code generate()} returns
+ * an empty string.</p>
  *
  * @author devteam@scivicslab.com
  * @since 2.16.0
@@ -45,12 +51,15 @@ public class GpuSummarySection implements SectionBuilder {
 
     private static final Logger logger = Logger.getLogger(GpuSummarySection.class.getName());
 
-    /** Pre-compiled pattern for nvidia-smi CSV output */
+    /**
+     * Regular expression for parsing NVIDIA GPU details from nvidia-smi CSV output, including the model name, VRAM
+     * capacity, driver version, and compute capability.
+     */
     private static final Pattern NVIDIA_CSV_PATTERN = Pattern.compile(
         "^(NVIDIA [^,]+|[^,]*GeForce[^,]*|[^,]*Quadro[^,]*|[^,]*Tesla[^,]*|[^,]*A100[^,]*|[^,]*H100[^,]*|[^,]*GB[0-9]+[^,]*),\\s*(?:(\\d+)\\s*MiB|\\[N/A\\]),\\s*([\\d.]+),\\s*([\\d.]+)$"
     );
 
-    /** Pre-compiled pattern for lspci GPU output */
+    /** Pattern for extracting GPU names from lspci output when specific vendor formats are not found. */
     private static final Pattern LSPCI_PATTERN = Pattern.compile(
         "(?:VGA compatible controller|3D controller|Display controller):\\s*(.+?)(?:\\s*\\(rev|$)");
 
@@ -58,33 +67,34 @@ public class GpuSummarySection implements SectionBuilder {
     private long sessionId = -1;
 
     /**
-     * Sets the database connection for log queries.
+     * Assigns the JDBC connection used to query the H2 log database for GPU information.
      *
-     * @param connection the JDBC connection to the H2 log database
+     * @param connection the connection to the H2 log database
      */
     public void setConnection(Connection connection) {
         this.connection = connection;
     }
 
     /**
-     * Sets the session ID to query logs from.
+     * Sets the session ID used to query the log database.
      *
-     * @param sessionId the session ID
+     * @param sessionId the ID of the session whose logs are to be parsed
      */
     public void setSessionId(long sessionId) {
         this.sessionId = sessionId;
     }
 
     /**
-     * {@inheritDoc}
+     * Generates a {@code [GPU Summary]} section containing a list of GPU hardware details and a summary count from the
+     * workflow logs.
      *
-     * <p>Generates a {@code [GPU Summary]} block by querying the log database for
-     * GPU-related messages. Supports both NVIDIA (nvidia-smi CSV format) and AMD
-     * (ROCm key-value format) GPU data. Each node's GPU name, VRAM, driver version,
-     * toolkit, and architecture are listed in CSV format, followed by a summary
-     * count of NVIDIA, AMD, and other GPU types.</p>
+     * <p>The result is a formatted string listing each node's GPU name, VRAM, driver version, toolkit, and
+     * architecture, followed by a summary of the number of NVIDIA, AMD, and other GPUs found. If no GPU information is
+     * found in the logs, or if the database connection or session ID is not properly configured, it returns an empty
+     * string.</p>
      *
-     * @return the formatted GPU summary content, or empty string if no GPU info found
+     * @return the formatted GPU summary text, or an empty string if no GPU information is found or if a database error
+     * occurs.
      */
     @Override
     public String generate() {
@@ -102,7 +112,13 @@ public class GpuSummarySection implements SectionBuilder {
     }
 
     /**
-     * Build GPU summary from logs.
+     * Constructs a formatted GPU summary string by querying the log database.
+     *
+     * Returns a string containing a {@code [GPU Summary]} block with per-node details (name, VRAM, driver, toolkit,
+     * and architecture) and a final summary count of NVIDIA, AMD, and other GPU types, or an empty string if no GPU
+     * information is found.
+     *
+     * @throws SQLException if a database access error occurs.
      */
     private String buildGpuSummary() throws SQLException {
         String sql = "SELECT node_id, message FROM logs " +
@@ -141,7 +157,14 @@ public class GpuSummarySection implements SectionBuilder {
     }
 
     /**
-     * Parse GPU information from a log message.
+     * Populates the provided {@code GpuInfo} with details extracted from a log message.
+     *
+     * <p>Extracts GPU specifications such as model name, VRAM, driver version, toolkit, and architecture from the
+     * lines of the given message. It supports NVIDIA (via {@code nvidia-smi} CSV format), AMD (via ROCm key-value
+     * pairs), and {@code lspci} output. If a line does not match any known GPU data format, it is ignored.
+     *
+     * @param message the log message text to parse
+     * @param gpuInfo the object to be updated with the extracted properties
      */
     private void parseGpuMessage(String message, GpuInfo gpuInfo) {
         for (String line : message.split("\n")) {
@@ -212,7 +235,10 @@ public class GpuSummarySection implements SectionBuilder {
     }
 
     /**
-     * Format the output string.
+     * Returns a formatted string containing a {@code [GPU Summary]} block and a summary count of GPU types.
+     *
+     * The string contains a header, followed by lines for each node detailing its GPU name, VRAM, driver, toolkit, and
+     * architecture in a CSV-like format, and ends with a summary line (e.g., "Summary: 2 NVIDIA, 1 AMD").
      */
     private String formatOutput(Map<String, GpuInfo> nodeGpus) {
         // Count GPU types
@@ -272,27 +298,22 @@ public class GpuSummarySection implements SectionBuilder {
         return sb.toString();
     }
 
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Always returns {@code null} because the title is embedded within the
-     * generated content.</p>
-     */
+    /** Returns {@code null}. */
     @Override
     public String getTitle() {
         return null;  // Title is embedded in content
     }
 
     /**
-     * Mutable data holder for GPU information collected from log messages.
+     * Holds GPU hardware details extracted from log messages.
      *
-     * <p>Fields are populated incrementally as different log lines are parsed,
-     * since GPU information may be spread across multiple log entries.</p>
+     * <p>Fields are populated incrementally as different log lines are parsed, since GPU information may be spread
+     * across multiple log entries.</p>
      */
     private static class GpuInfo {
         /** The GPU model name (e.g., {@code "NVIDIA A100"}, {@code "AMD Radeon RX 7900"}). */
         String name;
-        /** The VRAM capacity (e.g., {@code "16GB"}, {@code "512MB"}). */
+        /** The VRAM capacity of the GPU, such as {@code "16GB"} or {@code "512MB"}. */
         String vram;
         /** The GPU driver version string. */
         String driver;
@@ -300,7 +321,7 @@ public class GpuSummarySection implements SectionBuilder {
         String toolkit;
         /** The GPU architecture (compute capability for NVIDIA, or gfx ID for AMD). */
         String arch;
-        /** Whether this GPU is an AMD device. */
+        /** Indicates whether the detected GPU is an AMD device. */
         boolean isAmd;
     }
 }

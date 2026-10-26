@@ -16,12 +16,27 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * A simple review of step 6 ({@code FrameOntology_261021_oo01}, step 7): one question per section, showing its
- * sentences numbered, its concepts, and the relations step 6 found, numbered {@code R1}, {@code R2}, ..., asking for
- * each whether it stands ({@code keep}), is of another kind ({@code is-a}, {@code part-of}, {@code feature}, {@code operation}, {@code other}), runs the
- * other way ({@code reverse}), or is wrong ({@code drop}). A relation marked {@code other} is checked hardest, to be
- * turned into one of the four kinds it is (an operation marked other is the commonest), or dropped when its two concepts
- * are one thing under two names. A relation the reply says nothing of is kept.
+ * Generates questions for a local LLM to review the relations between concepts in a textbook section and processes the
+ * resulting verdicts.
+ *
+ * <ul>
+ * <li>{@code question} returns a text block containing the section's title, numbered sentences, the concepts it
+ * explains, and a list of relations (e.g., {@code R1: A | kind | B}) for the LLM to judge.</li>
+ * <li>{@code read} returns a list of verdicts for the given number of relations, where each verdict is one of {@link
+ * BookStore.Relation} values.</li>
+ * <li>{@code reviewAll} reviews the specified sections in a book, either all unreviewed sections or a specific subset,
+ * and saves the results to the provided {@link BookStore}.</li>
+ * </ul>
+ *
+ * <p>One instance may serve several workflows or threads at once.</p>
+ *
+ * <p>Example of a workflow call to review a book:</p>
+ * <pre>{@code
+ * reviewAll(store, "core-java-14-vol1", List.of(), llm::ask, 4, log::info)
+ * }</pre>
+ *
+ * <p>If a section fails during {@code reviewAll}, the error is logged and the section is skipped, allowing the process
+ * to continue with the remaining sections.</p>
  */
 public final class SectionReview {
 
@@ -31,7 +46,16 @@ public final class SectionReview {
     private SectionReview() {
     }
 
-    /** @return the question for one section */
+    /**
+     * Returns a text prompt that asks a human or LLM to review the relations between concepts in a specific textbook
+     * section.
+     *
+     * The returned string contains the section's number and title, the text of the section's units (numbered), the
+     * list of concepts explained in the section, and the list of existing relations (each prefixed with R1, R2, etc.)
+     * to be judged. The prompt includes instructions for the user to provide a verdict for each relation using
+     * specific keywords: {@code keep}, {@code is-a}, {@code part-of}, {@code feature}, {@code operation}, {@code
+     * other}, {@code reverse}, or {@code drop}.
+     */
     public static String question(BookOutline.Node node, List<ConceptImportance.Unit> units, List<String> concepts,
             List<BookStore.Relation> relations) {
         StringBuilder text = new StringBuilder();
@@ -75,7 +99,20 @@ public final class SectionReview {
                 + "For example \"R1 | keep\", \"R2 | is-a\", \"R3 | drop\". Write nothing else.";
     }
 
-    /** @return the verdict on each of {@code count} relations, {@code keep} for one the reply says nothing of */
+    /**
+     * Returns a list of verdicts for the relations, where each verdict is one of the allowed words or {@code keep} if
+     * the reply says nothing of a relation.
+     *
+     * The list contains exactly {@code count} elements, where the element at index {@code n - 1} corresponds to the
+     * relation numbered {@code n}.
+     *
+     * A verdict is a success if it is one of the words specified in {@link #question(BookOutline.Node, List, List,
+     * List)}, otherwise the relation is treated as {@code keep}.
+     *
+     * @param reply the text from the LLM containing the numbered verdicts
+     * @param count the number of relations to process
+     * @return a list of {@code count} strings, each being a verdict or {@code keep}
+     */
     public static List<String> read(String reply, int count) {
         List<String> out = new ArrayList<>();
         for (int i = 0; i < count; i++) out.add(BookStore.Relation.KEEP);
@@ -90,11 +127,26 @@ public final class SectionReview {
     }
 
     /**
-     * Reviews the relations of every section that has some and none reviewed yet ({@code only} empty), or of the
-     * sections named, {@code parallel} at a time, and stores the verdicts as soon as each is read. A section that fails
-     * is reported and left out, so a run started again goes on with it.
+     * Reviews the relations of textbook sections by asking a writer to verify them, and saves the results to the
+     * provided store.
      *
-     * @return how many sections were reviewed and what was made of their relations, in one line
+     * <p>Returns a summary string stating how many sections were reviewed, a tally of the verdicts (e.g., {@code
+     * keep}, {@code is-a}, {@code drop}), and how many sections failed.
+     *
+     * <p>If {@code only} is empty, it reviews only those sections that have relations but no existing reviews;
+     * otherwise, it reviews only the sections whose numbers are in {@code only}.
+     *
+     * <p>A section that causes an error during the review process is logged and skipped, so the caller can retry the
+     * run to address the failure.
+     *
+     * @param store the database to read sections and relations from, and to save the verdicts into
+     * @param book the name of the book to process
+     * @param only a list of section numbers to review; if empty, all unreviewed sections with relations are processed
+     * @param writer a function that takes the generated question string and returns the reply string
+     * @param parallel the maximum number of sections to review simultaneously
+     * @param log a consumer for progress and error messages
+     * @return a summary of the number of sections reviewed, the counts of each verdict type, and the number of
+     * failures
      */
     public static String reviewAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
             Consumer<String> log) throws Exception {

@@ -8,36 +8,66 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The table of contents of a book, read from the headings of its markdown files when the book has no contents page
- * ({@code FrameOntology_261021_oo01}, Solution: getting the concept hierarchy). No LLM is used.
+ * Extracts the table of contents from a book's markdown files by reading headings when no contents page is present.
  *
- * <p>A book is parts, chapters, sections and subsections; anything deeper is rounded to its subsection. OCR writes
- * every heading at the same depth, so the depth is read from the heading's number: {@code Chapter 4 ▪ Objects and
- * Classes} is chapter 4, {@code 4.1. ...} a section, {@code 4.1.1. ...} a subsection. A numbered heading counts only
- * when its number lies in the current chapter; others ({@code 1. Always keep data private.}, a numbered item the OCR
- * made a heading) are text. {@code Appendix} is a chapter of its own, numbered {@code A}. A heading seen again (a page
- * file repeating it) adds nothing.</p>
+ * <p>The class works by identifying the hierarchy of parts, chapters, sections, and subsections from heading numbers
+ * and text. It treats any depth beyond a subsection as a subsection. It recognizes numbered headings only if they
+ * belong to the current chapter; otherwise, they are treated as text. Appendices are treated as chapters numbered with
+ * letters.</p>
+ *
+ * <ul>
+ * <li>{@link #read(Map)} returns an {@link Outline} containing the hierarchical nodes and any notes about the reading
+ * process.</li>
+ * <li>{@link #withDirectoryChapters(Map, Outline)} returns a new {@link Outline} that incorporates chapters and
+ * appendices identified from directory names.</li>
+ * </ul>
+ *
+ * <p>One instance may serve several workflows.</p>
  */
 public final class BookOutline {
 
-    /** One node of the table of contents. {@code level} is {@code part}, {@code chapter}, {@code section} or {@code subsection}. */
+    /**
+     * A single entry in the book's table of contents.
+     *
+     * @param number the heading's number, such as {@code 1.2} or {@code A.1}
+     * @param level the hierarchical level: {@code part}, {@code chapter}, {@code section}, or {@code subsection}
+     * @param title the text of the heading
+     * @param parent the number of the containing node, or {@code null} if it is a top-level node
+     * @param firstFile the path to the first markdown file containing this heading
+     */
     public record Node(String number, String level, String title, String parent, String firstFile) {
     }
 
-    /** The table of contents, in the book's order, and what was read but not taken. */
+    /**
+     * The book's table of contents in the order of the book, and a list of notes about headings that were read but not
+     * included in the outline.
+     *
+     * @param nodes the list of nodes representing the parts, chapters, sections, and subsections of the book
+     * @param notes the list of strings describing why certain headings were skipped or how the outline was constructed
+     */
     public record Outline(List<Node> nodes, List<String> notes) {
     }
 
     /**
-     * What one heading is: a node of the table of contents ({@code number}, {@code level}, {@code title}, {@code parent}),
-     * a heading deeper than a subsection ({@code deeper}), a numbered heading outside the current chapter
-     * ({@code foreign}), or none of these ({@code null} from {@link #classify}).
+     * Represents the classification of a single heading found in the book's text.
+     *
+     * <p>A heading is one of the following: a node of the table of contents (containing {@code number}, {@code level},
+     * {@code title}, and {@code parent}), a heading deeper than a subsection ({@code deeper}), a numbered heading that
+     * belongs to a different chapter than the current one ({@code foreign}), or none of these ({@code null} from
+     * {@link #classify}).
+     *
+     * @param number the heading's number, such as "1.2.1" or "A"
+     * @param level the hierarchy level, such as "part", "chapter", "section", or "subsection"
+     * @param title the text of the heading
+     * @param parent the number of the preceding node in the hierarchy
+     * @param deeper true if the heading is deeper than a subsection
+     * @param foreign true if the heading is a numbered heading that does not belong to the current chapter
      */
     record Heading(String number, String level, String title, String parent, boolean deeper, boolean foreign) {
     }
 
     private static final Pattern PART = Pattern.compile("^Part\\s+([0-9IVXL]+)\\b\\s*[▪:.\\-–]?\\s*(.*)$");
-    /** A separator and a title must follow the number: "Chapter 6 of Volume II", a cross-reference the OCR made a heading, is no chapter. */
+    /** Matches a heading that identifies a chapter by its number and title, such as "Chapter 6 of Volume II". */
     private static final Pattern CHAPTER = Pattern.compile("^Chapter\\s+(\\d+)\\s*[▪:\\-–]\\s*(.+)$");
     private static final Pattern APPENDIX = Pattern.compile("^Appendix\\b\\s*[▪:.\\-–]?\\s*(.*)$");
     private static final Pattern NUMBERED = Pattern.compile("^(\\d+(?:\\.\\d+)+)\\.?\\s+(.+)$");
@@ -46,7 +76,16 @@ public final class BookOutline {
     }
 
     /**
-     * @param files the book's markdown files, path to text, in the order they are to be read (the caller sorts them)
+     * Returns an {@link Outline} of the book's structure by reading the headings in the provided markdown files.
+     *
+     * <p>The result is an {@link Outline} containing the hierarchy of parts, chapters, sections, and subsections,
+     * along with any notes about headings that could not be placed in the hierarchy. If a chapter has no numbered
+     * sections in its files, the method attempts to identify sections by looking for "## " headings in the text.
+     *
+     * <p>The caller must provide the files in the order they are to be read.
+     *
+     * @param files a map where the keys are the paths to the book's markdown files and the values are the text content
+     * of those files
      */
     public static Outline read(Map<String, String> files) {
         Outline o = readOutline(files);
@@ -54,9 +93,18 @@ public final class BookOutline {
     }
 
     /**
-     * Gives each chapter that has no section the title-like "## " headings in its files as sections, numbered in the
-     * order they are met (CISSP, System Design on AWS: their sections are not numbered). When some of a chapter's headings
-     * are bold, only the bold ones are sections: the plain ones are sidebars ("TIPS FOR SELECTING AN EFFECTIVE BCP TEAM").
+     * Adds section nodes to chapters that lack numbered sections by using "## " headings found in the chapter's files.
+     *
+     * <p>The method scans the files belonging to a chapter to find headings that look like titles. If a chapter has no
+     * numbered sections, it creates new {@link Node} objects for these headings, numbering them sequentially (e.g.,
+     * "1.1", "1.2") based on the order they appear in the files. If a chapter contains any bold headings (marked with
+     * "**"), only the bold headings are treated as sections; plain headings are treated as sidebars and ignored.
+     * Headings that are part of code blocks or do not match the title-like pattern are skipped.
+     *
+     * <p>Returns a list of nodes containing the original outline nodes plus the newly created section nodes.
+     *
+     * @param nodes the current list of outline nodes
+     * @param files a map of file paths to their text content
      */
     static List<Node> withHeadingSections(List<Node> nodes, Map<String, String> files) {
         // a chapter with any node numbered under it has its sections
@@ -154,14 +202,23 @@ public final class BookOutline {
         return new Outline(inBookOrder(List.copyOf(nodes.values())), notes);
     }
 
-    /** A directory named by its section's number and title: "1.1. Linux Versus Other Unix-Like Kernels _ <book>_p001-005". */
+    /**
+     * Matches a directory name that identifies a section by its number and title, such as "1.1. Linux Versus Other
+     * Unix-Like Kernels _ <book>_p001-005".
+     */
     private static final Pattern DIR_NUMBERED = Pattern.compile("^(\\d{1,2}(?:\\.\\d{1,2})*)\\.\\s+(.+?)\\s+_\\s.*$");
-    /** A directory of one chapter: "CHAPTER 1_ Introduction _ <book>_p001-005", "APPENDIX C_ Glossary _ <book>_p011-015". */
+    /**
+     * Matches a directory name for a single chapter or appendix, such as "CHAPTER 1_ Introduction _ <book>_p001-005"
+     * or "APPENDIX C_ Glossary _ <book>_p011-015".
+     */
     private static final Pattern DIR_CHAPTER = Pattern.compile("(?i)^(?:chapter\\s+(\\d{1,2})|appendix\\s+([A-Z]))_\\s*(.+?)\\s+_\\s");
-    /** A heading that reads as a section's title: it starts with a capital letter and does not end as a sentence or a label does. */
+    /**
+     * Matches a heading that reads as a section's title, starting with a capital letter and not ending as a sentence
+     * or a label.
+     */
     private static final Pattern TITLE_LIKE = Pattern.compile("^[A-Z][^\\[\\]{}();=#]{2,80}$");
 
-    /** @return the name of the directory a file is in, the file's own name when it is in none */
+    /** Returns the name of the directory a file is in, or the file's own name if it is not in a directory. */
     static String dirOf(String path) {
         String p = path.replace('\\', '/');
         int slash = p.lastIndexOf('/');
@@ -171,8 +228,11 @@ public final class BookOutline {
     }
 
     /**
-     * Reads a book cut into one directory per section, named by the section's number and title: the number's depth makes
-     * a chapter, a section or a subsection; deeper ones are left out.
+     * Returns an {@link Outline} of a book where each section is a single directory named by its number and title,
+     * such as "1.1. Linux Versus Other Unix-Like Kernels _ <book>_p001-005".
+     *
+     * <p>The depth of the section number determines whether a node is a chapter, a section, or a subsection; headings
+     * deeper than a subsection are excluded.
      */
     static Outline readByDirectories(Map<String, String> files) {
         Map<String, Node> nodes = new LinkedHashMap<>();
@@ -193,9 +253,16 @@ public final class BookOutline {
     }
 
     /**
-     * Reads a book cut into one directory per chapter whose sections are not numbered: the chapter comes from its
-     * directory's name; each heading in it that reads as a title ("The Network Device", not "Helper methods:" nor a line
-     * of code) is a section, numbered in the order it is met.
+     * Returns an {@link Outline} for a book where chapters are organized into separate directories and sections are
+     * unnumbered.
+     *
+     * <p>The chapter is identified from the directory name, and sections are created from markdown headings found
+     * within those directories that qualify as titles. A heading is treated as a section title if it is not a line of
+     * code and is not a heading of a different level or type. Sections are numbered sequentially based on the order
+     * they are encountered within each chapter. Duplicate headings within the same chapter are ignored.
+     *
+     * @param files the book's markdown files, path to text, in the order they are to be read (the caller sorts them)
+     * @return an {@link Outline} containing the identified chapters and their sequentially numbered sections
      */
     static Outline readByChapterDirectories(Map<String, String> files) {
         Map<String, Node> nodes = new LinkedHashMap<>();
@@ -304,25 +371,37 @@ public final class BookOutline {
         return new Outline(nodes, notes);
     }
 
-    /** A title reduced to its letters and digits, to compare a heading with a directory's name. */
+    /**
+     * Reduces a title to a sequence of alphanumeric characters to allow comparison between headings and directory
+     * names.
+     */
     static String bareTitle(String s) {
         return clean(s).toLowerCase(java.util.Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]+", "");
     }
 
     /**
-     * A numbered heading of a book read by its numbers: "24.2.1 The FilesForSale Service", "A.2 Installing the Toolkit".
-     * A chapter has at most two digits; a section or subsection may have three, as a reference with more than ninety-nine
-     * members of a class has ("2.9.214 method Arrays.fill").
+     * Matches a heading that begins with a number or letter followed by a sequence of dot-separated numbers, such as
+     * "24.2.1 The FilesForSale Service" or "A.2 Installing the Toolkit".
      */
     private static final Pattern NUMBERED_ANY = Pattern.compile("^([A-Z]|\\d{1,2})((?:\\.\\d{1,3})+)\\.?\\s+(\\S.*)$");
-    /** A chapter's own heading in such a book: its number and its title, "2 COMPUTER SYSTEMS ORGANIZATION". */
+    /**
+     * Matches a heading that identifies a chapter by its number and title, such as "2 COMPUTER SYSTEMS ORGANIZATION".
+     */
     private static final Pattern BARE_CHAPTER = Pattern.compile("^([1-9]\\d?)\\.?\\s+(\\p{L}[\\p{L}\\p{N} ,:&'()-]{2,})$");
 
     /**
-     * Reads a book whose chapters are not headed "Chapter N: ...": a numbered heading belongs to the chapter of its first
-     * number or letter, which is made when it is first met; a heading of a chapter number and a title gives that chapter
-     * its title. Two numbers make a section, three a subsection; deeper ones, unnumbered headings, and lines of code that
-     * begin with "#" are left out.
+     * Constructs an {@link Outline} from a book's markdown files by parsing numbered headings that do not use the
+     * "Chapter N: ..." format.
+     *
+     * <p>The resulting {@link Outline} contains a hierarchy of chapters, sections, and subsections where a heading's
+     * level is determined by the number of digits in its prefix (e.g., "1" is a chapter, "1.1" is a section, and
+     * "1.1.1" is a subsection). Headings with more than three digits, unnumbered headings, or lines of code starting
+     * with "#" are ignored. A chapter's title is taken from a heading that matches the chapter number, or defaults to
+     * "Chapter" or "Appendix" followed by the number if no such heading exists.
+     *
+     * @param files the book's markdown files, path to text, in the order they are to be read
+     * @return an {@link Outline} containing the hierarchy of nodes and any notes about headings that appeared out of
+     * order or were repeated
      */
     static Outline readNumbered(Map<String, String> files) {
         Map<String, Node> nodes = new LinkedHashMap<>();
@@ -371,9 +450,13 @@ public final class BookOutline {
     }
 
     /**
-     * The nodes in the book's order: the files are read in path order, in which a directory such as {@code Appendix}
-     * comes before {@code Chap01}. Chapters go by their number, lettered ones (an appendix) after the numbered ones;
-     * each chapter's sections and subsections stay in the order they were read. A book with parts keeps the order read.
+     * Returns a list of nodes sorted by the book's logical structure.
+     *
+     * <p>The list follows the order of parts, then numbered chapters in ascending order, followed by lettered
+     * appendices. Within each chapter, sections and subsections follow the order in which they were encountered in the
+     * files. If the nodes include a part, the input order is preserved without reordering by chapter.
+     *
+     * @param read the list of nodes to be sorted
      */
     static List<Node> inBookOrder(List<Node> read) {
         if (read.stream().anyMatch(n -> n.level().equals("part"))) return read;
@@ -391,7 +474,15 @@ public final class BookOutline {
         return out;
     }
 
-    /** @return what a heading is, given the part and chapter it comes in ({@code null} for none), or {@code null} when it is none of the kinds */
+    /**
+     * Classifies a raw heading string into a {@link Heading} based on the current {@code part} and {@code chapter}.
+     *
+     * @param raw the heading text as read from the file
+     * @param part the current part number or null
+     * @param chapter the current chapter number or null
+     * @return a {@link Heading} containing the number, level, title, parent, and whether it is deeper than a
+     * subsection or foreign to the current chapter, or {@code null} if the text is not a heading
+     */
     static Heading classify(String raw, String part, String chapter) {
         String h = clean(raw);
         Matcher m;
@@ -411,7 +502,14 @@ public final class BookOutline {
         return null;
     }
 
-    /** A heading without the emphasis and link marks the OCR leaves in it. */
+    /**
+     * Returns a string that is the input heading with Markdown link syntax and emphasis marks removed.
+     *
+     * <p>The result is the text inside any {@code [text](url)} pattern, with all {@code *} and {@code _} characters
+     * stripped and {@code \$} characters preserved. A heading that is already clean has no effect.</p>
+     *
+     * @param heading the raw heading text containing Markdown syntax
+     */
     static String clean(String heading) {
         return heading.replaceAll("\\[([^]]*)]\\([^)]*\\)", "$1").replaceAll("[*_]", "").replace("\\$", "$").strip();
     }

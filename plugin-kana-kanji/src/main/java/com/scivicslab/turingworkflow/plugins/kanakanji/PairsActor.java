@@ -8,18 +8,22 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * {@link PairWriter} をアクターとして動かし、その操作をワークフローYAMLへ公開する。
+ * Writes kanji-kana pairs to a file.
  *
- * <p>状態は持たない。持つのは包んだ {@code PairWriter} のほうであり、これが {@code ActorRef} の
- * 前提である——アクターとは、素のオブジェクトと、それを動かす参照の対である。状態をこちら側に置き
- * {@code null} を包むと、{@code isAlive()} が偽を返し、{@code tell}/{@code ask} が黙って失敗する
- * （{@code ActorSuffixAndOwnedActorRef_260722_oo01} 「実例（2026-08-30）」）。</p>
+ * <ul><li>openOutput: opens the output file at the specified path.</li><li>setPageInfo: sets the page description for
+ * the subsequent pairs.</li><li>checkHiragana: validates the presence of hiragana in the provided
+ * text.</li><li>writePairs: writes the provided text as kanji-kana pairs to the open file.</li><li>closeOutput: closes
+ * the current output file.</li></ul>
+ *
+ * <p>One instance serves one workflow at a time. If the underlying writer is null, all actions fail.</p>
  */
 public class PairsActor extends IIActorRef<PairWriter> {
 
     /**
-     * @param name   このアクターの登録名
-     * @param system 所属するアクターシステム
+     * Creates a new actor named {@code name} within the given {@code system} to write kanji-kana pairs to a file.
+     *
+     * @param name the name to register this actor under in the workflow
+     * @param system the actor system in which this actor is registered
      */
     public PairsActor(String name, IIActorSystem system) {
         super(name, new PairWriter(), system);
@@ -34,21 +38,21 @@ public class PairsActor extends IIActorRef<PairWriter> {
      * @return 包んだオブジェクトが返した結果
      */
     /**
-     * Which file the pairs are written to.
+     * The path to the file where pairs are written.
      *
-     * @param path the output file's path
+     * @param path the file system path for the output file
      */
     public record FileArgs(@NotNull String path) {}
 
     /**
-     * Which page the pairs that follow come from.
+     * The description of the page from which the subsequent pairs are extracted.
      *
      * @param pageInfo the page's description
      */
     public record PageInfoArgs(@NotNull String pageInfo) {}
 
     /**
-     * The text the model returned.
+     * The text returned by the model.
      *
      * @param response the model's answer
      */
@@ -60,8 +64,10 @@ public class PairsActor extends IIActorRef<PairWriter> {
     }
 
     /**
-     * @param pageInfo ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Sets the page description for the subsequent pairs to be written.
+     *
+     * @param args the page's description
+     * @return an action result that is a success if the page info was updated, or a failure if it could not be set
      */
     @Action(value = "setPageInfo", argsType = PageInfoArgs.class)
     public ActionResult setPageInfo(PageInfoArgs args) {
@@ -69,8 +75,11 @@ public class PairsActor extends IIActorRef<PairWriter> {
     }
 
     /**
-     * @param response ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Verifies that the provided text contains only Hiragana characters.
+     *
+     * @param args a record containing the text to be checked in {@code response}
+     * @return an action result that is a success if the text consists solely of Hiragana, with a message describing
+     * the result; otherwise, a failure result
      */
     @Action(value = "checkHiragana", argsType = ResponseArgs.class)
     public ActionResult checkHiragana(ResponseArgs args) {
@@ -78,8 +87,12 @@ public class PairsActor extends IIActorRef<PairWriter> {
     }
 
     /**
-     * @param response ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Writes the provided text as kanji-kana pairs to the current output file.
+     *
+     * @param args a record containing the text to be processed as the response
+     *
+     * @return an action result that is a success if the pairs were successfully written and the message holds the
+     * number of pairs written, or is not a success if the writing failed
      */
     @Action(value = "writePairs", argsType = ResponseArgs.class)
     public ActionResult writePairs(ResponseArgs args) {
@@ -87,8 +100,10 @@ public class PairsActor extends IIActorRef<PairWriter> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Closes the output file being used by the actor.
+     *
+     * @param args the argument passed from the workflow (unused)
+     * @return an action result indicating whether the file was closed successfully
      */
     @Action("closeOutput")
     public ActionResult closeOutput(String args) {

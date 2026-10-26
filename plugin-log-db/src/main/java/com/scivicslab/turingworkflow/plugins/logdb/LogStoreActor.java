@@ -31,30 +31,33 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * Actor wrapper for DistributedLogStore.
+ * Records and retrieves workflow execution logs in an H2 database.
  *
- * <p>This actor centralizes all database writes for logging. It should be created
- * under ROOT and used by all accumulator actors in the system.</p>
- *
- * <h2>Actor Tree Position</h2>
- * <pre>
- * ROOT
- * ├── logStore              &lt;-- this actor
- * ├── accumulator           (system-level)
- * └── nodeGroup
- *     ├── accumulator       (workflow-level)
- *     └── node-*
- * </pre>
- *
- * <h2>Supported Actions</h2>
  * <ul>
- *   <li>{@code log} - Log a message with level</li>
- *   <li>{@code logAction} - Log an action result</li>
- *   <li>{@code startSession} - Start a new workflow session</li>
- *   <li>{@code endSession} - End a workflow session</li>
- *   <li>{@code markNodeSuccess} - Mark a node as succeeded</li>
- *   <li>{@code markNodeFailed} - Mark a node as failed</li>
+ * <li>{@code startSession} starts a new workflow session and returns the session ID as a string in the result
+ * message.</li>
+ * <li>{@code endSession} ends a workflow session with a terminal status.</li>
+ * <li>{@code log} records a message with a specific {@link LogLevel}.</li>
+ * <li>{@code logAction} records an action's result, including exit code, duration, and output.</li>
+ * <li>{@code markNodeSuccess} marks a specific node as having succeeded.</li>
+ * <li>{@code markNodeFailed} marks a specific node as having failed and records a reason.</li>
  * </ul>
+ *
+ * <p>One instance may serve several workflows at once, as actions are executed asynchronously via a dedicated executor
+ * service.</p>
+ *
+ * <p>Example workflow step:
+ * <pre>{@code
+ * actor: logStore
+ * method: startSession
+ * arguments:
+ *   workflowName: "deploy-app"
+ *   nodeCount: 3
+ * }</pre>
+ * </p>
+ *
+ * <p>If a database error occurs or an invalid argument is provided, the action returns a failure result with the error
+ * message.</p>
  *
  * @author devteam@scivicslab.com
  * @since 1.0
@@ -63,19 +66,16 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
 
     private static final Logger logger = Logger.getLogger(LogStoreActor.class.getName());
 
-    /**
-     * The dedicated executor service for DB writes.
-     * Using a single-threaded pool ensures writes are serialized.
-     */
+    /** The executor service used to serialize database write operations. */
     private final ExecutorService dbExecutor;
 
     /**
-     * Constructs a new LogStoreActor.
+     * Initializes a new {@code LogStoreActor} with a dedicated executor for asynchronous database writes.
      *
-     * @param actorName the name of this actor (typically "logStore")
-     * @param logStore the DistributedLogStore implementation
+     * @param actorName the name of this actor
+     * @param logStore the {@link DistributedLogStore} implementation
      * @param system the actor system
-     * @param dbExecutor the dedicated executor service for DB writes (should be single-threaded)
+     * @param dbExecutor the dedicated executor service for DB writes
      */
     public LogStoreActor(String actorName, DistributedLogStore logStore,
                          IIActorSystem system, ExecutorService dbExecutor) {
@@ -102,60 +102,60 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
      *         success=false with the error message on failure
      */
     /**
-     * One log line to store.
+     * Arguments for a single log entry.
      *
-     * @param sessionId 
-     * @param nodeId 
-     * @param level 
-     * @param message 
+     * @param sessionId the unique identifier of the workflow session
+     * @param nodeId the identifier of the node generating the log
+     * @param level the severity level of the log (e.g., DEBUG, INFO, WARN, ERROR)
+     * @param message the text content of the log entry
      */
     public record LogArgs(@NotNull Long sessionId, @NotNull String nodeId, @NotNull String level, @NotNull String message) {}
 
     /**
-     * One action outcome to store.
+     * Arguments for recording an action result.
      *
-     * @param sessionId 
-     * @param nodeId 
-     * @param label 
-     * @param actionName 
-     * @param exitCode 
-     * @param durationMs 
-     * @param output 
+     * @param sessionId the session ID to associate with the result
+     * @param nodeId the identifier of the node where the action occurred
+     * @param label the label describing the step or context of the action
+     * @param actionName the name of the action that was executed
+     * @param exitCode the exit code returned by the action
+     * @param durationMs the execution time in milliseconds
+     * @param output the text output or message produced by the action
      */
     public record LogActionArgs(@NotNull Long sessionId, @NotNull String nodeId, @NotNull String label, @NotNull String actionName, @NotNull Integer exitCode, @NotNull Long durationMs, @NotNull String output) {}
 
     /**
-     * What identifies a run that is starting.
+     * Arguments for starting a new workflow session.
      *
-     * @param workflowName 
-     * @param overlayName 
-     * @param inventoryName 
-     * @param nodeCount 
+     * @param workflowName the name of the workflow
+     * @param overlayName the name of the overlay, if any
+     * @param inventoryName the name of the inventory, if any
+     * @param nodeCount the number of nodes in the workflow
      */
     public record StartSessionArgs(@NotNull String workflowName, String overlayName, String inventoryName, @NotNull Integer nodeCount) {}
 
     /**
-     * Which run finished, and how.
+     * Arguments for ending a workflow session.
      *
-     * @param sessionId 
-     * @param status 
+     * @param sessionId the unique identifier of the session to end
+     * @param status the terminal status of the session (e.g., "SUCCESS", "FAILED")
      */
     public record EndSessionArgs(@NotNull Long sessionId, @NotNull String status) {}
 
     /**
-     * Which node of which run succeeded.
+     * Records the identifiers for a successful node within a specific workflow session.
      *
-     * @param sessionId 
-     * @param nodeId 
+     * @param sessionId the unique identifier of the session
+     * @param nodeId the identifier of the node that succeeded
      */
     public record MarkNodeSuccessArgs(@NotNull Long sessionId, @NotNull String nodeId) {}
 
     /**
-     * Which node of which run failed, and why.
+     * Arguments for marking a node as failed in a session.
      *
-     * @param sessionId 
-     * @param nodeId 
-     * @param reason 
+     * @param sessionId the session ID to associate the failure with
+     * @param nodeId the identifier of the node that failed
+     * @param reason the text describing why the node failed
      */
     public record MarkNodeFailedArgs(@NotNull Long sessionId, @NotNull String nodeId, @NotNull String reason) {}
 
@@ -179,25 +179,26 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
     }
 
     /**
-     * Logs an action result with execution metadata.
+     * Records an action's execution metadata, such as its exit code and duration, into the database.
      *
-     * <p>Expected JSON format:</p>
+     * Returns an action result that is a success with the message "Action logged" if the metadata is recorded, or a
+     * failure with an error message if the write fails.
+     *
      * <pre>{@code
-     * {
-     *   "sessionId": 1,
-     *   "nodeId": "node-01",
-     *   "label": "deploy",
-     *   "actionName": "runScript",
-     *   "exitCode": 0,
-     *   "durationMs": 1234,
-     *   "output": "Script completed successfully"
-     * }
+     * actor: logStore
+     * method: logAction
+     * arguments:
+     *   sessionId: 1
+     *   nodeId: "node-01"
+     *   label: "deploy"
+     *   actionName: "runScript"
+     *   exitCode: 0
+     *   durationMs: 1234
+     *   output: "Script completed successfully"
      * }</pre>
      *
-     * @param arg JSON string containing sessionId (long), nodeId (String), label (String),
-     *            actionName (String), exitCode (int), durationMs (long), and output (String)
-     * @return {@link ActionResult} with success=true and message "Action logged", or
-     *         success=false with the error message on failure
+     * @param args a record containing the sessionId (long), nodeId (String), label (String), actionName (String),
+     * exitCode (int), durationMs (long), and output (String) to be recorded
      */
     @Action(value = "logAction", argsType = LogActionArgs.class)
     public ActionResult logAction(LogActionArgs args) {
@@ -221,22 +222,22 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
     }
 
     /**
-     * Starts a new workflow session.
+     * Creates a new workflow session and returns its unique identifier.
      *
-     * <p>Expected JSON format:</p>
+     * <p>The result is an action result that succeeds with the session ID as its message, or fails with an error
+     * message if the session could not be initialized.</p>
+     *
      * <pre>{@code
-     * {
-     *   "workflowName": "my-workflow",
-     *   "overlayName": "production",
-     *   "inventoryName": "hosts.yml",
-     *   "nodeCount": 5
-     * }
+     * actor: logStore
+     * method: startSession
+     * arguments:
+     *   workflowName: "deploy-app"
+     *   nodeCount: 3
+     *   overlayName: "prod"
      * }</pre>
      *
-     * @param arg JSON string containing workflowName (String), nodeCount (int),
-     *            and optional overlayName (String) and inventoryName (String)
-     * @return {@link ActionResult} with success=true and the session ID as the message,
-     *         or success=false with the error message on failure
+     * @param args a record containing the workflowName (String), the nodeCount (int), and optional overlayName
+     * (String) and inventoryName (String)
      */
     @Action(value = "startSession", argsType = StartSessionArgs.class)
     public ActionResult startSession(StartSessionArgs args) {
@@ -260,7 +261,9 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
     /**
      * Ends a workflow session with a terminal status.
      *
-     * <p>Expected JSON format:</p>
+     * Returns an action result that is a success with the message "Session ended", or a failure with an error message
+     * if the session could not be ended.
+     *
      * <pre>{@code
      * {
      *   "sessionId": 1,
@@ -268,9 +271,7 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
      * }
      * }</pre>
      *
-     * @param arg JSON string containing sessionId (long) and status (String matching {@link SessionStatus})
-     * @return {@link ActionResult} with success=true and message "Session ended", or
-     *         success=false with the error message on failure
+     * @param args a record containing the sessionId (long) and the status (String matching {@link SessionStatus})
      */
     @Action(value = "endSession", argsType = EndSessionArgs.class)
     public ActionResult endSession(EndSessionArgs args) {
@@ -290,19 +291,13 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
     }
 
     /**
-     * Marks a node as succeeded in the current session.
+     * Records that a specific node in a session completed successfully.
      *
-     * <p>Expected JSON format:</p>
-     * <pre>{@code
-     * {
-     *   "sessionId": 1,
-     *   "nodeId": "node-01"
-     * }
-     * }</pre>
+     * Returns an action result that is a success with the message "Node marked as success", or a failure with an error
+     * message if the recording fails.
      *
-     * @param arg JSON string containing sessionId (long) and nodeId (String)
-     * @return {@link ActionResult} with success=true and message "Node marked as success", or
-     *         success=false with the error message on failure
+     * @param args a record containing the sessionId (long) and the nodeId (String) of the successful node.
+     * @return an action result indicating whether the node was successfully marked as a success in the database.
      */
     @Action(value = "markNodeSuccess", argsType = MarkNodeSuccessArgs.class)
     public ActionResult markNodeSuccess(MarkNodeSuccessArgs args) {
@@ -320,9 +315,11 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
     }
 
     /**
-     * Marks a node as failed in the current session.
+     * Records a node failure in a specific session.
      *
-     * <p>Expected JSON format:</p>
+     * Returns an action result that is a success with the message "Node marked as failed" if the failure was recorded,
+     * or a failure with an error message if the recording failed.
+     *
      * <pre>{@code
      * {
      *   "sessionId": 1,
@@ -331,9 +328,7 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
      * }
      * }</pre>
      *
-     * @param arg JSON string containing sessionId (long), nodeId (String), and reason (String)
-     * @return {@link ActionResult} with success=true and message "Node marked as failed", or
-     *         success=false with the error message on failure
+     * @param args a record containing the sessionId (long), nodeId (String), and the reason (String) for the failure
      */
     @Action(value = "markNodeFailed", argsType = MarkNodeFailedArgs.class)
     public ActionResult markNodeFailed(MarkNodeFailedArgs args) {
@@ -352,9 +347,9 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
     }
 
     /**
-     * Gets the dedicated executor service for DB writes.
+     * Returns the executor service used to serialize database writes.
      *
-     * @return the DB executor service
+     * @return the executor service used for database operations
      */
     public ExecutorService getDbExecutor() {
         return dbExecutor;

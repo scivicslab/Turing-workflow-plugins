@@ -26,30 +26,25 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * Shared helper methods used by both NodeActor and NodeGroupActor.
- *
- * <p>Eliminates code duplication between the two actor classes for
- * common operations like multiplexer output, argument parsing, and
- * error handling.</p>
+ * Provides static utility methods for formatting output to the {@code outputMultiplexer}, parsing JSON arguments from
+ * workflow steps, and extracting error messages from execution failures.
  *
  * @author devteam@scivicslab.com
  * @since 2.10.0
  */
 public final class ActorHelper {
 
-    /**
-     * Private constructor to prevent instantiation of this utility class.
-     */
+    /** Prevents instantiation of this utility class. */
     private ActorHelper() {
         // Utility class
     }
 
     /**
-     * Sends formatted output to the outputMultiplexer, line by line.
+     * Sends the formatted output to the {@code outputMultiplexer} actor, one line at a time.
      *
-     * @param system the actor system
-     * @param sourceName the source actor name
-     * @param formatted the formatted output text
+     * @param system the actor system containing the {@code outputMultiplexer}
+     * @param sourceName the name of the actor producing the output
+     * @param formatted the text to be sent, which is split into individual lines
      */
     public static void sendToMultiplexer(IIActorSystem system, String sourceName, String formatted) {
         IIActorRef<?> multiplexer = system.getIIActor("outputMultiplexer");
@@ -67,11 +62,12 @@ public final class ActorHelper {
     }
 
     /**
-     * Parses a max iterations value from a JSON array argument.
+     * Extracts a maximum number of iterations from a JSON array string.
      *
-     * @param arg the JSON array string (e.g., "[10]")
-     * @param defaultValue the default value if parsing fails
-     * @return the parsed value or defaultValue
+     * @param arg the JSON array string containing the iteration count, such as {@code "[10]"}
+     * @param defaultValue the value to return if the argument is null, empty, or not a valid integer array
+     * @return the integer value found at the first position of the array, or defaultValue if no valid integer could be
+     * parsed
      */
     public static int parseMaxIterations(String arg, int defaultValue) {
         if (arg != null && !arg.isEmpty() && !arg.equals("[]")) {
@@ -88,11 +84,11 @@ public final class ActorHelper {
     }
 
     /**
-     * Extracts the first element from a JSON array string.
-     * Returns empty string on failure (lenient).
+     * Returns the first element of a JSON array string as a string, or an empty string if the input is null, empty, or
+     * not a valid array.
      *
-     * @param args the JSON array string
-     * @return the first element, or empty string
+     * @param args the JSON array string to parse
+     * @return the first element of the array, or an empty string if the array is empty or the input is invalid
      */
     public static String getFirst(String args) {
         if (args == null || args.isEmpty() || args.equals("[]")) {
@@ -110,12 +106,12 @@ public final class ActorHelper {
     }
 
     /**
-     * Extracts a command string from JSON array arguments.
-     * Throws on failure (strict).
+     * Returns a command string extracted from the first element of a JSON array.
      *
-     * @param arg the JSON array string
-     * @return the extracted command string
-     * @throws IllegalArgumentException if the argument is invalid or empty
+     * Throws an {@link IllegalArgumentException} if the argument is not a valid JSON array or if the array is empty.
+     *
+     * @param arg the JSON array string containing the command as its first element
+     * @return the command string found at index 0 of the array
      */
     public static String extractCommandFromArgs(String arg) {
         try {
@@ -133,10 +129,12 @@ public final class ActorHelper {
     }
 
     /**
-     * Combines stdout and stderr from a CommandResult into a single string.
+     * Returns a single string that merges the standard output and standard error of a command result.
      *
-     * @param result the command result
-     * @return combined output string
+     * The result is the trimmed stdout, or if stderr is not empty, the trimmed stdout followed by the trimmed stderr
+     * preceded by a newline and the marker "[stderr]".
+     *
+     * @param result the command result to merge
      */
     public static String combineOutput(Node.CommandResult result) {
         String output = result.getStdout().trim();
@@ -148,10 +146,16 @@ public final class ActorHelper {
     }
 
     /**
-     * Extracts a meaningful error message from an ExecutionException.
+     * Returns a string that is the message of the most specific underlying cause of an execution error.
      *
-     * @param e the execution exception
-     * @return the root cause message
+     * <p>The method traverses the exception chain starting from the cause of the provided {@code ExecutionException}
+     * and returns the message of the first {@code java.io.IOException} encountered. If no {@code IOException} is found
+     * in the chain, it returns the message of the immediate cause, or the message of the {@code ExecutionException}
+     * itself if no cause exists.</p>
+     *
+     * @param e the execution exception to inspect
+     * @return the message of the underlying {@code IOException} if found, otherwise the message of the immediate cause
+     * or the original exception
      */
     public static String extractRootCauseMessage(ExecutionException e) {
         Throwable cause = e.getCause();

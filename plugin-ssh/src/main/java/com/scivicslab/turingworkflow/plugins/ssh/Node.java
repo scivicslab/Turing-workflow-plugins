@@ -28,13 +28,33 @@ import com.jcraft.jsch.JSchException;
 import com.jcraft.jsch.Session;
 
 /**
- * Represents a single node in the infrastructure as a pure POJO.
+ * Executes commands on a remote or local machine via SSH or a local shell.
  *
- * <p>This is a pure POJO class that provides SSH-based command execution
- * capabilities. It has NO dependency on ActorSystem or workflow components.</p>
+ * <ul>
+ * <li>{@code executeCommand(String command, OutputCallback callback)} runs a command and returns a {@link
+ * CommandResult} containing the stdout, stderr, and exit code, optionally streaming lines to the callback as they are
+ * produced.</li>
+ * <li>{@code executeSudoCommand(String command, OutputCallback callback)} runs a command with sudo privileges by
+ * writing the password from the {@code SUDO_PASSWORD} environment variable to the command's stdin and returns a {@link
+ * CommandResult}.</li>
+ * <li>{@code cleanup()} disconnects the cached SSH session and any jump host sessions.</li>
+ * </ul>
  *
- * <p>Uses ssh-agent for SSH key authentication. Make sure ssh-agent is running
- * and your SSH key is added before using this class.</p>
+ * <p>The class maintains a cached SSH session and a jump host session to allow multiple commands to be executed over
+ * the same TCP connection.</p>
+ *
+ * <p>One instance may serve several threads at once, as the session creation is synchronized and the underlying SSH
+ * channels are created per command.</p>
+ *
+ * <pre>{@code
+ * Node node = new Node("192.168.1.10", "admin");
+ * Node.CommandResult result = node.executeCommand("ls -la");
+ * node.cleanup();
+ * }</pre>
+ *
+ * <p>If authentication fails or the host is unreachable, the methods throw an {@link IOException}. If a command times
+ * out during local execution, it returns a {@link CommandResult} with an exit code of -1 and a message indicating the
+ * timeout.</p>
  *
  * @author devteam@scivicslab.com
  * @since 2.0.0
@@ -44,47 +64,53 @@ public class Node {
     /** The hostname or IP address of the remote node. */
     private final String hostname;
 
-    /** The SSH username for authentication. */
+    /** The SSH username used for authentication. */
     private final String user;
 
     /** The SSH port number. */
     private final int port;
 
-    /** Whether to execute commands locally instead of via SSH. */
+    /** Indicates whether commands are executed on the local machine instead of via SSH. */
     private final boolean localMode;
 
     /** The SSH password, or {@code null} to use key-based authentication. */
     private final String password;
 
-    /** Cached SSH session, reused across multiple command executions. */
+    /** The cached SSH session used to avoid re-authenticating for every command execution. */
     private Session cachedSession = null;
 
-    /** Jump host session, kept open for the duration of the proxied connection. */
+    /** The SSH session for a jump host, kept open for the duration of a proxied connection. */
     private Session jumpHostSession = null;
 
-    /** Whether SSH config has been loaded and cached. */
+    /** Indicates whether the {@code ~/.ssh/config} file has been parsed and its settings are cached. */
     private boolean sshConfigLoaded = false;
 
-    /** Cached SSH config repository parsed from {@code ~/.ssh/config}. */
+    /** The parsed contents of {@code ~/.ssh/config} used to resolve connection settings. */
     private com.jcraft.jsch.ConfigRepository cachedConfigRepository = null;
 
-    /** Cached identity file path from SSH config. */
+    /**
+     * The path to the SSH identity file specified by the {@code IdentityFile} directive in the {@code ~/.ssh/config}
+     * file.
+     */
     private String cachedIdentityFile = null;
 
-    /** Cached ProxyJump directive from SSH config. */
+    /**
+     * The {@code ProxyJump} directive parsed from the SSH configuration, used to establish a connection through a jump
+     * host.
+     */
     private String cachedProxyJump = null;
 
-    /** Effective username after applying SSH config overrides. */
+    /** The username used for the SSH connection after applying overrides from {@code ~/.ssh/config}. */
     private String effectiveUser;
 
-    /** Effective hostname after applying SSH config overrides. */
+    /** The hostname or IP address used for the connection after applying overrides from {@code ~/.ssh/config}. */
     private String effectiveHostname;
 
-    /** Effective port after applying SSH config overrides. */
+    /** The port number used for the connection after applying overrides from {@code ~/.ssh/config}. */
     private int effectivePort;
 
     /**
-     * Constructs a Node with the specified connection parameters.
+     * Initializes a {@code Node} for a specific host and user using the standard SSH port 22.
      *
      * @param hostname the hostname or IP address of the node
      * @param user the SSH username
@@ -95,7 +121,8 @@ public class Node {
     }
 
     /**
-     * Constructs a Node with the specified connection parameters and local mode.
+     * Initializes a {@code Node} with the specified connection parameters and determines whether to execute commands
+     * via SSH or locally.
      *
      * @param hostname the hostname or IP address of the node
      * @param user the SSH username
@@ -107,13 +134,14 @@ public class Node {
     }
 
     /**
-     * Constructs a Node with all connection parameters including password.
+     * Initializes a Node with specific connection parameters, including an optional password for authentication.
      *
      * @param hostname the hostname or IP address of the node
      * @param user the SSH username
-     * @param port the SSH port (typically 22)
-     * @param localMode if true, execute commands locally instead of via SSH
-     * @param password the SSH password (null to use ssh-agent key authentication)
+     * @param port the SSH port number
+     * @param localMode if true, executes commands locally instead of via SSH
+     * @param password the SSH password, or {@code null} to use key-based authentication via ssh-agent or identity
+     * files
      */
     public Node(String hostname, String user, int port, boolean localMode, String password) {
         this.hostname = hostname;
@@ -124,7 +152,7 @@ public class Node {
     }
 
     /**
-     * Constructs a Node with default port 22.
+     * Initializes a Node using the specified hostname and user, with the default SSH port 22 and no password.
      *
      * @param hostname the hostname or IP address of the node
      * @param user the SSH username
@@ -133,11 +161,7 @@ public class Node {
         this(hostname, user, 22, false, null);
     }
 
-    /**
-     * Checks if this node is in local execution mode.
-     *
-     * @return true if commands are executed locally, false for SSH
-     */
+    /** Returns whether this node is configured to execute commands on the local machine instead of via SSH. */
     public boolean isLocalMode() {
         return localMode;
     }
@@ -145,21 +169,29 @@ public class Node {
     /**
      * Executes a command on the node.
      *
-     * @param command the command to execute
-     * @return the execution result containing stdout, stderr, and exit code
-     * @throws IOException if command execution fails
+     * Returns a {@link CommandResult} containing the captured stdout, stderr, and the exit code of the command.
+     *
+     * @param command the command string to execute
+     * @return a {@link CommandResult} containing the stdout, stderr, and exit code
+     * @throws IOException if the command execution fails or the SSH connection cannot be established
      */
     public CommandResult executeCommand(String command) throws IOException {
         return executeCommand(command, null);
     }
 
     /**
-     * Executes a command on the node with real-time output callback.
+     * Executes a command on the node, optionally streaming output to a callback in real-time.
      *
-     * @param command the command to execute
-     * @param callback the callback for real-time output (may be null)
-     * @return the execution result containing stdout, stderr, and exit code
-     * @throws IOException if command execution fails
+     * Returns a {@link CommandResult} containing the trimmed stdout, trimmed stderr, and the exit code of the command.
+     *
+     * If a {@code callback} is provided, its {@link OutputCallback#onStdout(String)} and {@link
+     * OutputCallback#onStderr(String)} methods are called for every line produced during execution.
+     *
+     * Throws an {@link IOException} if the command fails to execute, the SSH connection fails, or the execution is
+     * interrupted.
+     *
+     * @param command the command string to execute
+     * @param callback a listener for real-time output lines, or {@code null} to only capture the final result
      */
     public CommandResult executeCommand(String command, OutputCallback callback) throws IOException {
         if (localMode) {
@@ -169,7 +201,14 @@ public class Node {
     }
 
     /**
-     * Executes a command locally using ProcessBuilder with real-time streaming.
+     * Runs a command on the local machine via a shell and returns the captured output and exit code.
+     *
+     * @param command the command string to execute
+     * @param callback a listener that receives lines of stdout and stderr as they are produced, or {@code null} to
+     * only capture the final result
+     *
+     * @return a {@link CommandResult} containing the trimmed stdout, trimmed stderr, and the process exit code
+     * @throws IOException if the process fails to start or the execution is interrupted
      */
     private CommandResult executeLocalCommand(String command, OutputCallback callback) throws IOException {
         ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
@@ -221,9 +260,16 @@ public class Node {
     }
 
     /**
-     * Gets or creates a reusable SSH session.
-     * The session is cached and reused across multiple command executions.
-     * Synchronized to prevent concurrent session creation races.
+     * Returns a connected SSH session that is reused across multiple command executions.
+     *
+     * <p>If the existing cached session is still connected, it returns that session. Otherwise, it disconnects any
+     * existing jump host session, creates a new session, and connects it.</p>
+     *
+     * <p>One instance of {@code Node} may serve several threads at once as this method is synchronized.</p>
+     *
+     * @return the connected {@link Session} to be used for command execution
+     * @throws IOException if a connection error occurs or the session cannot be established
+     * @throws JSchException if the underlying SSH protocol fails
      */
     private synchronized Session getOrCreateSession() throws IOException, JSchException {
         if (cachedSession != null && cachedSession.isConnected()) {
@@ -240,8 +286,19 @@ public class Node {
     }
 
     /**
-     * Executes a command on the remote node via SSH using JSch with real-time streaming.
-     * The SSH session is reused across commands for performance.
+     * Executes a command on a remote node via SSH and returns the result containing the exit code, stdout, and stderr.
+     *
+     * <p>If a callback is provided, it streams lines of stdout and stderr to the callback as they are produced. The
+     * method reuses the existing SSH session to avoid the overhead of establishing a new connection for every
+     * call.</p>
+     *
+     * @param command the command string to execute on the remote host
+     * @param callback a listener to receive real-time lines of stdout and stderr, or null to only capture the final
+     * output
+     *
+     * @return a {@link CommandResult} containing the trimmed stdout, trimmed stderr, and the integer exit code
+     * @throws IOException if the SSH connection fails, the command execution is interrupted, or an authentication
+     * error occurs
      */
     private CommandResult executeRemoteCommand(String command, OutputCallback callback) throws IOException {
         ChannelExec channel = null;
@@ -353,27 +410,35 @@ public class Node {
         }
     }
 
-    /** Environment variable name for the sudo password. */
+    /** The name of the environment variable used to retrieve the password for {@code sudo} commands. */
     private static final String SUDO_PASSWORD_ENV = "SUDO_PASSWORD";
 
     /**
-     * Executes a command with sudo privileges on the remote node.
+     * Executes a command with sudo privileges on the node.
      *
-     * @param command the command to execute with sudo
-     * @return the execution result
-     * @throws IOException if SSH connection fails or SUDO_PASSWORD is not set
+     * @param command the command to execute
+     * @return a {@link CommandResult} containing the stdout, stderr, and exit code of the command
+     * @throws IOException if the SSH connection fails or the {@code SUDO_PASSWORD} environment variable is not set
      */
     public CommandResult executeSudoCommand(String command) throws IOException {
         return executeSudoCommand(command, null);
     }
 
     /**
-     * Executes a command with sudo privileges on the remote node with real-time output callback.
+     * Executes a command with sudo privileges on the node, using the password from the {@code SUDO_PASSWORD}
+     * environment variable.
      *
-     * @param command the command to execute with sudo
-     * @param callback the callback for real-time output (may be null)
-     * @return the execution result
-     * @throws IOException if SSH connection fails or SUDO_PASSWORD is not set
+     * Returns a {@link CommandResult} containing the captured stdout, stderr, and the exit code of the command.
+     *
+     * If the {@code SUDO_PASSWORD} environment variable is not set or is empty, an {@code IOException} is thrown.
+     *
+     * An {@code IOException} is thrown if the SSH connection fails or if the command execution is interrupted.
+     *
+     * @param command the command string to execute with sudo privileges
+     * @param callback a callback to receive stdout and stderr lines in real-time, or {@code null} to only capture the
+     * final output
+     *
+     * @return a {@link CommandResult} containing the command's output and exit status
      */
     public CommandResult executeSudoCommand(String command, OutputCallback callback) throws IOException {
         String sudoPassword = System.getenv(SUDO_PASSWORD_ENV);
@@ -388,7 +453,13 @@ public class Node {
     }
 
     /**
-     * Executes a sudo command on a remote node by writing the password to the channel's stdin.
+     * Executes a command with sudo privileges on a remote node by writing the password to the channel's stdin.
+     *
+     * @param command the command to execute
+     * @param sudoPassword the password to be sent to the sudo prompt
+     * @param callback the callback for real-time output (may be null)
+     * @return a {@link CommandResult} containing the stdout, stderr, and exit code
+     * @throws IOException if the SSH connection fails or the command execution is interrupted
      */
     private CommandResult executeRemoteSudoCommand(String command, String sudoPassword, OutputCallback callback) throws IOException {
         // Escape single quotes in command for bash -c
@@ -470,7 +541,13 @@ public class Node {
     }
 
     /**
-     * Executes a sudo command locally by writing the password to the process stdin.
+     * Executes a command with sudo privileges on the local machine.
+     *
+     * @param command the command to execute
+     * @param sudoPassword the password to provide to the sudo prompt
+     * @param callback the callback for real-time output (may be null)
+     * @return a CommandResult containing the stdout, stderr, and exit code
+     * @throws IOException if the command execution fails or the process is interrupted
      */
     private CommandResult executeLocalSudoCommand(String command, String sudoPassword, OutputCallback callback) throws IOException {
         ProcessBuilder pb = new ProcessBuilder("sudo", "-S", "bash", "-c", command);
@@ -526,8 +603,8 @@ public class Node {
     }
 
     /**
-     * Loads and caches SSH config from ~/.ssh/config.
-     * Called once; subsequent calls use cached values.
+     * Updates the connection parameters using settings from the local SSH configuration file. Subsequent calls to this
+     * method have no effect.
      */
     private void loadSshConfigIfNeeded() {
         if (sshConfigLoaded) {
@@ -581,9 +658,15 @@ public class Node {
     }
 
     /**
-     * Creates a JSch SSH session with configured credentials.
-     * Supports ProxyJump for connections through a jump host.
-     * SSH config is parsed once and cached for reuse.
+     * Establishes a new SSH connection to the node using the configured credentials and connection settings.
+     *
+     * <p>The connection may be established through a jump host if a {@code ProxyJump} directive is present in the
+     * {@code ~/.ssh/config} file. Host key verification follows the existing {@code ~/.ssh/known_hosts} file if
+     * present, otherwise it accepts new host keys.</p>
+     *
+     * @return a {@link com.jcraft.jsch.Session} representing the established connection
+     * @throws com.jcraft.jsch.JSchException if the connection or authentication fails
+     * @throws java.io.IOException if an I/O error occurs during connection setup
      */
     private Session createSession() throws JSchException, IOException {
         JSch jsch = new JSch();
@@ -627,7 +710,22 @@ public class Node {
     }
 
     /**
-     * Sets up authentication for JSch.
+     * Configures the authentication methods for the SSH connection by selecting a credential from a prioritized list.
+     *
+     * <p>The method attempts to authenticate using the following order:
+     * <ul>
+     * <li>An active {@code ssh-agent} via {@code SSH_AUTH_SOCK}.</li>
+     * <li>The identity file specified by the {@code IdentityFile} directive in {@code ~/.ssh/config}.</li>
+     * <li>Default key files located in {@code ~/.ssh/}, specifically {@code id_ed25519}, {@code id_rsa}, or {@code
+     * id_ecdsa}.</li>
+     * </ul>
+     * If a password was provided during {@link Node} construction, this method does nothing and relies on password
+     * authentication.</p>
+     *
+     * @param jsch the JSch instance to configure
+     * @param identityFileFromConfig the path to the identity file parsed from the SSH configuration
+     * @throws IOException if no usable authentication method is found or if the identity file cannot be read
+     * @throws JSchException if an error occurs during the authentication setup process
      */
     private void setupAuthentication(JSch jsch, String identityFileFromConfig) throws IOException, JSchException {
         if (password != null && !password.isEmpty()) {
@@ -697,7 +795,18 @@ public class Node {
     }
 
     /**
-     * Creates a session through a jump host using ProxyJump.
+     * Establishes an SSH connection to a target host by routing through a jump host.
+     *
+     * @param jsch the JSch instance to use for session creation
+     * @param proxyJump the jump host specification, optionally including a username and port (e.g., "user@host:port"
+     * or "host:port")
+     *
+     * @param targetUser the username for the final target host
+     * @param targetHost the hostname or IP address of the target host
+     * @param targetPort the port number of the target host
+     * @return a Session object connected to the target host via a local port forward through the jump host
+     * @throws JSchException if an error occurs during SSH session creation or port forwarding
+     * @throws IOException if an error occurs during connection or if the jump host session cannot be established
      */
     private Session createSessionViaProxyJump(JSch jsch, String proxyJump,
             String targetUser, String targetHost, int targetPort) throws JSchException, IOException {
@@ -757,10 +866,7 @@ public class Node {
         return targetSession;
     }
 
-    /**
-     * Cleans up resources used by this Node.
-     * Disconnects the cached SSH session and any jump host session.
-     */
+    /** Disconnects the cached SSH session and any jump host sessions used by this node. */
     public synchronized void cleanup() {
         if (cachedSession != null && cachedSession.isConnected()) {
             cachedSession.disconnect();
@@ -773,16 +879,16 @@ public class Node {
     }
 
     /**
-     * Gets the hostname or IP address of this node.
+     * Returns the hostname or IP address of this node.
      *
-     * @return the hostname
+     * @return the hostname or IP address
      */
     public String getHostname() {
         return hostname;
     }
 
     /**
-     * Gets the SSH username.
+     * Returns the SSH username used for authentication.
      *
      * @return the username
      */
@@ -791,7 +897,7 @@ public class Node {
     }
 
     /**
-     * Gets the SSH port number.
+     * Returns the SSH port number used for the connection.
      *
      * @return the port number
      */
@@ -800,9 +906,9 @@ public class Node {
     }
 
     /**
-     * Returns a string representation of this node including hostname, user, and port.
+     * Returns a string that describes the node's connection parameters.
      *
-     * @return a formatted string describing this node
+     * The result is a formatted string in the form {@code Node{hostname='...', user='...', port=...}}.
      */
     @Override
     public String toString() {
@@ -811,33 +917,41 @@ public class Node {
     }
 
     /**
-     * Callback interface for real-time output streaming during command execution.
+     * Receives lines of standard output and standard error as they are produced during a command's execution.
      *
-     * <p>Implementations receive stdout and stderr lines as they are produced,
-     * enabling real-time display or logging of command output.</p>
+     * <p>Implementations are called by {@link Node#executeCommand(String, OutputCallback)} to allow real-time
+     * processing of command output.
+     *
+     * <ul>
+     * <li>{@link #onStdout(String)} receives a line of text from the command's standard output.</li>
+     * <li>{@link #onStderr(String)} receives a line of text from the command's standard error.</li>
+     * </ul>
+     *
+     * <p>Each line passed to the methods does not include a trailing newline character.
      */
     public interface OutputCallback {
 
         /**
-         * Called when a line is read from standard output.
+         * Receives a single line of text from the command's standard output.
          *
-         * @param line the stdout line (without trailing newline)
+         * @param line the text of the line without a trailing newline
          */
         void onStdout(String line);
 
         /**
-         * Called when a line is read from standard error.
+         * Receives a single line of text from the standard error stream.
          *
-         * @param line the stderr line (without trailing newline)
+         * @param line the text of the error line without a trailing newline
          */
         void onStderr(String line);
     }
 
     /**
-     * Represents the result of a command execution, containing stdout, stderr, and exit code.
+     * Holds the captured output and exit status of a command execution.
      *
-     * <p>Instances are immutable. Use {@link #isSuccess()} to check if the command
-     * completed with exit code 0.</p>
+     * <ul><li>{@link #getStdout()} returns the standard output as a string.</li><li>{@link #getStderr()} returns the
+     * standard error as a string.</li><li>{@link #getExitCode()} returns the integer exit code.</li><li>{@link
+     * #isSuccess()} returns true if the exit code is 0, and false otherwise.</li></ul>
      */
     public static class CommandResult {
 
@@ -847,15 +961,15 @@ public class Node {
         /** The standard error captured from the command. */
         private final String stderr;
 
-        /** The exit code returned by the command (0 typically indicates success). */
+        /** The exit code returned by the command execution. */
         private final int exitCode;
 
         /**
-         * Constructs a CommandResult with the given output and exit code.
+         * Creates a result containing the captured output and exit status of a command execution.
          *
-         * @param stdout the standard output from the command
-         * @param stderr the standard error from the command
-         * @param exitCode the exit code (0 for success)
+         * @param stdout the standard output captured from the command
+         * @param stderr the standard error captured from the command
+         * @param exitCode the exit code returned by the command (0 typically indicates success)
          */
         public CommandResult(String stdout, String stderr, int exitCode) {
             this.stdout = stdout;
@@ -864,7 +978,7 @@ public class Node {
         }
 
         /**
-         * Gets the standard output from the command.
+         * Returns the standard output captured from the command execution.
          *
          * @return the stdout string
          */
@@ -873,7 +987,7 @@ public class Node {
         }
 
         /**
-         * Gets the standard error from the command.
+         * Returns the standard error output captured from the command execution.
          *
          * @return the stderr string
          */
@@ -882,16 +996,16 @@ public class Node {
         }
 
         /**
-         * Gets the exit code from the command.
+         * Returns the exit code of the command.
          *
-         * @return the exit code (0 typically indicates success)
+         * @return the integer exit code, where 0 typically indicates success
          */
         public int getExitCode() {
             return exitCode;
         }
 
         /**
-         * Checks whether the command completed successfully (exit code 0).
+         * Returns whether the command completed with an exit code of 0.
          *
          * @return {@code true} if the exit code is 0, {@code false} otherwise
          */
@@ -900,9 +1014,10 @@ public class Node {
         }
 
         /**
-         * Returns a string representation of this command result.
+         * Returns a string that contains the exit code, the standard output, and the standard error of the command
+         * execution.
          *
-         * @return a formatted string with exit code, stdout, and stderr
+         * @return a formatted string in the form {@code CommandResult{exitCode=..., stdout='...', stderr='...'}}
          */
         @Override
         public String toString() {

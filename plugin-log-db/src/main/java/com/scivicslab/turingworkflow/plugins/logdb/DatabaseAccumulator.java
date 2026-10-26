@@ -24,27 +24,50 @@ import com.scivicslab.pojoactor.core.ActorRef;
 import com.scivicslab.pojoactor.core.accumulator.Accumulator;
 
 /**
- * Accumulator that writes output to an H2 database via DistributedLogStore.
+ * Records the output of a workflow into an H2 database by sending log entries to a distributed log store.
  *
- * <p>This accumulator writes all output to the H2 database asynchronously.
- * It uses a dedicated executor to avoid blocking workflow execution.</p>
+ * <p>It performs the following operations:
+ * <ul>
+ * <li>{@link Accumulator#add(String, String, String)} records a single output entry as an action result in the
+ * database.</li>
+ * <li>{@link Accumulator#getSummary()} returns a string describing the number of entries processed and the session
+ * ID.</li>
+ * <li>{@link Accumulator#getCount()} returns the total number of entries processed, including those that were
+ * skipped.</li>
+ * <li>{@link Accumulator#clear()} resets the processed entry count to zero.</li>
+ * </ul>
+ *
+ * <p>It holds a reference to a log store actor, an executor service for asynchronous writes, and the session ID.
+ *
+ * <p>One instance is used for a single workflow execution session.
+ *
+ * <p>If the log store actor is unavailable, the session ID is invalid, or the data is null or empty, the entry is
+ * skipped and the count is still incremented.
+ *
+ * <pre>{@code
+ * DatabaseAccumulator dbAcc = new DatabaseAccumulator(logStoreActor, dbExecutor, sessionId);
+ * multiplexer.addTarget(dbAcc);
+ * }</pre>
  *
  * @author devteam@scivicslab.com
  * @since 1.0
  */
 public class DatabaseAccumulator implements Accumulator {
 
-    /** The actor reference for sending log entries to the distributed log store. */
+    /** The actor reference used to send log entries to the distributed log store. */
     private final ActorRef<DistributedLogStore> logStoreActor;
-    /** The executor service used for asynchronous database write operations. */
+    /** The executor service used to perform asynchronous database write operations. */
     private final ExecutorService dbExecutor;
-    /** The session ID for associating accumulated entries with a workflow execution. */
+    /** The session ID used to associate all accumulated log entries with a specific workflow execution. */
     private final long sessionId;
-    /** The count of entries processed (both written and skipped). */
+    /**
+     * The total number of entries processed by this accumulator, including those successfully written to the database
+     * and those skipped due to invalid data or session issues.
+     */
     private final AtomicInteger count = new AtomicInteger(0);
 
     /**
-     * Constructs a DatabaseAccumulator.
+     * Initializes a new DatabaseAccumulator that writes output to an H2 database asynchronously.
      *
      * @param logStoreActor the actor reference for the distributed log store
      * @param dbExecutor the executor service for async DB writes
@@ -59,15 +82,15 @@ public class DatabaseAccumulator implements Accumulator {
     }
 
     /**
-     * Adds an output entry to the database log store.
+     * Sends an output entry to the H2 database log store.
      *
-     * <p>If the log store actor is not available or the session ID is invalid,
-     * the entry is silently skipped but still counted. Null or empty data is
-     * also skipped. Writing is fire-and-forget to avoid blocking workflow execution.</p>
+     * <p>If the log store actor is unavailable, the session ID is invalid, or the data is null or empty, the entry is
+     * skipped. The entry is always counted toward the total number of processed entries regardless of whether it was
+     * successfully recorded.</p>
      *
-     * @param source the source identifier (typically the node ID)
-     * @param type   the output type (used as the label in the log entry)
-     * @param data   the output data to log, may be {@code null} or empty
+     * @param source the identifier of the source, typically a node ID
+     * @param type the type of output, used as the label in the log entry
+     * @param data the text to be logged
      */
     @Override
     public void add(String source, String type, String data) {
@@ -107,9 +130,10 @@ public class DatabaseAccumulator implements Accumulator {
     }
 
     /**
-     * Returns a summary string describing the accumulator state.
+     * Returns a string that summarizes the number of entries processed and the associated session ID.
      *
-     * @return a human-readable summary including the entry count and session ID
+     * @return a string in the form {@code "DatabaseAccumulator: <count> entries written to database (session
+     * <sessionId>)"}
      */
     @Override
     public String getSummary() {
@@ -117,18 +141,16 @@ public class DatabaseAccumulator implements Accumulator {
     }
 
     /**
-     * Returns the number of entries processed by this accumulator.
+     * Returns the total number of entries processed by this accumulator.
      *
-     * @return the total entry count (including skipped entries)
+     * @return the total count of entries, including those that were skipped.
      */
     @Override
     public int getCount() {
         return count.get();
     }
 
-    /**
-     * Resets the entry count to zero.
-     */
+    /** Resets the count of processed entries to zero. */
     @Override
     public void clear() {
         count.set(0);

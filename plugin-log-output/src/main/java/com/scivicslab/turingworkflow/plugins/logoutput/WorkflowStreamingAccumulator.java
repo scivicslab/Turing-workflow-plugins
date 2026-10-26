@@ -21,49 +21,54 @@ import com.github.ricksbrown.cowsay.Cowsay;
 import com.scivicslab.pojoactor.core.accumulator.StreamingAccumulator;
 
 /**
- * StreamingAccumulator with cowsay display support for Turing-workflow.
+ * Provides ASCII art visualizations of workflow step transitions using cowsay.
  *
- * <p>This accumulator extends {@link StreamingAccumulator} to add cowsay
- * ASCII art visualization for workflow step transitions.</p>
+ * <p><ul><li>{@code renderCowsay} returns a string containing the workflow name and step YAML rendered as cowsay ASCII
+ * art.</li><li>{@code listCowfiles} returns an array of available cowfile names.</li></ul></p>
+ *
+ * <p>One instance may serve several workflows or threads at once.</p>
+ *
+ * <pre>{@code
+ * WorkflowStreamingAccumulator acc = new WorkflowStreamingAccumulator();
+ * acc.setCowfile("tux");
+ * String art = acc.renderCowsay("my-workflow", "step: deploy");
+ * }</pre>
  *
  * @author devteam@scivicslab.com
  * @since 1.0
  */
 public class WorkflowStreamingAccumulator extends StreamingAccumulator {
 
-    /** The cowfile name used for cowsay rendering, or {@code null} for the default cow. */
+    /** The name of the cowfile used for cowsay ASCII art rendering, or {@code null} to use the default cow. */
     private String cowfile = null;
 
     /**
-     * Constructs a new {@code WorkflowStreamingAccumulator} with the default cow character.
+     * Initializes a new {@code WorkflowStreamingAccumulator} that uses the default cow character for ASCII art
+     * rendering.
      */
     public WorkflowStreamingAccumulator() {
         super();
     }
 
     /**
-     * Sets the cowfile name for cowsay output.
+     * Sets the name of the cow character used for ASCII art rendering.
      *
-     * @param cowfile the cowfile name (e.g., "tux", "dragon"), or null for default cow
+     * @param cowfile the name of the cowfile to use, such as "tux" or "dragon", or {@code null} to use the default cow
      */
     public void setCowfile(String cowfile) {
         this.cowfile = cowfile;
     }
 
-    /**
-     * Returns the current cowfile name.
-     *
-     * @return the cowfile name, or {@code null} if the default cow is used
-     */
+    /** Returns the name of the cowfile used for ASCII art rendering, or {@code null} if the default cow is used. */
     public String getCowfile() {
         return cowfile;
     }
 
     /**
-     * Renders a workflow step as cowsay ASCII art and returns the result.
+     * Returns a string containing ASCII art that displays the workflow name and step details in a speech bubble.
      *
-     * @param workflowName the name of the workflow
-     * @param stepYaml the YAML representation of the step
+     * @param workflowName the name of the workflow to display
+     * @param stepYaml the YAML representation of the step to display
      * @return the rendered cowsay ASCII art string
      */
     public String renderCowsay(String workflowName, String stepYaml) {
@@ -77,11 +82,7 @@ public class WorkflowStreamingAccumulator extends StreamingAccumulator {
         return Cowsay.say(cowsayArgs);
     }
 
-    /**
-     * Lists all available cowfile names.
-     *
-     * @return array of available cowfile names
-     */
+    /** Returns an array of strings containing the names of all available cowfiles available for rendering. */
     public static String[] listCowfiles() {
         String[] listArgs = { "-l" };
         String cowList = Cowsay.say(listArgs);

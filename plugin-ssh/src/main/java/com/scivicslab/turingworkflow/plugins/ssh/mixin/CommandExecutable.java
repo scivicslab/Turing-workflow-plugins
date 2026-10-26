@@ -26,59 +26,25 @@ import com.scivicslab.pojoactor.action.ActionResult;
 import jakarta.validation.constraints.NotNull;
 
 /**
- * Mixin interface providing command execution actions via @Action annotations.
+ * Adds command execution actions to an actor, allowing a workflow to run commands via {@code executeCommand} and
+ * {@code executeSudoCommand}.
  *
- * <p>This interface demonstrates the mixin pattern in Java using interface default methods
- * with {@link Action} annotations. Classes implementing this interface automatically gain
- * the ability to execute commands from workflow YAML without duplicating code.</p>
- *
- * <h2>Usage</h2>
- *
- * <p>Implement this interface and provide a {@link CommandExecutor}:</p>
- * <pre>{@code
- * public class NodeInterpreter extends Interpreter implements CommandExecutable {
- *     private final CommandExecutor executor;
- *
- *     public NodeInterpreter(Node node, IIActorSystem system) {
- *         this.executor = new SshCommandExecutor(node);
- *     }
- *
- *     @Override
- *     public CommandExecutor getCommandExecutor() {
- *         return executor;
- *     }
- * }
- * }</pre>
- *
- * <h2>Workflow YAML</h2>
- *
- * <p>Once implemented, the following actions become available in workflow YAML:</p>
- * <pre>{@code
- * steps:
- *   - states: ["0", "1"]
- *     actions:
- *       - actor: this
- *         method: executeCommand
- *         arguments: ["ls -la"]
- *
- *   - states: ["1", "2"]
- *     actions:
- *       - actor: this
- *         method: executeSudoCommand
- *         arguments: ["apt-get update"]
- * }</pre>
- *
- * <h2>Design Rationale</h2>
- *
- * <p>This interface solves the problem of code duplication between NodeInterpreter
- * and NodeGroupInterpreter. Previously, each class needed its own implementation of
- * command execution actions. With this mixin approach:</p>
  * <ul>
- *   <li>Both classes implement the same interface</li>
- *   <li>The @Action methods are defined once in the interface</li>
- *   <li>Each class provides its own CommandExecutor (SSH or local)</li>
- *   <li>IIActorRef discovers the @Action methods via reflection</li>
+ * <li>{@code executeCommand} runs a command and returns an {@link ActionResult} containing the stdout and stderr as a
+ * single message, or a failure message if an {@link IOException} occurs.</li>
+ * <li>{@code executeSudoCommand} runs a command with sudo privileges using the {@code SUDO_PASSWORD} environment
+ * variable and returns an {@link ActionResult} containing the output or a failure message.</li>
  * </ul>
+ *
+ * <p>Implementing classes must provide a {@link CommandExecutor} via {@link #getCommandExecutor()} to determine if
+ * commands run locally or via SSH.</p>
+ *
+ * <p>Example workflow step:</p>
+ * <pre>{@code
+ * - actor: this
+ *   method: executeCommand
+ *   arguments: ["ls -la"]
+ * }</pre>
  *
  * @author devteam@scivicslab.com
  * @since 2.15.0
@@ -89,53 +55,45 @@ import jakarta.validation.constraints.NotNull;
 public interface CommandExecutable {
 
     /**
-     * Returns the command executor for this instance.
+     * Returns the command executor used by this instance to run commands.
      *
-     * <p>Implementing classes must provide an appropriate executor:</p>
-     * <ul>
-     *   <li>{@link SshCommandExecutor} for remote node execution</li>
-     *   <li>{@link LocalCommandExecutor} for local execution</li>
-     * </ul>
+     * <p>Implementing classes must return a {@link SshCommandExecutor} for remote execution or a {@link
+     * LocalCommandExecutor} for local execution.</p>
      *
      * @return the command executor
      */
     CommandExecutor getCommandExecutor();
 
     /**
-     * The command line to run on the node.
+     * Holds the command line string to be executed by an action.
      *
-     * @param command the command line
+     * @param command the command line string
      */
     record CommandArgs(@NotNull String command) {}
 
     /**
-     * Returns an optional output callback for command execution.
+     * Returns an optional callback that receives command output lines in real-time during execution.
      *
-     * <p>When not null, command output is streamed to this callback in real-time.
-     * Default implementation returns null (no streaming).</p>
-     *
-     * @return the output callback, or null
+     * @return the output callback, or null if no streaming is configured
      */
     default Node.OutputCallback getOutputCallback() {
         return null;
     }
 
     /**
-     * Executes a command and returns the result (action handler).
+     * Executes a command on the node and returns an action result containing the output.
      *
-     * <p>This action is callable from workflow YAML as:</p>
+     * <p>This action is available in workflow YAML as:
      * <pre>{@code
      * - actor: this
      *   method: executeCommand
-     *   arguments: ["your-command-here"]
+     *   arguments: ["ls -la"]
      * }</pre>
      *
-     * <p>Note: The Java method name is different from the action name to avoid
-     * conflicts with existing methods on implementing classes that have different
-     * return types.</p>
-     *
-     * @param args the command line to run
-     * @return ActionResult with success status and command output
+     * @param args a {@link CommandArgs} containing the command line to run
+     * @return an {@link ActionResult} that is a success if the command exited with a zero status, with a message
+     * holding the stdout (and stderr if stdout is empty or if stderr is appended), and is not a success if the command
+     * failed or an I/O error occurred, with a message holding the error description.
      */
     @Action(value = "executeCommand", argsType = CommandArgs.class)
     default ActionResult doExecuteCommand(CommandArgs args) {
@@ -150,23 +108,21 @@ public interface CommandExecutable {
     }
 
     /**
-     * Executes a command with sudo privileges (action handler).
+     * Executes a command with sudo privileges and returns an action result.
      *
-     * <p>This action is callable from workflow YAML as:</p>
+     * <p>A workflow calls this as:
      * <pre>{@code
      * - actor: this
      *   method: executeSudoCommand
-     *   arguments: ["your-command-here"]
+     *   arguments: ["apt-get update"]
      * }</pre>
      *
-     * <p>Requires SUDO_PASSWORD environment variable to be set.</p>
-     *
-     * <p>Note: The Java method name is different from the action name to avoid
-     * conflicts with existing methods on implementing classes that have different
-     * return types.</p>
+     * <p>The result is a success if the command runs and returns a zero exit code, with the message containing the
+     * command's stdout and stderr; otherwise, the result is a failure with an error message. If the {@code
+     * SUDO_PASSWORD} environment variable is not set, the result is a failure with a message indicating the missing
+     * password.</p>
      *
      * @param args the command line to run
-     * @return ActionResult with success status and command output
      */
     @Action(value = "executeSudoCommand", argsType = CommandArgs.class)
     default ActionResult doExecuteSudoCommand(CommandArgs args) {
@@ -185,10 +141,11 @@ public interface CommandExecutable {
     }
 
     /**
-     * Converts a Node.CommandResult to ActionResult.
+     * Converts a command execution result into an action result for the workflow.
      *
-     * @param result the command result
-     * @return the action result
+     * Returns an {@link ActionResult} where the message contains the trimmed stdout, or the trimmed stderr if stdout
+     * is empty, or both joined by a "[stderr]" separator if both are non-empty. The success status of the action
+     * result matches the success status of the command result.
      */
     private static ActionResult toActionResult(Node.CommandResult result) {
         String output = result.getStdout().trim();

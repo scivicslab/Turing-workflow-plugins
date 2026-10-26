@@ -26,27 +26,41 @@ import java.util.concurrent.TimeUnit;
 import com.scivicslab.turingworkflow.plugins.ssh.Node;
 
 /**
- * Command executor that executes commands on the local machine.
+ * Executes commands on the local machine using the system shell.
  *
- * <p>Used by NodeGroupInterpreter to execute commands locally when running
- * on the control node itself.</p>
+ * <p>The class provides the following operations:
+ * <ul>
+ * <li>`execute(command, callback)`: Runs a command via {@code /bin/sh -c} and returns a {@link Node.CommandResult}
+ * containing the stdout, stderr, and exit code.</li>
+ * <li>`executeSudo(command, callback)`: Runs a command via {@code sudo -S} and returns a {@link Node.CommandResult}
+ * using the password from the {@code SUDO_PASSWORD} environment variable.</li>
+ * <li>`getIdentifier()`: Returns the local hostname as a string.</li>
+ * </ul>
+ *
+ * <p>Commands are subject to a 5-minute timeout; if exceeded, the process is destroyed and a result with exit code -1
+ * and a timeout message is returned. If the {@code SUDO_PASSWORD} environment variable is not set, {@code executeSudo}
+ * throws an {@link IOException}.
+ *
+ * <p>Differs from {@link SshCommandExecutor} by running commands locally instead of over SSH.
  *
  * @author devteam@scivicslab.com
  * @since 2.15.0
  */
 public class LocalCommandExecutor implements CommandExecutor {
 
-    /** Default timeout for command execution in seconds (5 minutes). */
+    /**
+     * The maximum time in seconds a command is allowed to run before being forcibly terminated, which is 300 seconds.
+     */
     private static final long DEFAULT_TIMEOUT_SECONDS = 300;
 
-    /** The local hostname, used as the executor identifier. */
+    /** The local hostname used to identify this executor. */
     private final String hostname;
 
     /**
-     * Constructs a local command executor that runs commands on the local machine.
+     * Initializes a command executor that runs commands on the local machine.
      *
-     * <p>Automatically detects the local hostname for use as the executor identifier.
-     * Falls back to "localhost" if hostname detection fails.</p>
+     * <p>The executor identifies itself using the local hostname, falling back to {@code localhost} if the hostname
+     * cannot be determined.</p>
      */
     public LocalCommandExecutor() {
         String h;
@@ -58,18 +72,31 @@ public class LocalCommandExecutor implements CommandExecutor {
         this.hostname = h;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * Executes the given command on the local machine via {@code /bin/sh -c}.
+     *
+     * Returns a {@link Node.CommandResult} containing the captured stdout, stderr, and the process exit code. If the
+     * command exceeds 300 seconds, the process is forcibly destroyed and a result is returned with a message
+     * indicating a timeout and an exit code of -1.
+     *
+     * @param command the shell command string to execute
+     */
     @Override
     public Node.CommandResult execute(String command) throws IOException {
         return execute(command, null);
     }
 
     /**
-     * {@inheritDoc}
+     * Executes a command on the local machine using {@code /bin/sh -c}.
      *
-     * <p>Executes the command via {@code /bin/sh -c} with a timeout of
-     * {@value #DEFAULT_TIMEOUT_SECONDS} seconds. Stdout and stderr are read
-     * in separate virtual threads (Java 21) to prevent deadlocks.</p>
+     * @param command the shell command string to execute
+     * @param callback a listener that receives lines of stdout and stderr as they are produced, or {@code null} to
+     * only capture the final result
+     *
+     * @return a {@link Node.CommandResult} containing the trimmed stdout, the stderr, and the exit code; if the
+     * command exceeds 300 seconds, returns a result with a message "Command timed out" and an exit code of -1
+     *
+     * @throws IOException if an I/O error occurs during process startup or communication
      */
     @Override
     public Node.CommandResult execute(String command, Node.OutputCallback callback) throws IOException {
@@ -159,17 +186,33 @@ public class LocalCommandExecutor implements CommandExecutor {
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * Executes a command with elevated privileges on the local machine.
+     *
+     * @param command the command string to run via {@code sudo -S bash -c}
+     * @return a {@link Node.CommandResult} containing the stdout, stderr, and exit code of the command
+     */
     @Override
     public Node.CommandResult executeSudo(String command) throws IOException {
         return executeSudo(command, null);
     }
 
     /**
-     * {@inheritDoc}
+     * Executes a command with elevated privileges using {@code sudo -S}.
      *
-     * <p>Executes via {@code sudo -S bash -c}, writing the password from the
-     * {@code SUDO_PASSWORD} environment variable to stdin.</p>
+     * Returns a {@link Node.CommandResult} containing the command's stdout, stderr, and exit code.
+     *
+     * Throws an {@link IOException} if the {@code SUDO_PASSWORD} environment variable is not set or is empty.
+     *
+     * <pre>{@code
+     * executor.executeSudo("systemctl restart nginx", callback);
+     * }</pre>
+     *
+     * @param command the command string to execute via {@code bash -c}
+     * @param callback a listener to receive stdout and stderr lines as they are produced
+     * @return a result containing the trimmed stdout and stderr, and the process exit code; if the command times out
+     * or is interrupted, the result contains the captured output and a message describing the failure with an exit
+     * code of -1
      */
     @Override
     public Node.CommandResult executeSudo(String command, Node.OutputCallback callback) throws IOException {
@@ -236,7 +279,7 @@ public class LocalCommandExecutor implements CommandExecutor {
         }
     }
 
-    /** {@inheritDoc} */
+    /** Returns the hostname of the local machine used to identify this executor. */
     @Override
     public String getIdentifier() {
         return hostname;

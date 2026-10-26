@@ -16,21 +16,32 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The paragraph level of a section ({@code FrameDataWorkflow_261024_oo01}, step 1): the blocks of its heading rule
- * ({@code (defrule s1 -> b1 b2 b3 ...)}, only listed) split into the smallest units of an explanatory text. Such a unit
- * is a run of consecutive blocks that explains one subject, its main concept, along one axis:
- * <ul>
- * <li>{@code sequence}: the blocks go through it in order: the steps of a procedure, stages in time, or topics taken one
- * after another (what it is, its syntax, how it is used, what to watch out for);</li>
- * <li>{@code structure}: the blocks take it apart into its parts;</li>
- * <li>{@code set}: the blocks take up its members or kinds, one by one.</li>
- * </ul>
- * A section is one unit or more. The members of a set, the parts of a structure and the steps of a sequence are what a
- * unit holds, not units of their own: section 3.2 "Comments" is one unit, comment explained as a set, and the three kinds
- * of comment are its members. Two questions per section: the first splits the blocks into units and gives each its axis;
- * the second names each unit's main concept, and what each of its blocks is in it (a step, a part, a member). Each block
- * is shown with its sentences labelled by their relation to the block's nucleus, from the rule file. The class and its
- * table keep the name group for a unit.
+ * Divides the blocks of a section into the smallest units of an explanatory text, where each unit is a run of
+ * consecutive blocks explaining one subject along a single axis.
+ *
+ * <ul><li>{@code sequence}: the blocks go through the subject in order, such as steps in a procedure, stages in time,
+ * or topics like syntax and usage;</li><li>{@code structure}: the blocks take the subject apart into its
+ * parts;</li><li>{@code set}: the blocks take up its members or kinds, one by one.</li></ul>
+ *
+ * <p>The class provides the following actions:
+ * <ul><li>{@code blocks}: returns the blocks of a section's heading rule in order, with their sentences labelled by
+ * their relation to the nucleus;</li><li>{@code groupQuestion}: returns a prompt for a local LLM to split a section's
+ * blocks into units and assign each an axis;</li><li>{@code readGroups}: returns the groups described in an LLM's
+ * reply, where each group is a range of consecutive blocks with a type;</li><li>{@code nameQuestion}: returns a prompt
+ * for a local LLM to name each group's main concept and each of its blocks' roles;</li><li>{@code readNames}: returns
+ * the groups with their main concepts and block names as provided in the reply;</li><li>{@code askAll}: executes the
+ * full grouping process for a book, asking the LLM questions and saving the results to an H2 database, and returns a
+ * summary of the work done.</li></ul>
+ *
+ * <p>One instance may serve several workflows or threads at once.
+ *
+ * <p>Example of a workflow step using the class:
+ * <pre>{@code
+ * List<Block> blocks = SectionGroups.blocks(rules, code);
+ * String question = SectionGroups.groupQuestion(node, blocks);
+ * // ... call LLM with question ...
+ * List<Group> groups = SectionGroups.readGroups(reply, blocks);
+ * }</pre>
  */
 public final class SectionGroups {
 
@@ -38,7 +49,14 @@ public final class SectionGroups {
     public static final String STRUCTURE = "structure";
     public static final String SET = "set";
 
-    /** One block of a group, and what it is in the group: a step, a part, a member. */
+    /**
+     * Represents a single block within an explanatory unit and its role in that unit, such as a step, a part, or a
+     * member.
+     *
+     * @param block the name of the block (e.g., b1, b2)
+     * @param name the name of the block's role in the group, such as a step, a part, or a member, or an empty string
+     * if no role is specified
+     */
     public record Member(String block, String name) {}
 
     /**
@@ -59,13 +77,27 @@ public final class SectionGroups {
         }
     }
 
-    /** One block of the section: its rule name, and its sentences, each labelled with its relation to the nucleus. */
+    /**
+     * One block of a section: its rule name and its sentences, each labelled with its relation to the nucleus.
+     *
+     * @param name the name of the block from the rule file
+     * @param text the block's sentences, where a nucleus or satellite is marked as "relation: text" and a list item as
+     * "- text"
+     */
     public record Block(String name, String text) {}
 
     private SectionGroups() {
     }
 
-    /** @return the blocks of the section's heading rule, in order, with their labelled sentences; empty when it has none */
+    /**
+     * Returns the blocks of the section's heading rule, in order, with their labelled sentences; empty if the rule has
+     * no heading or no blocks.
+     *
+     * @param rules the text of the rule file
+     * @param code a map of rule names to their corresponding code text
+     * @return a list of blocks, where each block contains its name and its sentences labelled by their relation to the
+     * nucleus or as list items
+     */
     public static List<Block> blocks(String rules, Map<String, String> code) {
         RuleFile f = RuleFile.parse(rules);
         RuleFile.Rule head = null;
@@ -84,7 +116,20 @@ public final class SectionGroups {
         return out;
     }
 
-    /** A block's sentences: a nucleus or a satellite as "relation: text", an item of a list as "- text". */
+    /**
+     * Returns a string that labels the sentences of a block with their relationship to the nucleus or marks list
+     * items.
+     *
+     * The result is a string where each sentence is preceded by a label such as "relation: " (e.g., "cause: ",
+     * "result: ") or, for items in a list, by "- ". If the rule refers to an external file, the string contains the
+     * text from that file prefixed with "(code)\n".
+     *
+     * @param f the rule file containing the structure and relations
+     * @param r the specific rule for the block
+     * @param code a map of file names to their actual source code text
+     * @return a string of labelled sentences or code, or an empty string if the rule is not found or the code is
+     * missing
+     */
     private static String labelled(RuleFile f, RuleFile.Rule r, Map<String, String> code) {
         if (r.attr(":file") != null) {
             String text = code.get(r.attr(":file"));
@@ -144,7 +189,22 @@ public final class SectionGroups {
                 + "item of a list.\n\n" + text;
     }
 
-    /** @return the first question for one section: split its blocks into the smallest units of explanation, each with its axis */
+    /**
+     * Returns a string that asks a local LLM to split the blocks of a section into the smallest units of explanation,
+     * each with an axis.
+     *
+     * <p>The string contains a description of the section's blocks and instructions to group them into units based on
+     * one of three axes:
+     * <ul>
+     * <li>{@code sequence}: blocks that follow an order, such as steps in a procedure or topics taken one after
+     * another;</li>
+     * <li>{@code structure}: blocks that take a subject apart into its parts;</li>
+     * <li>{@code set}: blocks that represent the members or kinds of a subject.</li>
+     * </ul>
+     * The instructions specify that a unit should be as large as the subject allows, and that the reply must follow a
+     * specific format, such as {@code b1-b4 | set} or {@code b5-b7 | sequence}. A block that belongs to no unit should
+     * be labeled as {@code none}.</p>
+     */
     public static String groupQuestion(BookOutline.Node node, List<Block> blocks) {
         return shown(node, blocks)
                 + "Split the blocks into units. A unit is a run of consecutive blocks, one block or more, that explains one "
@@ -168,10 +228,15 @@ public final class SectionGroups {
     }
 
     /**
-     * @return the groups the reply makes, in block order, each a range of consecutive blocks with its type and with its
-     *         blocks named only by their rule names; empty when the reply covers no block; the blocks it says none of are
-     *         in no group; a line that starts at no block of the section, runs backwards, or starts inside a range
-     *         already read is skipped, and a range that ends past the last block stops at it
+     * Parses a text reply to extract the groups of consecutive blocks defined by the user, returning them as a list of
+     * {@link Group} objects.
+     *
+     * @param reply the text containing the group definitions
+     * @param blocks the list of available blocks in the section
+     * @return a list of groups in the order they appear in the reply, where each group contains its axis type and its
+     * constituent blocks; if a block is not assigned to any group, it is omitted; if a range in the reply extends
+     * beyond the last block, it is truncated to the end of the section; lines that name no existing blocks, run
+     * backwards, or overlap previously read ranges are skipped.
      */
     public static List<Group> readGroups(String reply, List<Block> blocks) {
         List<String> names = blocks.stream().map(Block::name).toList();
@@ -195,7 +260,7 @@ public final class SectionGroups {
         return out;
     }
 
-    /** @return whether the reply says none of every block of the section, and nothing else */
+    /** Returns true if the reply names every block of the section as none, and contains no other information. */
     static boolean allNone(String reply, List<Block> blocks) {
         for (Block b : blocks) {
             if (!Pattern.compile("(?im)^\\W*\\[?" + Pattern.quote(b.name()) + "\\]?[*_`]*\\s*\\|\\s*\\W*none\\b").matcher(reply).find()) return false;
@@ -203,7 +268,19 @@ public final class SectionGroups {
         return true;
     }
 
-    /** @return the second question for one section: each group's main concept, and what each of its blocks is in it */
+    /**
+     * Returns a string that is a prompt for a local LLM to identify the main concept of each group and the role of
+     * each block within its group.
+     *
+     * The prompt includes a description of the section, the list of groups identified in the previous step (showing
+     * their range and axis), and instructions for naming the subject of each unit and the role of each block (such as
+     * a step, part, or member).
+     *
+     * @param node the section node from the book outline
+     * @param blocks the blocks of the section with their labelled sentences
+     * @param groups the groups of consecutive blocks identified in the first step
+     * @return a string containing the prompt for the second question
+     */
     public static String nameQuestion(BookOutline.Node node, List<Block> blocks, List<Group> groups) {
         StringBuilder g = new StringBuilder();
         for (Group x : groups) {
@@ -233,7 +310,19 @@ public final class SectionGroups {
                 + "Write nothing else.";
     }
 
-    /** @return the groups with their main concepts and their blocks' names as the reply gives them; a group the reply does not name keeps no concept */
+    /**
+     * Returns a list of groups where each group's main concept and each of its blocks' names are populated from the
+     * reply.
+     *
+     * <p>The result is a list of {@link Group} objects where the concept and block names are extracted from the text
+     * of the reply, matching the group numbers and block names provided in the input list. If the reply does not name
+     * a group, that group is returned with a null concept. If a block is not named in the reply, it is returned with
+     * an empty name.</p>
+     *
+     * @param reply the text containing the names of the groups and the roles of the blocks
+     * @param groups the existing list of groups to be populated
+     * @return a new list of groups with concepts and block names filled in from the reply
+     */
     public static List<Group> readNames(String reply, List<Group> groups) {
         Map<Integer, String> concepts = new LinkedHashMap<>();
         Matcher c = Pattern.compile("(?im)^\\W*g(\\d+)\\s*[:|]\\s*(.+)$").matcher(reply);
@@ -259,11 +348,31 @@ public final class SectionGroups {
     }
 
     /**
-     * Groups every section that has no groups yet ({@code only} empty), or the sections named, {@code parallel} at a
-     * time, and stores each as soon as both its questions are read. A section that fails is reported and left out, so a
-     * run started again goes on with it.
+     * Processes the sections of a book to split them into explanatory units by asking an LLM two questions per
+     * section.
      *
-     * @return how many sections were grouped and how many groups of each type they have, in one line
+     * Returns a single line stating how many sections were successfully grouped, the count of groups for each axis
+     * type (sequence, structure, or set), and how many sections failed.
+     *
+     * If a section's reply results in no groups and all blocks are marked as {@code none}, the section is skipped and
+     * will be processed again in a subsequent run.
+     *
+     * A section that fails to produce a valid group or encounters an error is logged and omitted from the results.
+     *
+     * <pre>{@code
+     * askAll(store, "core-java-14-vol1", List.of("1.2.5"), writer, 4, log);
+     * }</pre>
+     *
+     * @param store the data store containing the book's outline, rules, and existing groups
+     * @param book the identifier of the book to process
+     * @param only the list of section numbers to process; if empty, all sections without existing groups are processed
+     * @param writer a function that takes a question string and returns the LLM's response
+     * @param parallel the maximum number of sections to process simultaneously
+     * @param log a consumer for progress and error messages
+     * @return a string summarizing the number of successful sections, the distribution of group types, and the number
+     * of failures
+     *
+     * @throws Exception if an error occurs during the execution of the workflow steps
      */
     public static String askAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
             Consumer<String> log) throws Exception {

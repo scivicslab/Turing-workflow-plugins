@@ -28,24 +28,25 @@ import java.security.SecureRandom;
 import java.util.Base64;
 
 /**
- * Utility for encrypting and decrypting secrets using AES-256-GCM.
+ * Performs AES-256-GCM authenticated encryption and decryption on strings to protect secrets.
  *
- * <p>This class provides authenticated encryption with AES-256 in GCM mode,
- * which provides both confidentiality and integrity protection.</p>
+ * <p>The class offers the following operations:
+ * <ul>
+ * <li>{@link #generateKey()} returns a new Base64-encoded 256-bit symmetric encryption key.</li>
+ * <li>{@link #encrypt(String, String)} takes a plaintext string and a Base64-encoded key, returning a Base64-encoded
+ * string containing the 96-bit IV, the ciphertext, and the 128-bit authentication tag.</li>
+ * <li>{@link #decrypt(String, String)} takes a Base64-encoded encrypted string and a Base64-encoded key, returning the
+ * original plaintext string.</li>
+ * </ul>
  *
- * <h2>Usage Example</h2>
+ * <p>An {@link EncryptionException} is thrown if key generation, encryption, or decryption fails, such as when an
+ * incorrect key is used for decryption.
+ *
+ * <p>Example:
  * <pre>{@code
- * // Generate a new encryption key
  * String key = SecretEncryptor.generateKey();
- *
- * // Encrypt a file
- * String plaintext = Files.readString(Path.of("secrets.ini"));
- * String encrypted = SecretEncryptor.encrypt(plaintext, key);
- * Files.writeString(Path.of("secrets.enc"), encrypted);
- *
- * // Decrypt a file
- * String encryptedContent = Files.readString(Path.of("secrets.enc"));
- * String decrypted = SecretEncryptor.decrypt(encryptedContent, key);
+ * String encrypted = SecretEncryptor.encrypt("my-secret", key);
+ * String decrypted = SecretEncryptor.decrypt(encrypted, key);
  * }</pre>
  *
  * @author devteam@scivicslab.com
@@ -56,23 +57,23 @@ public class SecretEncryptor {
     /** The symmetric algorithm name used for key generation. */
     private static final String ALGORITHM = "AES";
 
-    /** The full cipher transformation string: AES in GCM mode with no padding. */
+    /** The cipher transformation string used for AES in GCM mode with no padding. */
     private static final String TRANSFORMATION = "AES/GCM/NoPadding";
 
-    /** Key size in bits (256-bit AES). */
+    /** The AES key length in bits, set to 256 for AES-256 encryption. */
     private static final int KEY_SIZE = 256;
 
-    /** GCM initialization vector (IV/nonce) length in bytes (96 bits). */
+    /** The length in bytes of the GCM initialization vector (IV) used for each encryption operation. */
     private static final int GCM_IV_LENGTH = 12;
 
-    /** GCM authentication tag length in bits (128 bits). */
+    /** The length in bits of the GCM authentication tag used to ensure data integrity. */
     private static final int GCM_TAG_LENGTH = 128;
 
     /**
-     * Generates a new random encryption key.
+     * Returns a Base64-encoded 256-bit AES encryption key.
      *
-     * @return Base64-encoded encryption key
-     * @throws EncryptionException if key generation fails
+     * @return a Base64-encoded string representing the new symmetric key
+     * @throws EncryptionException if the key generation fails
      */
     public static String generateKey() throws EncryptionException {
         try {
@@ -86,12 +87,15 @@ public class SecretEncryptor {
     }
 
     /**
-     * Encrypts plaintext using AES-256-GCM.
+     * Returns a Base64-encoded string containing a 12-byte random IV, the ciphertext, and a 16-byte authentication tag
+     * produced by encrypting the plaintext with the given key using AES-256-GCM.
      *
-     * @param plaintext the text to encrypt
-     * @param base64Key Base64-encoded encryption key
-     * @return Base64-encoded encrypted data (IV + ciphertext + tag)
-     * @throws EncryptionException if encryption fails
+     * @param plaintext the text to be encrypted
+     * @param base64Key the Base64-encoded 256-bit AES key
+     * @return a Base64-encoded string consisting of the 12-byte IV, the ciphertext, and the 16-byte GCM authentication
+     * tag
+     *
+     * @throws EncryptionException if the encryption process fails
      */
     public static String encrypt(String plaintext, String base64Key) throws EncryptionException {
         try {
@@ -125,12 +129,14 @@ public class SecretEncryptor {
     }
 
     /**
-     * Decrypts encrypted data using AES-256-GCM.
+     * Returns a string containing the original plaintext from the encrypted data.
      *
-     * @param encryptedBase64 Base64-encoded encrypted data (IV + ciphertext + tag)
-     * @param base64Key Base64-encoded encryption key
-     * @return decrypted plaintext
-     * @throws EncryptionException if decryption fails
+     * @param encryptedBase64 the Base64-encoded string consisting of the 12-byte IV, the ciphertext, and the 16-byte
+     * authentication tag
+     *
+     * @param base64Key the Base64-encoded 256-bit AES encryption key
+     * @return the decrypted plaintext as a UTF-8 string
+     * @throws EncryptionException if decryption or authentication fails
      */
     public static String decrypt(String encryptedBase64, String base64Key) throws EncryptionException {
         try {
@@ -162,17 +168,18 @@ public class SecretEncryptor {
     }
 
     /**
-     * Exception thrown when encryption or decryption operations fail.
+     * Indicates a failure in encryption or decryption operations.
      *
-     * <p>Wraps the underlying cryptographic or I/O exception with a descriptive message.</p>
+     * <p>An instance is thrown when a cryptographic operation fails, such as when a GCM authentication tag does not
+     * match or an invalid key is provided. It wraps the underlying cause to provide a descriptive error message.</p>
      */
     public static class EncryptionException extends Exception {
 
         /**
-         * Creates a new {@code EncryptionException} with the specified detail message and cause.
+         * Initializes a new {@code EncryptionException} with a description of the failure and the underlying cause.
          *
          * @param message a description of what went wrong
-         * @param cause   the underlying exception
+         * @param cause the underlying exception that caused this failure
          */
         public EncryptionException(String message, Throwable cause) {
             super(message, cause);

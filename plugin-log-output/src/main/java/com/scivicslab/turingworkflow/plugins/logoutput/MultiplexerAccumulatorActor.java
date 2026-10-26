@@ -31,31 +31,47 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * Actor reference for MultiplexerAccumulator.
+ * Distributes output messages to multiple downstream accumulators simultaneously, such as the console, files, or a
+ * database.
  *
- * <p>Supported Actions:</p>
  * <ul>
- *   <li>{@code add} - Adds output to all registered accumulators</li>
- *   <li>{@code getSummary} - Returns formatted summary</li>
- *   <li>{@code getCount} - Returns the number of added entries</li>
- *   <li>{@code clear} - Clears all accumulated entries</li>
+ * <li>{@code add} broadcasts a message containing a source, a type, and the data to all registered targets.</li>
+ * <li>{@code getSummary} returns a formatted text summary of all downstream accumulators.</li>
+ * <li>{@code getCount} returns the total number of entries added across all targets as a string.</li>
+ * <li>{@code clear} resets the counters and clears all accumulated entries in all downstream targets.</li>
  * </ul>
+ *
+ * <p>One instance serves a single actor name in the system, but its actions may be called by multiple workflows or
+ * threads concurrently.</p>
+ *
+ * <p>Example workflow call:
+ * <pre>{@code
+ * actor: outputMultiplexer
+ * method: add
+ * arguments:
+ *   source: node-web1
+ *   type: stdout
+ *   data: Deployment complete
+ * }</pre>
+ *
+ * <p>The {@code add} action returns a success result once the message is enqueued, not necessarily when it has been
+ * delivered to the targets.</p>
  *
  * @author devteam@scivicslab.com
  * @since 1.0
  */
 public class MultiplexerAccumulatorActor extends IIActorRef<MultiplexerAccumulator> {
 
-    /** Logger instance named after this actor. */
+    /** A logger instance used to record errors occurring within this actor. */
     private final Logger logger;
 
     /**
-     * Constructs a new {@code MultiplexerAccumulatorActor} wrapping the given
-     * {@link MultiplexerAccumulator} and registering it in the actor system.
+     * Registers a new {@code MultiplexerAccumulator} in the actor system under the specified name so that workflows
+     * can call its actions.
      *
      * @param actorName the unique name of this actor within the system
-     * @param object    the {@link MultiplexerAccumulator} instance to wrap
-     * @param system    the actor system this actor belongs to
+     * @param object the {@link MultiplexerAccumulator} instance to be used by the actor
+     * @param system the actor system this actor belongs to
      */
     public MultiplexerAccumulatorActor(String actorName, MultiplexerAccumulator object, IIActorSystem system) {
         super(actorName, object, system);
@@ -90,11 +106,11 @@ public class MultiplexerAccumulatorActor extends IIActorRef<MultiplexerAccumulat
      *         has run yet
      */
     /**
-     * One entry to distribute to every accumulator.
+     * Arguments for the {@code add} action that distributes an output entry to all registered downstream accumulators.
      *
-     * @param source who produced the entry
-     * @param type   what kind of entry it is
-     * @param data   the entry itself
+     * @param source the name of the entity that produced the entry
+     * @param type the category of the entry, such as {@code stdout}, {@code stderr}, {@code cowsay}, or {@code log-*}
+     * @param data the text content of the entry
      */
     public record AddArgs(@NotNull String source, @NotNull String type, @NotNull String data) {}
 
@@ -116,12 +132,11 @@ public class MultiplexerAccumulatorActor extends IIActorRef<MultiplexerAccumulat
     }
 
     /**
-     * Returns a formatted summary of all downstream accumulators.
+     * Returns a multi-line string that is a formatted summary of all downstream accumulators.
      *
-     * <p><b>Expected JSON args format:</b> any string (ignored).</p>
-     *
-     * @param arg ignored argument (required by the {@link Action} contract)
-     * @return an {@link ActionResult} whose message is the multi-line summary text
+     * @param arg an ignored argument required by the action contract
+     * @return an action result that is a success with a message containing the multi-line summary text, or a failure
+     * with an error message if the summary could not be retrieved
      */
     @Action("getSummary")
     public ActionResult getSummary(String arg) {
@@ -135,12 +150,13 @@ public class MultiplexerAccumulatorActor extends IIActorRef<MultiplexerAccumulat
     }
 
     /**
-     * Returns the total number of entries that have been added.
+     * Returns a string representing the total number of entries that have been added to all downstream accumulators.
      *
-     * <p><b>Expected JSON args format:</b> any string (ignored).</p>
+     * <p>The result is the numeric count of entries as a string.</p>
      *
-     * @param arg ignored argument (required by the {@link Action} contract)
-     * @return an {@link ActionResult} whose message is the numeric count as a string
+     * @param arg an ignored argument required by the action contract
+     * @return an action result that is a success with the count as its message, or is not a success if the count could
+     * not be retrieved
      */
     @Action("getCount")
     public ActionResult getCount(String arg) {
@@ -154,12 +170,14 @@ public class MultiplexerAccumulatorActor extends IIActorRef<MultiplexerAccumulat
     }
 
     /**
-     * Clears all accumulated entries in this multiplexer and all downstream targets.
+     * Resets the counters and clears all accumulated entries in this multiplexer and all its downstream targets.
      *
-     * <p><b>Expected JSON args format:</b> any string (ignored).</p>
+     * <p>The result is an {@link ActionResult} where a success indicates the clear operation was completed, and the
+     * message holds the status or an error description.</p>
      *
-     * @param arg ignored argument (required by the {@link Action} contract)
-     * @return an {@link ActionResult} indicating success or failure
+     * <p>The argument is ignored.</p>
+     *
+     * @param arg an ignored argument required by the action contract
      */
     @Action("clear")
     public ActionResult clear(String arg) {

@@ -28,14 +28,24 @@ import java.util.concurrent.atomic.AtomicInteger;
 import com.scivicslab.pojoactor.core.accumulator.Accumulator;
 
 /**
- * An {@link Accumulator} implementation that writes output entries to a text file.
+ * Writes output entries to a text file, prefixing every line with a source tag and flushing to disk immediately.
  *
- * <p>Each entry is formatted with a {@code [source]} prefix on every line and
- * flushed to disk immediately. The accumulator implements {@link Closeable}
- * so it can be used in try-with-resources blocks.</p>
+ * <ul><li>{@code add(source, type, data)} writes the data to the file with a {@code [source]} prefix on every
+ * line.</li><li>{@code getFilePath()} returns the {@link Path} of the output file.</li><li>{@code getCount()} returns
+ * the number of entries processed.</li><li>{@code getSummary()} returns a string stating the number of entries written
+ * and the file path.</li><li>{@code clear()} resets the entry counter to zero.</li><li>{@code close()} closes the file
+ * writer.</li></ul>
  *
- * <p>Once {@link #close()} has been called, subsequent calls to {@link #add}
- * will increment the counter but produce no file output.</p>
+ * <p>The user must call {@link #close()} to release the file handle. Once closed, subsequent calls to {@link #add}
+ * increment the counter but produce no file output.</p>
+ *
+ * <p>One instance may serve several threads at once.</p>
+ *
+ * <pre>{@code
+ * FileAccumulator file = new FileAccumulator("output.log");
+ * file.add("node-web1", "stdout", "Started");
+ * file.close();
+ * }</pre>
  *
  * @author devteam@scivicslab.com
  * @since 1.0
@@ -45,21 +55,20 @@ public class FileAccumulator implements Accumulator, Closeable {
     /** The writer used to append formatted entries to the file. */
     private final PrintWriter writer;
 
-    /** The path to the output file. */
+    /** The path to the text file where output entries are written. */
     private final Path filePath;
 
-    /** Thread-safe counter of entries processed by this accumulator. */
+    /** The total number of entries processed by this accumulator. */
     private final AtomicInteger count = new AtomicInteger(0);
 
-    /** Flag indicating whether this accumulator has been closed. */
+    /** Indicates whether the accumulator has been closed and will no longer write to the file. */
     private volatile boolean closed = false;
 
     /**
-     * Constructs a {@code FileAccumulator} that writes to the specified file path.
-     * The file is created (or truncated) immediately.
+     * Creates a {@code FileAccumulator} that writes output entries to the specified file path.
      *
      * @param filePath the path to the output file
-     * @throws IOException if the file cannot be opened for writing
+     * @throws IOException if the file cannot be opened or created for writing
      */
     public FileAccumulator(Path filePath) throws IOException {
         this.filePath = filePath;
@@ -67,7 +76,7 @@ public class FileAccumulator implements Accumulator, Closeable {
     }
 
     /**
-     * Constructs a {@code FileAccumulator} that writes to the specified file path string.
+     * Initializes a {@code FileAccumulator} that writes to the file at the specified path string.
      *
      * @param filePath the path string to the output file
      * @throws IOException if the file cannot be opened for writing
@@ -76,21 +85,20 @@ public class FileAccumulator implements Accumulator, Closeable {
         this(Path.of(filePath));
     }
 
-    /**
-     * Returns the path to the output file.
-     *
-     * @return the file path
-     */
+    /** Returns the path to the output file. */
     public Path getFilePath() {
         return filePath;
     }
 
     /**
-     * {@inheritDoc}
+     * Writes a formatted entry to the file and flushes it to disk.
      *
-     * <p>Writes the formatted entry to the file and flushes immediately.
-     * If the accumulator is closed or the data is {@code null}/empty,
-     * only the counter is incremented.</p>
+     * <p>If the accumulator is closed, or if the data is null or empty, the entry is not written to the file but the
+     * internal counter is still incremented.</p>
+     *
+     * @param source the name of the source to be prefixed to every line of the data
+     * @param type the type of the output (e.g., "stdout" or "stderr")
+     * @param data the text to be written to the file
      */
     @Override
     public void add(String source, String type, String data) {
@@ -124,28 +132,34 @@ public class FileAccumulator implements Accumulator, Closeable {
         return sb.toString();
     }
 
-    /** {@inheritDoc} */
+    /**
+     * Returns a string that summarizes the file output, stating the number of entries processed and the path to the
+     * file.
+     */
     @Override
     public String getSummary() {
         return "FileAccumulator: " + count.get() + " entries written to " + filePath;
     }
 
-    /** {@inheritDoc} */
+    /** Returns the total number of entries processed by this accumulator. */
     @Override
     public int getCount() {
         return count.get();
     }
 
-    /** {@inheritDoc} */
+    /**
+     * Resets the number of processed entries to zero.
+     *
+     * <p>The counter is set to 0, but no entries are removed from the output file.</p>
+     */
     @Override
     public void clear() {
         count.set(0);
     }
 
     /**
-     * Closes the underlying file writer. After this method returns,
-     * subsequent calls to {@link #add} will no longer produce file output.
-     * Calling {@code close()} multiple times has no additional effect.
+     * Closes the underlying file writer. After this method returns, subsequent calls to {@link #add} will increment
+     * the counter but produce no file output. Calling {@code close} multiple times has no effect.
      */
     @Override
     public void close() {

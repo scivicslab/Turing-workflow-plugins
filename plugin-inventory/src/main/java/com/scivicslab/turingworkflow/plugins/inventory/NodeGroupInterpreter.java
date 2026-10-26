@@ -34,77 +34,82 @@ import com.scivicslab.turingworkflow.workflow.Interpreter;
 import com.scivicslab.turingworkflow.workflow.Transition;
 
 /**
- * Level 3 wrapper that adds workflow capabilities to a NodeGroup POJO.
+ * Executes workflows that orchestrate groups of nodes defined in an Ansible-style inventory.
  *
- * <p>This class extends {@link Interpreter} to provide workflow execution
- * capabilities while delegating node group operations to a wrapped {@link NodeGroup} instance.</p>
+ * <p>The user gets a workflow interpreter that can drive multiple nodes simultaneously, with integrated logging to a
+ * distributed store and visual feedback via ASCII art transitions.</p>
  *
- * <p>This follows the same three-level architecture as NodeInterpreter:</p>
  * <ul>
- * <li><strong>Level 1 (POJO):</strong> {@link NodeGroup} - pure POJO with inventory management</li>
- * <li><strong>Level 2 (Actor):</strong> ActorRef&lt;NodeGroup&gt; - actor wrapper for concurrent execution</li>
- * <li><strong>Level 3 (Workflow):</strong> NodeGroupInterpreter - workflow capabilities + IIActorRef wrapper</li>
+ * <li><code>createNodesForGroup</code> returns a list of {@link Node} objects for the specified group name.</li>
+ * <li><code>createLocalNode</code> returns a list containing a single local host {@link Node}.</li>
+ * <li><code>getInventory</code> returns the loaded {@link InventoryParser.Inventory} or {@code null} if no inventory
+ * is loaded.</li>
+ * <li><code>getNodeGroup</code> returns the underlying {@link NodeGroup} instance.</li>
+ * <li><code>setOverlayDir</code> sets the path to a directory containing YAML files that override the workflow
+ * configuration.</li>
+ * <li><code>getOverlayDir</code> returns the current overlay directory path or {@code null}.</li>
+ * <li><code>setVerbose</code> enables or disables detailed YAML output for every transition.</li>
+ * <li><code>isVerbose</code> returns whether verbose mode is active.</li>
+ * <li><code>setAccumulator</code> sets the accumulator used to render workflow transitions as ASCII art.</li>
+ * <li><code>getAccumulator</code> returns the current transition accumulator or {@code null}.</li>
+ * <li><code>setLogStore</code> configures the distributed log store, its actor reference, the database executor, and
+ * the current session ID.</li>
+ * <li><code>getLogStore</code> returns the synchronous log store instance or {@code null}.</li>
+ * <li><code>getLogStoreActor</code> returns the actor reference for asynchronous logging or {@code null}.</li>
+ * <li><code>getDbExecutor</code> returns the executor service used for database writes or {@code null}.</li>
+ * <li><code>getSessionId</code> returns the current session ID or -1 if not set.</li>
  * </ul>
  *
- * <p><strong>Design principle:</strong> NodeGroup remains a pure POJO, independent of ActorSystem.
- * NodeGroupInterpreter wraps NodeGroup to add workflow capabilities without modifying the NodeGroup class.</p>
+ * <p>The class holds a reference to a {@link NodeGroup}, an optional overlay directory, a log store, and a dedicated
+ * database executor service. One instance may serve a single workflow execution at a time.</p>
  *
  * @author devteam@scivicslab.com
  * @since 1.0
  */
 public class NodeGroupInterpreter extends Interpreter {
 
-    /**
-     * The wrapped NodeGroup POJO that handles inventory and node creation.
-     */
+    /** The underlying inventory and node configuration used to drive the actor's actions. */
     private final NodeGroup nodeGroup;
 
     /**
-     * The overlay directory path for YAML overlay feature.
-     * When set, workflows are loaded with overlay applied.
+     * The path to a directory containing an {@code overlay-conf.yaml} file used to override workflow configurations.
      */
     private String overlayDir;
 
     /**
-     * Verbose output flag.
-     * When true, displays full YAML for each transition instead of truncated version.
+     * Whether the full YAML transition definition is displayed in the output.
+     *
+     * <p>When true, each transition displays the complete YAML content; when false, it displays only a truncated
+     * version of at most 10 lines.</p>
      */
     private boolean verbose = false;
 
     /**
-     * WorkflowStreamingAccumulator for displaying workflow steps with cowsay ASCII art.
-     * When set, workflow step transitions are displayed using this accumulator.
+     * The accumulator used for displaying workflow steps with cowsay ASCII art. If set, workflow step transitions are
+     * rendered through this accumulator.
      */
     private WorkflowStreamingAccumulator accumulator = null;
 
-    /**
-     * Actor reference for the distributed log store.
-     * Used to send log messages asynchronously to avoid blocking workflow execution.
-     */
+    /** Actor reference for the distributed log store used to send log messages asynchronously. */
     private ActorRef<DistributedLogStore> logStoreActor;
 
-    /**
-     * Direct reference to the log store for synchronous read operations.
-     * Reads don't need to go through the actor since they don't need serialization.
-     */
+    /** The log store used for synchronous read operations. */
     private DistributedLogStore logStore;
 
     /**
-     * Dedicated executor service for DB writes.
-     * Should be a single-threaded pool to ensure serialized writes.
+     * Executes database write tasks in a single-threaded manner to ensure serialized logging of workflow transitions.
      */
     private ExecutorService dbExecutor;
 
-    /**
-     * Session ID for the current workflow execution.
-     */
+    /** The unique identifier for the current workflow execution. */
     private long sessionId = -1;
 
     /**
-     * Constructs a NodeGroupInterpreter that wraps the specified NodeGroup.
+     * Initializes a new workflow interpreter that uses the specified {@link NodeGroup} to manage inventory and nodes
+     * within the given {@link IIActorSystem}.
      *
-     * @param nodeGroup the {@link NodeGroup} instance to wrap
-     * @param system the actor system for workflow execution
+     * @param nodeGroup the {@link NodeGroup} instance to be used for inventory and node operations
+     * @param system the actor system used for workflow execution and actor communication
      */
     public NodeGroupInterpreter(NodeGroup nodeGroup, IIActorSystem system) {
         super();
@@ -113,86 +118,76 @@ public class NodeGroupInterpreter extends Interpreter {
     }
 
     /**
-     * Creates Node objects for all hosts in the specified group.
+     * Returns a list of {@link Node} objects for all hosts belonging to the specified group.
      *
-     * <p>Delegates to the wrapped {@link NodeGroup#createNodesForGroup(String)} method.</p>
-     *
-     * @param groupName the name of the group from the inventory file
-     * @return the list of created Node objects
+     * @param groupName the name of the group as defined in the inventory file
+     * @return a list of {@link Node} objects representing the hosts in the group
      */
     public List<Node> createNodesForGroup(String groupName) {
         return nodeGroup.createNodesForGroup(groupName);
     }
 
     /**
-     * Creates a single Node for localhost execution.
+     * Returns a list containing a single {@link Node} configured for local execution.
      *
-     * <p>Delegates to the wrapped {@link NodeGroup#createLocalNode()} method.</p>
-     *
-     * @return a list containing a single localhost Node
+     * @return a list containing one {@link Node} representing the localhost.
      */
     public List<Node> createLocalNode() {
         return nodeGroup.createLocalNode();
     }
 
     /**
-     * Gets the inventory object.
+     * Returns the loaded inventory data from the parsed file.
      *
-     * @return the loaded inventory, or null if not loaded
+     * @return the {@link InventoryParser.Inventory} object, or {@code null} if no inventory has been loaded
      */
     public InventoryParser.Inventory getInventory() {
         return nodeGroup.getInventory();
     }
 
-    /**
-     * Gets the wrapped NodeGroup instance.
-     *
-     * <p>This allows direct access to the underlying POJO when needed.</p>
-     *
-     * @return the wrapped NodeGroup
-     */
+    /** Returns the underlying {@link NodeGroup} instance used for inventory and node management. */
     public NodeGroup getNodeGroup() {
         return nodeGroup;
     }
 
     /**
-     * Sets the overlay directory for YAML overlay feature.
+     * Sets the path to a directory containing an overlay-conf.yaml file, which is used to override workflow
+     * configurations.
      *
-     * @param overlayDir the path to the overlay directory containing overlay-conf.yaml
+     * @param overlayDir the path to the directory containing the overlay configuration file
      */
     public void setOverlayDir(String overlayDir) {
         this.overlayDir = overlayDir;
     }
 
     /**
-     * Gets the overlay directory path.
-     *
-     * @return the overlay directory path, or null if not set
+     * Returns the path to the directory containing {@code overlay-conf.yaml}, or {@code null} if no overlay directory
+     * is set.
      */
     public String getOverlayDir() {
         return overlayDir;
     }
 
     /**
-     * Sets verbose mode for detailed output.
+     * Enables or disables verbose mode for detailed output.
      *
-     * @param verbose true to enable verbose output
+     * <p>If {@code verbose} is true, the interpreter displays the full YAML transition definition for each step
+     * instead of a truncated version. If false, only the first 10 lines of the transition are shown via the
+     * accumulator.</p>
+     *
+     * @param verbose true to enable full YAML output for every transition, false to show only the first 10 lines.
      */
     public void setVerbose(boolean verbose) {
         this.verbose = verbose;
     }
 
-    /**
-     * Checks if verbose mode is enabled.
-     *
-     * @return true if verbose mode is enabled
-     */
+    /** Returns whether verbose mode is enabled. */
     public boolean isVerbose() {
         return verbose;
     }
 
     /**
-     * Sets the WorkflowStreamingAccumulator for displaying workflow steps.
+     * Assigns the accumulator used to display workflow steps with ASCII art.
      *
      * @param accumulator the accumulator to use for cowsay display
      */
@@ -201,21 +196,21 @@ public class NodeGroupInterpreter extends Interpreter {
     }
 
     /**
-     * Gets the WorkflowStreamingAccumulator for displaying workflow steps.
+     * Returns the accumulator used to display workflow steps as ASCII art.
      *
-     * @return the cowsay accumulator, or null if not set
+     * @return the cowsay accumulator, or {@code null} if not set
      */
     public WorkflowStreamingAccumulator getAccumulator() {
         return accumulator;
     }
 
     /**
-     * Sets the distributed log store for structured logging.
+     * Configures the logging infrastructure used to record workflow execution results.
      *
-     * @param logStore the log store instance (for direct reads)
-     * @param logStoreActor the actor reference for the log store (for async writes)
-     * @param dbExecutor the dedicated executor service for DB writes
-     * @param sessionId the session ID for this execution
+     * @param logStore the instance used for synchronous read operations
+     * @param logStoreActor the actor reference used for asynchronous write operations
+     * @param dbExecutor the executor service used to run database write tasks
+     * @param sessionId the unique identifier for the current execution session
      */
     public void setLogStore(DistributedLogStore logStore,
                             ActorRef<DistributedLogStore> logStoreActor,
@@ -227,7 +222,7 @@ public class NodeGroupInterpreter extends Interpreter {
     }
 
     /**
-     * Gets the log store for direct read operations.
+     * Returns the log store used for synchronous read operations.
      *
      * @return the log store, or null if not set
      */
@@ -236,38 +231,33 @@ public class NodeGroupInterpreter extends Interpreter {
     }
 
     /**
-     * Gets the log store actor for async write operations.
+     * Returns the actor reference used to send asynchronous log messages to the distributed log store.
      *
-     * @return the log store actor, or null if not set
+     * @return the actor reference for the log store, or {@code null} if not set
      */
     public ActorRef<DistributedLogStore> getLogStoreActor() {
         return logStoreActor;
     }
 
     /**
-     * Gets the DB executor service.
-     *
-     * @return the DB executor service, or null if not set
+     * Returns the executor service used for serialized writes to the distributed log store, or {@code null} if not
+     * set.
      */
     public ExecutorService getDbExecutor() {
         return dbExecutor;
     }
 
-    /**
-     * Gets the session ID.
-     *
-     * @return the session ID, or -1 if not set
-     */
+    /** Returns the unique identifier for the current workflow execution, or -1 if no session is active. */
     public long getSessionId() {
         return sessionId;
     }
 
     /**
-     * Hook called when entering a transition during workflow execution.
+     * Sends the transition details to the output multiplexer and the distributed log store.
      *
-     * <p>Displays the workflow name and transition definition using cowsay.
-     * In normal mode, shows first 10 lines. In verbose mode, shows the full YAML
-     * after the cowsay output.</p>
+     * <p>The transition's YAML representation is sent as a cowsay-formatted message to the output multiplexer, and the
+     * transition entry is logged asynchronously to the log store. If verbose mode is enabled, the full transition YAML
+     * is also sent to the multiplexer. If no accumulator is set, the transition details are sent as plain text.</p>
      *
      * @param transition the transition being entered
      */
@@ -331,14 +321,16 @@ public class NodeGroupInterpreter extends Interpreter {
     }
 
     /**
-     * Hook called after a transition completes (success or failure).
+     * Logs the outcome of a transition to the distributed log store.
      *
-     * <p>Logs the transition result to the distributed log store for
-     * workflow execution reporting.</p>
+     * <p>If the log store actor is available and the session ID is valid, it records a log entry containing the
+     * transition label, the success status, any associated note, and the result message. If the transition succeeded,
+     * the log level is {@code INFO}; if it failed, the level is {@code WARN}. The result message is truncated to 500
+     * characters if it is longer.</p>
      *
      * @param transition the transition that was attempted
      * @param success true if the transition succeeded, false if it failed
-     * @param result the ActionResult from executing the transition's actions
+     * @param result the action result containing the message from the transition's actions
      */
     @Override
     protected void onExitTransition(Transition transition, boolean success, ActionResult result) {
@@ -375,8 +367,10 @@ public class NodeGroupInterpreter extends Interpreter {
     }
 
     /**
-     * Gets the note from a transition, limited to 60 chars or first line.
-     * Returns empty string if no note is present.
+     * Returns a string that is a truncated version of the transition's note, containing at most 60 characters or only
+     * the first line.
+     *
+     * If the note is null or empty, returns an empty string.
      */
     private String getTransitionNote(Transition transition) {
         String note = transition.getNote();

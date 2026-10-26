@@ -26,69 +26,73 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * arXiv の API への問い合わせを保持する素のオブジェクト。アクターとして動かすのは
- * {@link ArxivActor} の役目であり、「アクターであること」はこのクラスの性質ではない
- * （{@code ActorSuffixAndOwnedActorRef_260722_oo01}）。
+ * Queries the arXiv API for bibliographic data and paper metadata.
  *
- * <p>The arXiv API answers Atom XML, not JSON, so the responses are read with the JDK's own XML
- * parser rather than the {@code org.json} this plugin's siblings use. External entities are turned
- * off: the reply is a document from the network.</p>
+ * <p>The client maintains a shared rate limit across the entire JVM, ensuring no more than one request is sent every
+ * three seconds. It also manages a cooldown period: if the API refuses requests (HTTP 429 or 503) after several
+ * retries, the client will stop all outgoing requests for 15 minutes to avoid further penalties. During this cooldown,
+ * any attempt to call an action returns an immediate failure stating how many seconds remain before the next attempt
+ * is allowed.</p>
  *
- * <p>arXiv asks callers for one request every three seconds and for a mail address in the user
- * agent. Both are kept here rather than left to the caller: a workflow that loops over search
- * results must not have to remember them.</p>
+ * <p>One instance may serve several workflows or threads at once, as the rate limiting and cooldown state are shared
+ * globally across the JVM.</p>
  *
- * <p>Base URL: {@code https://export.arxiv.org/api/query}</p>
+ * <p>The client uses HTTP/1.1 to ensure compatibility with the arXiv CDN's rate-limiting behavior.</p>
  */
 public class ArxivClient {
 
     private static final Logger logger = Logger.getLogger(ArxivClient.class.getName());
 
     /**
-     * HTTPS rather than the {@code http://export.arxiv.org} the API guide prints: that address
-     * answers 301 and the redirect costs a second request against a rate limit of one every three
-     * seconds.
+     * The HTTPS endpoint {@code https://export.arxiv.org/api/query} used for all API requests to avoid the 301
+     * redirect and the extra request cost associated with the {@code http://} address in the API guide.
      */
     private static final String BASE_URL = "https://export.arxiv.org/api/query";
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
     private static final int DEFAULT_MAX_RESULTS = 10;
 
-    /** What arXiv's API guidance asks for: no more than one request every three seconds. */
+    /** The minimum number of milliseconds to wait between requests to arXiv to comply with their API guidance. */
     private static final long MIN_INTERVAL_MILLIS = 3000;
 
-    /** How long to wait after arXiv says the pace was too fast, before asking once more. */
+    /**
+     * The initial delay in milliseconds to wait after arXiv returns an HTTP 429 or 503 before attempting a retry.
+     */
     private static final long RETRY_AFTER_MILLIS = 5000;
 
-    /** How many times a refused request is asked again before the workflow is told. */
+    /** The number of times a refused request is asked again before the workflow is told. */
     private static final int RETRIES = 3;
 
     /**
-     * How long this process stops asking after the retries ran out. The refusal is per caller and
-     * lasts minutes, so asking again inside that window only deepens it — and a workflow looping
-     * over search results would do exactly that, several times a second, without this.
+     * The duration in milliseconds that this process refuses to send any requests after the retry attempts are
+     * exhausted.
      */
     private static final long COOLDOWN_MILLIS = 15 * 60 * 1000L;
 
-    /** How long an abstract is allowed to be in a list of results. */
+    /**
+     * The maximum number of characters used for an abstract when it is too long to be shown in full in a list of
+     * results.
+     */
     private static final int ABSTRACT_SNIPPET = 400;
 
     private String email = "devteam@scivicslab.com";
 
     /**
-     * When the last request went out, for the whole JVM rather than for one instance: the three
-     * seconds belong to arXiv's endpoint, not to a client object. Two actors created in one process
-     * — a workflow's and a plan's — would otherwise take turns being refused with HTTP 429.
+     * A lock used to space out requests to the arXiv API by at least three seconds across the entire JVM.
+     *
+     * <p>This lock ensures that all instances of {@link ArxivClient} in a single process share the same three-second
+     * interval between requests, preventing multiple actors from simultaneously hitting the rate limit.</p>
      */
     private static final Object PACE = new Object();
     private static long lastRequestAt = 0;
 
-    /** Until when this process refuses to ask at all, set when the retries ran out. */
+    /** The timestamp, in milliseconds, until which this process refuses to make any requests to arXiv. */
     private static volatile long refusingUntil = 0;
 
     /**
-     * HTTP/1.1, not the JDK's default of trying HTTP/2 first. arXiv sits behind a CDN that answers
-     * "Rate exceeded" to this client's HTTP/2 searches while the same query over HTTP/1.1 — and the
-     * same client's id_list calls — go through.
+     * Communicates with the arXiv API using HTTP/1.1.
+     *
+     * <p>The client uses HTTP/1.1 instead of the JDK's default HTTP/2 because the arXiv CDN frequently returns "Rate
+     * exceeded" errors to HTTP/2 requests, whereas the same queries succeed over HTTP/1.1.</p>
      */
     private final HttpClient http = HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
@@ -97,9 +101,11 @@ public class ArxivClient {
             .build();
 
     /**
-     * Sets the address sent in the user agent, as arXiv's API guidance asks for.
+     * Sets the contact email address used in the User-Agent header for requests to the arXiv API.
      *
-     * @param address the caller's mail address
+     * @param address the contact email address to be used for requests
+     * @return an action result that is a success with a message confirming the new email, or a failure if the address
+     * is null or blank
      */
     public ActionResult setEmail(String address) {
         if (address == null || address.isBlank()) return new ActionResult(false, "Email is required");
@@ -108,23 +114,32 @@ public class ArxivClient {
     }
 
     /**
-     * Searches arXiv, ten papers, most relevant first.
+     * Searches arXiv for up to ten papers, returning them in order of relevance.
      *
-     * @param query what to look for; plain words search every field
+     * @param query what to look for; plain words search every field or use arXiv prefixes like {@code cat:cs.DC} or
+     * {@code abs:actor}
+     *
+     * @return an action result that is a success with a formatted list of papers if results are found, or a success
+     * with a "No papers found" message if the query matches nothing; returns a failure if the query is null or blank,
+     * or if the search fails due to network or rate limiting issues
      */
     public ActionResult searchPapers(String query) {
         return searchPapersTopK(query, DEFAULT_MAX_RESULTS, null);
     }
 
     /**
-     * Searches arXiv with an explicit count and ordering.
+     * Searches arXiv with an explicit count and ordering, returning a text report of the papers found.
      *
-     * @param query      what to look for. Plain words search every field; arXiv's own field
-     *                   prefixes ({@code ti:}, {@code au:}, {@code abs:}, {@code cat:}) are passed
-     *                   through, so {@code cat:cs.DC AND ti:actor} works
-     * @param maxResults how many to return; ten when absent
-     * @param sort       {@code relevance}, {@code newest} (submission date) or {@code updated};
-     *                   relevance when absent
+     * @param query what to look for; plain words search every field, but arXiv's own field prefixes ({@code ti:},
+     * {@code au:}, {@code abs:}, {@code cat:}) are passed through, so {@code cat:cs.DC AND ti:actor} works
+     *
+     * @param maxResults how many to return; ten when absent or if zero or negative
+     * @param sort the ordering to use: {@code relevance} (default), {@code newest} (submission date), or {@code
+     * updated} (last update)
+     *
+     * @return an action result that is a success with a text report of the papers if any are found, or a success with
+     * a "No papers found" message if the query yields no results; it is not a success if the query is blank or if the
+     * search fails due to network or API errors
      */
     public ActionResult searchPapersTopK(String query, Integer maxResults, String sort) {
         if (query == null || query.isBlank()) return new ActionResult(false, "Query is required");
@@ -150,10 +165,13 @@ public class ArxivClient {
     }
 
     /**
-     * Reads one paper, with its whole abstract.
+     * Returns a text description of a single paper, including its full abstract, for the given identifier.
      *
-     * @param id the arXiv id — {@code 2203.02155}, {@code 2203.02155v1},
-     *           {@code arXiv:2203.02155} or an {@code abs}/{@code pdf} URL
+     * @param id the arXiv id — {@code 2203.02155}, {@code 2203.02155v1}, {@code arXiv:2203.02155} or an {@code
+     * abs}/{@code pdf} URL
+     *
+     * @return an action result that is a success with the paper's details as the message, or a failure if the paper is
+     * not found or the request fails
      */
     public ActionResult getPaper(String id) {
         Entry entry;
@@ -168,10 +186,13 @@ public class ArxivClient {
     }
 
     /**
-     * The PDF of one paper.
+     * Returns the URL where arXiv serves the PDF of the specified paper.
      *
-     * @param id the arXiv id, in the same forms {@link #getPaper} takes
-     * @return the URL arXiv serves the PDF at
+     * @param id the arXiv id — {@code 2203.02155}, {@code 2203.02155v1}, {@code arXiv:2203.02155} or an {@code
+     * abs}/{@code pdf} URL
+     *
+     * @return an action result that is a success and holds the PDF URL, or a failure if the paper is not found or has
+     * no PDF available
      */
     public ActionResult getPdfUrl(String id) {
         Entry entry;
@@ -188,9 +209,12 @@ public class ArxivClient {
     }
 
     /**
-     * Searches by author name.
+     * Returns a text report of up to ten papers by the specified author, ordered by submission date.
      *
      * @param query the author's name
+     * @return an action result that is a success with a formatted list of papers if papers were found, or a success
+     * with a "No papers found" message if the query yields no results; it is not a success if the query is blank or if
+     * the search fails due to network or API errors
      */
     public ActionResult searchByAuthor(String query) {
         if (query == null || query.isBlank()) return new ActionResult(false, "Author is required");
@@ -199,7 +223,13 @@ public class ArxivClient {
 
     // ── internals ────────────────────────────────────────────────────────────
 
-    /** @return the one paper of that id, or {@code null} when arXiv knows none */
+    /**
+     * Returns the single paper matching the given id, or {@code null} if no such paper exists.
+     *
+     * @param id the arXiv id, in any of the forms {@link #getPaper} accepts
+     * @return the paper entry, or {@code null} if the ID is valid but no paper is found
+     * @throws Exception if the request fails or the ID is blank
+     */
     private Entry one(String id) throws Exception {
         if (id == null || id.isBlank()) throw new IllegalArgumentException("Paper id is required");
         String url = BASE_URL + "?id_list=" + URLEncoder.encode(bareId(id), StandardCharsets.UTF_8)
@@ -208,13 +238,25 @@ public class ArxivClient {
         return entries.isEmpty() ? null : entries.get(0);
     }
 
-    /** @return what goes in {@code search_query}: the caller's own prefixes, or {@code all:} */
+    /**
+     * Returns a string that is the query to be sent to the arXiv API, ensuring it contains at least one field prefix.
+     *
+     * <p>If the query already contains a prefix such as {@code ti:}, {@code au:}, {@code abs:}, or {@code cat:}, it is
+     * returned as is. Otherwise, the prefix {@code all:} is prepended to the query to search all fields.</p>
+     */
     private static String searchQuery(String query) {
         String q = query.strip();
         return q.matches("(?s).*\\b(ti|au|abs|cat|co|jr|rn|id|all):.*") ? q : "all:" + q;
     }
 
-    /** @return {@code 2203.02155v1} out of any of the forms a person writes it in */
+    /**
+     * Returns a normalized arXiv identifier from any of the common forms used in workflows.
+     *
+     * <p>The result is the bare identifier, such as {@code 2203.02155v1}, stripped of prefixes like {@code arXiv:},
+     * {@code abs/}, {@code pdf/}, or {@code DOI:}, and without the {@code .pdf} extension.</p>
+     *
+     * @param id the identifier to normalize, such as a URL, a prefixed string, or a bare ID
+     */
     static String bareId(String id) {
         String s = id.strip();
         int abs = s.indexOf("/abs/");
@@ -243,7 +285,26 @@ public class ArxivClient {
         };
     }
 
-    /** One paper, as much of the Atom entry as this plugin reports. */
+    /**
+     * Holds the bibliographic data of a single arXiv paper.
+     *
+     * <p>The data includes the title, authors, publication and update dates, categories, DOI, journal reference, and
+     * links to the abstract and PDF. The summary is truncated to 400 characters unless a verbose format is
+     * requested.</p>
+     *
+     * @param id the arXiv identifier
+     * @param title the paper title
+     * @param summary the paper abstract
+     * @param authors the list of author names
+     * @param published the publication date
+     * @param updated the last update date
+     * @param categories the list of subject categories
+     * @param doi the Digital Object Identifier
+     * @param comment any additional comments from the authors
+     * @param journalRef the journal reference string
+     * @param absUrl the URL to the paper's abstract page
+     * @param pdfUrl the URL to the paper's PDF file
+     */
     private record Entry(String id, String title, String summary, List<String> authors,
                          String published, String updated, List<String> categories,
                          String doi, String comment, String journalRef, String absUrl, String pdfUrl) {
@@ -352,11 +413,18 @@ public class ArxivClient {
      * carry the pause in its own steps.</p>
      */
     /**
-     * One GET, waiting out a refusal rather than failing at the first one.
+     * Performs an HTTP GET request to the specified URL, waiting out temporary service refusals.
      *
-     * <p>arXiv answers HTTP 429 when the pool it shares among callers without a key is busy. That
-     * is a matter of when, not of what was asked, so this waits and asks again — three times, for
-     * 5, 15 and 45 seconds, and only then reports the refusal to the workflow.</p>
+     * <p>If the server responds with an HTTP 429 or 503, the method retries up to three times with increasing delays,
+     * or longer if the server's {@code Retry-After} header specifies a greater duration. If the server is currently
+     * refusing the caller due to a previous cooldown, the method throws an exception immediately stating how many
+     * seconds remain before the next attempt is allowed. If the retries are exhausted or the server is unreachable,
+     * the method throws an exception.</p>
+     *
+     * @param url the URL to query via GET
+     * @return the response body as a string
+     * @throws Exception if the server is currently in a cooldown period, if the retries are exhausted, or if the
+     * server returns a non-200 status code
      */
     private String get(String url) throws Exception {
         long waitingOut = refusingUntil - System.currentTimeMillis();
@@ -394,12 +462,11 @@ public class ArxivClient {
     }
 
     /**
-     * Stops this process from asking for a while.
+     * Sets a timestamp that prevents any further requests to arXiv for 15 minutes.
      *
-     * <p>The refusal is against the caller and lasts minutes. Asking again inside that window only
-     * deepens it, and a workflow looping over search results would ask several times a second.
-     * Everything this client is asked for during the window fails immediately, saying how much
-     * longer it will be, and nothing leaves the machine.</p>
+     * <p>This is triggered when the API returns a rate limit or service unavailable error after all retries have been
+     * exhausted. During this period, any attempt to perform an action will fail immediately without making a network
+     * request, returning a message that specifies how many seconds remain in the cooldown.</p>
      */
     private static void startCooldown() {
         refusingUntil = System.currentTimeMillis() + COOLDOWN_MILLIS;
@@ -408,7 +475,13 @@ public class ArxivClient {
     }
 
     /** One GET, no sooner than {@link #MIN_INTERVAL_MILLIS} after the last one from this JVM. */
-    /** @return how long the answer's {@code Retry-After} asks for, or 0 when it carries none */
+    /**
+     * Returns the number of milliseconds to wait, as specified by the {@code Retry-After} header, or 0 if the header
+     * is absent or contains an HTTP-date.
+     *
+     * @param resp the HTTP response to inspect
+     * @return the number of milliseconds to wait, or 0 if the header is absent or contains an HTTP-date
+     */
     private static long retryAfterMillis(HttpResponse<String> resp) {
         return resp.headers().firstValue("retry-after").map(value -> {
             try {
@@ -419,7 +492,11 @@ public class ArxivClient {
         }).orElse(0L);
     }
 
-    /** @return whether the answer says "not now": too many requests, or the service is out */
+    /**
+     * Returns true if the status code indicates the service is temporarily unavailable or rate-limiting the caller.
+     *
+     * @param status the HTTP response status code
+     */
     private static boolean busy(int status) {
         return status == 429 || status == 503;
     }

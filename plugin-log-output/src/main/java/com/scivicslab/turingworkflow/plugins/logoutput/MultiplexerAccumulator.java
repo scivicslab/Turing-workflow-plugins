@@ -24,43 +24,50 @@ import java.util.concurrent.atomic.AtomicInteger;
 import com.scivicslab.pojoactor.core.accumulator.Accumulator;
 
 /**
- * Multiplexer accumulator that forwards output to multiple downstream accumulators.
+ * Distributes output messages to multiple downstream accumulators, allowing a single workflow action to write to
+ * several destinations like the console, a file, or a database simultaneously.
  *
- * <p>Architecture:</p>
- * <pre>
- * Node/NodeGroup Actors
- *        |
- *        v
- * MultiplexerAccumulator
- *        |
- *        +--&gt; ConsoleAccumulator --&gt; System.out
- *        +--&gt; FileAccumulator --&gt; text file
- *        +--&gt; DatabaseAccumulator --&gt; H2 database
- * </pre>
+ * <ul>
+ * <li>{@code add(source, type, data)} forwards the message to all registered targets.</li>
+ * <li>{@code getSummary()} returns a multi-line string containing the total number of forwarded entries and the
+ * individual summary of each target.</li>
+ * <li>{@code getCount()} returns the total number of entries forwarded by this multiplexer.</li>
+ * <li>{@code clear()} resets the multiplexer's counter and clears all downstream targets.</li>
+ * <li>{@code addTarget(target)} registers a new downstream accumulator.</li>
+ * <li>{@code removeTarget(target)} removes a previously registered target.</li>
+ * <li>{@code getTargetCount()} returns the number of currently registered targets.</li>
+ * </ul>
+ *
+ * <p>One instance may serve several workflows or threads at once.</p>
+ *
+ * <pre>{@code
+ * mux.addTarget(consoleAccumulator);
+ * mux.addTarget(fileAccumulator);
+ * mux.add("node-web1", "stdout", "Deploy OK");
+ * }</pre>
+ *
+ * <p>If a target throws an exception during an {@code add} call, the error is printed to {@code System.err} and the
+ * remaining targets are still processed.</p>
  *
  * @author devteam@scivicslab.com
  * @since 1.0
  */
 public class MultiplexerAccumulator implements Accumulator {
 
-    /** The list of downstream accumulator targets. */
+    /** The list of downstream accumulator targets that receive forwarded output. */
     private final List<Accumulator> targets = new ArrayList<>();
 
-    /** Thread-safe counter of entries forwarded by this multiplexer. */
+    /** The total number of entries forwarded by this multiplexer. */
     private final AtomicInteger count = new AtomicInteger(0);
 
-    /**
-     * Constructs an empty {@code MultiplexerAccumulator} with no downstream targets.
-     * Use {@link #addTarget(Accumulator)} to register targets.
-     */
+    /** Constructs an empty {@code MultiplexerAccumulator} with no downstream targets. */
     public MultiplexerAccumulator() {
     }
 
     /**
-     * Registers a downstream accumulator target. Entries added to this
-     * multiplexer will be forwarded to all registered targets.
+     * Registers a downstream accumulator as a target for output distribution.
      *
-     * @param target the accumulator to add; {@code null} values are silently ignored
+     * @param target the accumulator to be added; {@code null} values have no effect
      */
     public void addTarget(Accumulator target) {
         if (target != null) {
@@ -72,27 +79,30 @@ public class MultiplexerAccumulator implements Accumulator {
      * Removes a downstream accumulator target.
      *
      * @param target the accumulator to remove
-     * @return {@code true} if the target was found and removed
+     * @return {@code true} if the target was found and removed, {@code false} otherwise
      */
     public boolean removeTarget(Accumulator target) {
         return targets.remove(target);
     }
 
     /**
-     * Returns the number of currently registered downstream targets.
+     * Returns the number of downstream accumulators currently registered to this multiplexer.
      *
-     * @return the target count
+     * @return the number of registered targets
      */
     public int getTargetCount() {
         return targets.size();
     }
 
     /**
-     * {@inheritDoc}
+     * Adds the message to all registered downstream targets.
      *
-     * <p>Forwards the entry to every registered downstream target. If any
-     * target throws an exception, a warning is printed to {@code System.err}
-     * and the remaining targets are still processed.</p>
+     * <p>If a target throws an exception, a warning is printed to {@code System.err} and the remaining targets are
+     * still processed.</p>
+     *
+     * @param source the name of the source of the message
+     * @param type the type of the message, such as "stdout" or "stderr"
+     * @param data the actual message text to be recorded
      */
     @Override
     public void add(String source, String type, String data) {
@@ -107,10 +117,8 @@ public class MultiplexerAccumulator implements Accumulator {
     }
 
     /**
-     * {@inheritDoc}
-     *
-     * <p>Returns a multi-line summary including the total forwarded count
-     * and the individual summary of each downstream target.</p>
+     * Returns a multi-line string containing the total number of entries forwarded by this multiplexer and the
+     * individual summary of each registered downstream target.
      */
     @Override
     public String getSummary() {
@@ -123,18 +131,13 @@ public class MultiplexerAccumulator implements Accumulator {
         return sb.toString();
     }
 
-    /** {@inheritDoc} */
+    /** Returns the total number of entries forwarded by this multiplexer. */
     @Override
     public int getCount() {
         return count.get();
     }
 
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Resets the multiplexer's own counter and also clears every
-     * downstream target.</p>
-     */
+    /** Resets the multiplexer's own counter and also clears every downstream target. */
     @Override
     public void clear() {
         count.set(0);

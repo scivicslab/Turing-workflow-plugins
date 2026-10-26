@@ -10,25 +10,28 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * A book's text cut into the nodes of its table of contents ({@code FrameOntology_261021_oo01}, Solution: shaping the
- * book into a list of subsections). A book's markdown is split into files of a few pages each, so a subsection often
- * runs on into the next file; here the files are read as one text and cut at the headings of the table of contents
- * instead. No LLM is used.
+ * Splits a book's markdown files into a sequence of sections based on a table of contents. It returns a list of
+ * sections containing the text from each heading to the next, along with any text that belongs to no section.
  *
- * <p>Each node gets the text from its heading to the next node's heading, as markdown, with each file's front matter
- * removed; the heading line itself is not part of the text. A heading a page file repeats continues its node. A
- * heading deeper than a subsection stays in its subsection's text. Text that comes before any node of its top-level
- * directory (a preface, the acknowledgments, the cover) belongs to no node and is counted.</p>
+ * <ul>
+ * <li>{@link #split(Map, List)} Splits the files using the provided outline, either by matching headings or by the
+ * outline's own structure.</li>
+ * <li>{@link #splitLarge(List, List, int)} Cuts sections that exceed a character limit into smaller pieces.</li>
+ * <li>{@link #limit(List)} Calculates a threshold for cutting sections based on the median size of the existing
+ * sections.</li>
+ * </ul>
  *
- * <p>A page file often ends in the middle of a sentence, even of a word ("You then supply new meth-" and, in the next
- * file, "ods and instance fields ..."). When the text so far ends mid-sentence (in a lower-case letter, a comma, a
- * semicolon or a hyphen) and the next file begins with ordinary text (not a heading, code, a list, a table, an image),
- * the two are one paragraph: the lines are joined, and a hyphen at the break is dropped. A compound split exactly at
- * its own hyphen loses that hyphen; that is taken to be rarer than a word hyphenated by the page.</p>
+ * <p>The class is stateless and may serve several workflows at once.</p>
  */
 public final class BookSections {
 
-    /** The text of one node, and the files it was read from, in order. */
+    /**
+     * The text of a single node in the book's table of contents, including the files it was read from.
+     *
+     * @param number the section number
+     * @param text the markdown text of the section
+     * @param files the list of file paths that contain the section's text, in the order they were read
+     */
     public record Section(String number, String text, List<String> files) {
     }
 
@@ -42,7 +45,12 @@ public final class BookSections {
     private BookSections() {
     }
 
-    /** @return whether a line is ordinary text, not a heading, code, a list, a table, an image or a quote */
+    /**
+     * Returns true if the line is ordinary text, rather than a heading, code block, list, table, image, quote, or math
+     * block.
+     *
+     * @param line the line to check
+     */
     static boolean isText(String line) {
         String t = line.strip();
         return !(t.startsWith("#") || t.startsWith("```") || t.startsWith("|") || t.startsWith("!") || t.startsWith(">")
@@ -50,10 +58,13 @@ public final class BookSections {
     }
 
     /**
-     * Joins {@code line}, the first text of a page file, to the paragraph the previous page file ended in, when that
+     * Appends {@code line}, the first text of a page file, to the paragraph the previous page file ended in, if that
      * paragraph ends mid-sentence.
      *
-     * @return whether it was joined
+     * Returns true if the lines were joined, and false otherwise.
+     *
+     * @param text the text of the current section being built
+     * @param line the first text of the next page file
      */
     static boolean joinAcrossPages(StringBuilder text, String line) {
         int end = text.length();
@@ -71,8 +82,11 @@ public final class BookSections {
     }
 
     /**
-     * @param files   the book's markdown files, path under the book's directory to text, in the order they are read
+     * Splits a book's markdown files into sections based on a table of contents.
+     *
+     * @param files the book's markdown files, path under the book's directory to text, in the order they are read
      * @param outline the book's table of contents, as {@link BookOutline} read it
+     * @return a {@link Result} containing the list of {@link Section}s and any notes about unplaced text
      */
     public static Result split(Map<String, String> files, List<BookOutline.Node> outline) {
         Result byHeadings = splitByHeadings(files, outline);
@@ -86,16 +100,21 @@ public final class BookSections {
     public record Pieces(List<BookOutline.Node> outline, List<Section> sections, List<String> notes) {
     }
 
-    /** The number of a piece cut from a section that was too large: the section's number and ".p2", ".p3", ... */
+    /** Matches the suffix used to number pieces cut from a section that was too large, such as ".p2" or ".p3". */
     public static final Pattern PIECE = Pattern.compile("\\.p\\d+$");
-    /** No section is cut below this many characters, whatever its book's median. */
+    /**
+     * The minimum character count for a section before it is eligible to be cut into pieces, regardless of the book's
+     * median section size.
+     */
     public static final int LIMIT_FLOOR = 50_000;
 
     /**
-     * How large a section of this book may be before it is cut: four times the median of its sections that have text, and
-     * never under {@link #LIMIT_FLOOR}. Four medians leave a book's long chapters whole (texbook's longest chapters are a
-     * little over two medians); the floor keeps a book of very short sections (a reference, a book of headed paragraphs)
-     * from having its ordinary sections cut.
+     * Returns the character limit for cutting a section into pieces.
+     *
+     * The limit is four times the median length of the sections in the list that contain text, but is never less than
+     * {@link #LIMIT_FLOOR} characters.
+     *
+     * @param sections the list of sections to analyze
      */
     public static int limit(List<Section> sections) {
         int[] sizes = sections.stream().mapToInt(x -> x.text().length()).filter(n -> n > 0).sorted().toArray();
@@ -105,13 +124,24 @@ public final class BookSections {
     }
 
     /**
-     * Cuts each section longer than {@code limit} characters into pieces, so that no one section holds a large part of the
-     * book (an appendix the outline ran on into the chapter before it, a book whose chapters the outline missed). A piece
-     * begins at a heading of the section's own text once the piece before it has half the limit; with no heading in reach,
-     * at a blank line outside code once it has the whole limit. The first piece keeps the section's number; the others are
-     * its children, numbered with {@link #PIECE} and titled by their heading (or the section's title, continued), placed
-     * right after the section, before any child it had. A piece's heading line becomes its title and leaves its text, as a
-     * section's own heading does. Each piece is given the section's files, as the cut does not follow the page files.
+     * Breaks sections that exceed a character limit into smaller pieces to prevent any single section from holding too
+     * much of the book.
+     *
+     * <p>Returns a {@link Pieces} object containing a revised list of nodes from the {@code outline}, the new list of
+     * {@link Section} pieces, and notes about the cuts made.</p>
+     *
+     * <p>Each piece is created by finding a suitable break point: a heading within the section's text once the piece
+     * has reached half the {@code limit}, or a blank line outside of code blocks once the piece has reached the full
+     * {@code limit}. The first piece of a section retains the original section number, while subsequent pieces are
+     * numbered using the {@link #PIECE} pattern (e.g., ".p2", ".p3"). Pieces are titled by their own heading line, or
+     * by the section's title followed by " (continued)" if no heading is found. Each piece is assigned the same list
+     * of source files as the original section.</p>
+     *
+     * @param outline the book's table of contents
+     * @param sections the current list of sections to be processed
+     * @param limit the maximum number of characters allowed in a single piece before a cut is attempted
+     * @return a {@link Pieces} object containing the updated outline, the new sections, and a list of notes describing
+     * the cuts
      */
     public static Pieces splitLarge(List<BookOutline.Node> outline, List<Section> sections, int limit) {
         Map<String, Section> byNumber = new LinkedHashMap<>();
@@ -142,7 +172,13 @@ public final class BookSections {
         return new Pieces(nodes, out, notes);
     }
 
-    /** @return the pieces of a text, each its title (null for the first, and for one begun at a blank line) and its text */
+    /**
+     * Returns a list of text pieces, where each piece is a two-element array containing its title (which is {@code
+     * null} for the first piece, or for a piece that begins at a blank line) and its text.
+     *
+     * @param text the text to be cut
+     * @param limit the character limit used to determine when to cut a piece
+     */
     static List<String[]> cut(String text, int limit) {
         List<String[]> pieces = new ArrayList<>();
         StringBuilder cur = new StringBuilder();
@@ -169,16 +205,27 @@ public final class BookSections {
         return pieces;
     }
 
-    /** A title reduced to its letters and digits, to find it in a heading whatever the marks and spacing around it. */
+    /**
+     * Reduces a string to its alphanumeric characters and converts it to lowercase to facilitate matching against
+     * headings.
+     */
     private static String bare(String s) {
         return BookOutline.clean(s).toLowerCase(java.util.Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]+", "");
     }
 
     /**
-     * Cuts the text by the outline itself: each node starts at the first heading of its first file that holds its title;
-     * a node whose first file has no such heading (a book cut into one directory per section, a chapter known only by its
-     * number) starts at the top of that file. A heading met again later ("... (continued)") starts nothing; the text after
-     * it stays with the node it continues.
+     * Splits the book's text into sections using the provided outline, where each section starts at the first
+     * occurrence of its title in the markdown files.
+     *
+     * If the outline's headings cannot be found in the files, each node starts at the top of its first assigned file.
+     *
+     * A heading that repeats a title already used to start a section is treated as a continuation and does not start a
+     * new section.
+     *
+     * @param files the book's markdown files, path under the book's directory to text, in the order they are read
+     * @param outline the book's table of contents, as {@link BookOutline} read it
+     * @return a result containing the list of sections and any notes about text that could not be assigned to a
+     * section
      */
     static Result splitByOutline(Map<String, String> files, List<BookOutline.Node> outline) {
         Map<String, List<BookOutline.Node>> byFile = new LinkedHashMap<>();
@@ -260,7 +307,16 @@ public final class BookSections {
         return new Result(out, notes);
     }
 
-    /** Cuts the text by headings classified as {@link BookOutline} classifies a book headed "Chapter N: ...". */
+    /**
+     * Splits a book's markdown files into sections based on headings that match the provided outline.
+     *
+     * @param files the book's markdown files, where the key is the path under the book's directory and the value is
+     * the file content
+     *
+     * @param outline the book's table of contents, as {@link BookOutline} read it
+     * @return a {@link Result} containing the list of sections (each with its text and the files it was read from) and
+     * any notes about unplaced text
+     */
     static Result splitByHeadings(Map<String, String> files, List<BookOutline.Node> outline) {
         Map<String, BookOutline.Node> nodes = new LinkedHashMap<>();
         for (BookOutline.Node n : outline) nodes.put(n.number(), n);

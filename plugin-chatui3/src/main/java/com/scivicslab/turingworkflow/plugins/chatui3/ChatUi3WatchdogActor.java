@@ -6,42 +6,29 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * Watchdog actor whose sole job is to stop a guarded {@link ChatUi3Actor}'s in-flight SSE
- * stream.
+ * A watchdog actor that terminates a blocked SSE stream in a paired {@link ChatUi3Actor}.
  *
- * <p>{@code ChatUi3Actor.chat()} blocks reading the SSE stream until a {@code result} event
- * arrives. If the LLM / quarkus-chat-ui3 never sends one, that read blocks forever and the
- * workflow that issued the {@code chat} action never finishes. The blocked thread cannot stop
- * itself, so the stop must come from a different thread.</p>
- *
- * <p>This actor provides that other thread. Every {@link ChatUi3Actor} is paired with one
- * watchdog (created automatically in the {@code ChatUi3Actor} constructor). The watchdog runs
- * on its own message-loop thread, so even while the guarded actor's {@code chat()} is blocked
- * on a worker-pool thread, the watchdog can react to a {@code trip} message — or be closed —
- * and call {@link ChatUi3Actor#stopSse()} to force the blocked read to abort.</p>
- *
- * <p>Two ways to trip it:</p>
  * <ul>
- *   <li>{@code trip} action — a parallel workflow branch (a second Interpreter) or an external
- *       supervisor sends this message when it decides the chat must stop;</li>
- *   <li>{@link #close()} — called during actor-system shutdown, ensuring a stuck chat is
- *       released so the process can tear down.</li>
+ * <li>{@code trip} stops the guarded actor's in-flight SSE read and returns a success result with a message.</li>
  * </ul>
  *
- * <p>This is a deliberate alternative to a timeout: the decision to stop is made explicitly by
- * a controller, not by elapsed time.</p>
+ * <p>Each {@link ChatUi3Actor} is paired with one watchdog. The watchdog runs on its own message-loop thread, allowing
+ * it to interrupt a {@code ChatUi3Actor#chat()} action that is blocked waiting for an LLM response.</p>
+ *
+ * <p>The watchdog can be tripped by a parallel workflow branch or an external supervisor calling the {@code trip}
+ * action, or it can be closed during an actor-system shutdown.</p>
  */
 public class ChatUi3WatchdogActor extends IIActorRef<Object> {
 
-    /** The chat actor this watchdog guards. */
+    /** The {@link ChatUi3Actor} whose SSE stream this watchdog stops. */
     private final ChatUi3Actor guarded;
 
     /**
-     * Creates a watchdog for the given chat actor.
+     * Initializes a watchdog that can abort a {@link ChatUi3Actor}'s blocked SSE stream read.
      *
-     * @param name    the watchdog actor name (by convention {@code <guarded>-watchdog})
+     * @param name the name of this watchdog actor
      * @param guarded the chat actor whose SSE stream this watchdog can stop
-     * @param system  the actor system
+     * @param system the actor system
      */
     public ChatUi3WatchdogActor(String name, ChatUi3Actor guarded, IIActorSystem system) {
         super(name, new Object(), system);
@@ -49,11 +36,10 @@ public class ChatUi3WatchdogActor extends IIActorRef<Object> {
     }
 
     /**
-     * Trips the watchdog: stops the guarded actor's in-flight SSE read so a stuck
-     * {@code chat()} returns.
+     * Stops the guarded {@link ChatUi3Actor}'s in-flight SSE stream so that a blocked {@code chat()} action returns.
      *
      * @param args ignored
-     * @return success result
+     * @return a success result with the message "watchdog tripped: guarded SSE stopped"
      */
     @Action("trip")
     public ActionResult trip(String args) {
@@ -61,10 +47,7 @@ public class ChatUi3WatchdogActor extends IIActorRef<Object> {
         return new ActionResult(true, "watchdog tripped: guarded SSE stopped");
     }
 
-    /**
-     * Stops the guarded actor's SSE stream as part of shutdown, then performs the normal
-     * actor cleanup.
-     */
+    /** Stops the guarded {@link ChatUi3Actor}'s SSE stream and performs the normal actor cleanup. */
     @Override
     public void close() {
         guarded.stopSse();

@@ -20,10 +20,32 @@ package com.scivicslab.turingworkflow.plugins.report.sections.basic;
 import com.scivicslab.turingworkflow.plugins.report.SectionBuilder;
 
 /**
- * POJO section builder that outputs an actor's JsonState in YAML format.
+ * Generates a report section containing an actor's state in YAML format.
  *
- * <p>Pure business logic - no {@code CallableByActionName}.
- * Use {@link JsonStateSectionActor} to expose as an actor.</p>
+ * <p>The section consists of:
+ * <ul>
+ * <li>{@code generate()}: Returns a formatted block starting with a title like {@code [JsonState: actorName]} (and an
+ * optional path filter) followed by the YAML content.</li>
+ * <li>{@code getTitle()}: Returns {@code null} because the title is embedded within the generated content.</li>
+ * </ul>
+ *
+ * <p>If no YAML content has been set, {@code generate()} returns an empty string.
+ *
+ * <p>One instance may serve several workflows or threads at once.
+ *
+ * <p>Example of a SectionBuilder implementation:
+ * <pre>{@code
+ * public class MySection implements SectionBuilder {
+ *     @Override
+ *     public String generate() {
+ *         return "data: value";
+ *     }
+ *     @Override
+ *     public String getTitle() {
+ *         return null;
+ *     }
+ * }
+ * }</pre>
  *
  * @author devteam@scivicslab.com
  * @since 2.16.0
@@ -35,40 +57,48 @@ public class JsonStateSection implements SectionBuilder {
     private String jsonPath;
 
     /**
-     * Sets the actor name (for display in title).
+     * Sets the name of the actor to be displayed in the section title.
      *
-     * @param actorName the actor name
+     * @param actorName the name of the actor to show in the title
      */
     public void setActorName(String actorName) {
         this.actorName = actorName;
     }
 
     /**
-     * Sets the YAML content to output.
+     * Sets the YAML-formatted content that will be included in the section.
      *
-     * @param yamlContent the YAML-formatted JsonState content
+     * @param yamlContent the YAML string representing the actor's state
      */
     public void setYamlContent(String yamlContent) {
         this.yamlContent = yamlContent;
     }
 
     /**
-     * Sets the JSON path filter (optional).
+     * Sets the JSON path filter used to specify a subset of the actor's state.
      *
-     * @param jsonPath the JSON path filter, or null for entire state
+     * @param jsonPath the JSON path filter to apply, or null to include the entire state
      */
     public void setJsonPath(String jsonPath) {
         this.jsonPath = jsonPath;
     }
 
     /**
-     * {@inheritDoc}
+     * Returns a string that is a formatted block containing the actor's state in YAML format.
      *
-     * <p>Generates a {@code [JsonState: <actorName>]} block containing the YAML content.
-     * If a JSON path filter is set, it is appended to the title as {@code (path: <jsonPath>)}.
-     * Returns an empty string if no YAML content has been set.</p>
+     * The result is a block starting with a title in the form `[JsonState: <actorName>]`, optionally followed by
+     * `(path: <jsonPath>)` if a JSON path filter is set, and ending with the provided YAML content.
      *
-     * @return the formatted JsonState section content, or empty string if no content
+     * If no YAML content has been set, or if the content is an empty string, it returns an empty string.
+     *
+     * <pre>{@code
+     * // Example of what the generated string looks like:
+     * // [JsonState: my-actor] (path: $.status)
+     * // status: OK
+     * // value: 10
+     * }</pre>
+     *
+     * @return the formatted JsonState section content, or an empty string if no content is available.
      */
     @Override
     public String generate() {
@@ -90,10 +120,9 @@ public class JsonStateSection implements SectionBuilder {
     }
 
     /**
-     * {@inheritDoc}
+     * Returns {@code null}.
      *
-     * <p>Always returns {@code null} because the title is embedded within the
-     * generated content.</p>
+     * <p>The section title is instead embedded within the string returned by {@link #generate()}.
      */
     @Override
     public String getTitle() {

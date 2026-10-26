@@ -18,9 +18,12 @@
 package com.scivicslab.turingworkflow.plugins.report;
 
 /**
- * Report section for actor JsonState data in YAML format.
+ * Generates a report section that displays an actor's state as a YAML-formatted block.
  *
- * <p>Displays collected data from an actor's JsonState as YAML.</p>
+ * <ul><li>{@code getTitle()} returns a string in the form {@code "Collected Data (<actorName>)"}.</li><li>{@code
+ * getContent()} returns the YAML-formatted state content.</li></ul>
+ *
+ * <p>One instance is used for a single actor's state snapshot.</p>
  *
  * @author devteam@scivicslab.com
  * @since 2.15.0
@@ -31,10 +34,10 @@ public class JsonStateSection implements ReportSection {
     private final String yamlContent;
 
     /**
-     * Creates a JsonState section.
+     * Initializes a report section that displays an actor's state as YAML.
      *
-     * @param actorName the name of the actor whose data is displayed
-     * @param yamlContent the YAML-formatted content from JsonState
+     * @param actorName the name of the actor whose data is being displayed
+     * @param yamlContent the YAML-formatted string representing the actor's state
      */
     public JsonStateSection(String actorName, String yamlContent) {
         this.actorName = actorName;
@@ -42,20 +45,16 @@ public class JsonStateSection implements ReportSection {
     }
 
     /**
-     * {@inheritDoc}
+     * Returns a string that is the section title in the form {@code "Collected Data (<actorName>)"}.
      *
-     * @return a title in the form {@code "Collected Data (<actorName>)"}
+     * @return the title string containing the name of the actor whose data is being displayed
      */
     @Override
     public String getTitle() {
         return "Collected Data (" + actorName + ")";
     }
 
-    /**
-     * {@inheritDoc}
-     *
-     * @return the YAML-formatted JsonState content
-     */
+    /** Returns the YAML-formatted content of the actor's state. */
     @Override
     public String getContent() {
         return yamlContent;

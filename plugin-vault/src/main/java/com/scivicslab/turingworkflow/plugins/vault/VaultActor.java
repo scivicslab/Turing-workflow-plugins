@@ -28,12 +28,22 @@ import static com.scivicslab.pojoactor.action.ActionArgs.getFirst;
 import static com.scivicslab.pojoactor.action.ActionArgs.getString;
 
 /**
- * Workflow actor for reading secrets from HashiCorp Vault KV v2.
+ * Fetches secrets from HashiCorp Vault KV v2 via HTTP or {@code kubectl exec}.
  *
- * <p>Default mode is HTTP (requires {@code VAULT_ADDR} and {@code VAULT_TOKEN} env vars).
- * Call {@code setKubectl} to switch to kubectl mode for k8s-internal Vault (ClusterIP only).</p>
+ * <ul>
+ * <li>{@code setKubectl} switches the actor from HTTP mode to {@code kubectl} mode using the provided namespace and
+ * pod name.</li>
+ * <li>{@code get} retrieves a specific field from a secret at the given path, returning the field's value as the
+ * result.</li>
+ * </ul>
  *
- * <pre>
+ * <p>The actor starts in HTTP mode, which requires the {@code VAULT_ADDR} and {@code VAULT_TOKEN} environment
+ * variables. Once {@code setKubectl} is called, all subsequent {@code get} calls use {@code kubectl exec} until the
+ * actor is re-instantiated.</p>
+ *
+ * <p>One instance of this actor may serve several workflows at once, but its actions run one at a time.</p>
+ *
+ * <pre>{@code
  * - actor: vault
  *   method: setKubectl
  *   arguments: ["infra-vault", "vault-0"]
@@ -41,7 +51,10 @@ import static com.scivicslab.pojoactor.action.ActionArgs.getString;
  * - actor: vault
  *   method: get
  *   arguments: ["keycloak-local-llm/test-users", "testadmin-password"]
- * </pre>
+ * }</pre>
+ *
+ * <p>If a path or field name is blank, or if the backend fails to retrieve the data, the action returns a failure
+ * result with an error message.</p>
  */
 public class VaultActor extends IIActorRef<VaultActor.State> {
 
@@ -55,18 +68,18 @@ public class VaultActor extends IIActorRef<VaultActor.State> {
 
     /** Switch to kubectl mode: subsequent get calls use kubectl exec into the named pod. */
     /**
-     * Where the Vault pod runs.
+     * Holds the Kubernetes location for {@code kubectl exec} access.
      *
-     * @param namespace the Kubernetes namespace
-     * @param pod       the pod's name
+     * @param namespace the Kubernetes namespace where the Vault pod is running
+     * @param pod the name of the Vault pod
      */
     public record KubectlArgs(@NotNull String namespace, @NotNull String pod) {}
 
     /**
-     * Which secret to read and which of its fields.
+     * The secret's path and the specific field name to be retrieved.
      *
-     * @param path  the secret's path in Vault
-     * @param field the field within that secret
+     * @param path the secret's path in Vault, following the format {@code <mount>/<key>}
+     * @param field the name of the field within that secret
      */
     public record SecretArgs(@NotNull String path, @NotNull String field) {}
 
@@ -83,12 +96,19 @@ public class VaultActor extends IIActorRef<VaultActor.State> {
     }
 
     /**
-     * Reads a named field from a Vault KV v2 secret.
+     * Returns a string that is the value of the specified field from a Vault KV v2 secret.
      *
-     * <p>Arguments: {@code ["mount/key", "fieldName"]}
-     * e.g. {@code ["keycloak-local-llm/test-users", "testadmin-password"]}</p>
+     * <p>The result is the value of the field if the secret exists and the field is found; otherwise, the action fails
+     * and the message holds the error description. If no backend has been configured via {@code setKubectl}, the call
+     * is made via HTTP using the {@code VAULT_ADDR} and {@code VAULT_TOKEN} environment variables.
      *
-     * <p>On success, {@code ${result}} holds the field value.</p>
+     * <pre>{@code
+     * - actor: vault
+     *   method: get
+     *   arguments: ["keycloak-local-llm/test-users", "testadmin-password"]
+     * }</pre>
+     *
+     * @param args a record containing the path to the secret and the name of the field to retrieve
      */
     @Action(value = "get", argsType = SecretArgs.class)
     public ActionResult get(SecretArgs args) {

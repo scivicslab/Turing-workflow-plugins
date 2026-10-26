@@ -18,24 +18,30 @@
 package com.scivicslab.turingworkflow.plugins.vault;
 
 /**
- * Configuration for HashiCorp Vault connection.
+ * Holds the connection details for a HashiCorp Vault server, including the server address and the authentication
+ * token.
+ *
+ * <p>Returns the Vault server address.
+ *
+ * <p>Returns the Vault authentication token.
  *
  * @author devteam@scivicslab.com
  * @since 1.0.0
  */
 public class VaultConfig {
 
-    /** The Vault server address (trailing slash removed if present). */
+    /** The Vault server address used for HTTP connections. */
     private final String address;
 
-    /** The Vault authentication token. */
+    /** The Vault authentication token used to authorize requests to the Vault server. */
     private final String token;
 
     /**
-     * Creates a new VaultConfig.
+     * Initializes a new configuration with a Vault server address and an authentication token.
      *
-     * @param address Vault server address (e.g., "http://127.0.0.1:8200")
-     * @param token Vault authentication token
+     * @param address the Vault server address, such as "http://127.0.0.1:8200"
+     * @param token the Vault authentication token
+     * @throws IllegalArgumentException if address or token is null or empty
      */
     public VaultConfig(String address, String token) {
         if (address == null || address.isEmpty()) {
@@ -49,29 +55,20 @@ public class VaultConfig {
     }
 
     /**
-     * Gets the Vault server address.
+     * Returns the Vault server address.
      *
-     * @return Vault server address
+     * @return the address of the Vault server
      */
     public String getAddress() {
         return address;
     }
 
-    /**
-     * Gets the Vault authentication token.
-     *
-     * @return Vault token
-     */
+    /** Returns the Vault authentication token. */
     public String getToken() {
         return token;
     }
 
-    /**
-     * Returns a string representation of this configuration.
-     * The token value is masked for security.
-     *
-     * @return a string containing the address and a masked token
-     */
+    /** Returns a string containing the Vault server address and a masked version of the authentication token. */
     @Override
     public String toString() {
         return "VaultConfig{address='" + address + "', token='***'}";

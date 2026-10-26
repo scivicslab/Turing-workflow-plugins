@@ -10,17 +10,33 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Turns a book's paragraphs into rst-on-lisp rules, with a writer's help on two points only: the
- * OCR misreadings to correct, and how the sentences of a paragraph are related. The sentences
- * themselves are the book's ({@code FramesAndSamplesFromBooks_261021_oo01}).
+ * Converts a book's paragraphs into rst-on-lisp rules by generating prompts for a human writer to correct OCR
+ * misreadings and identify sentence relations.
  *
- * <p>Takes text and returns text, and keeps nothing between calls.</p>
+ * <p>Its main operations are:
+ * <ul>
+ * <li>ocrPrompt: returns a text prompt asking the writer to correct only OCR errors in a given paragraph, using the
+ * surrounding paragraphs for context.</li>
+ * <li>correctionAccepted: returns {@code true} if the edit distance between the original and corrected text is at most
+ * {@link #MAX_CORRECTION} of the length of the longer string.</li>
+ * <li>relationPrompt: returns a text prompt asking the writer to identify the nucleus and the rhetorical relations of
+ * all sentences in a list.</li>
+ * <li>parseRelations: returns a list of relation names for each sentence in the order they were provided, based on the
+ * writer's reply.</li>
+ * <li>paragraphRules: returns a string containing the rst-on-lisp rule for the paragraph and the individual rules for
+ * its sentences.</li>
+ * <li>newUseFile: returns a new rst-on-lisp rule file for a specific document and title.</li>
+ * <li>addSection: returns the updated content of a rule file after appending a new section and its constituent
+ * blocks.</li>
+ * </ul>
+ *
+ * <p>One instance may serve several workflows or threads at once. It keeps no state between calls.</p>
  */
 public final class BookRules {
 
     /**
-     * The relation names a sentence may have to its paragraph's nucleus: {@code relation-name} and
-     * {@code program-relation} of rst-on-lisp's {@code grammar.lisp}.
+     * Lists the names of the relations a sentence may have to its paragraph's nucleus, as defined in the {@code
+     * grammar.lisp} of rst-on-lisp.
      */
     static final Set<String> RELATIONS = new LinkedHashSet<>(Arrays.asList(
             "attribution", "attribution-n", "background", "circumstance", "cause", "result", "consequence-s",
@@ -39,17 +55,25 @@ public final class BookRules {
             "Topic-Drift", "Same-Unit", "TextualOrganization",
             "domain-meaning", "assertion", "recommendation", "pitfall", "dispatch"));
 
-    /** The largest share of a paragraph's characters an OCR correction may change. */
+    /**
+     * The maximum proportion of characters in a paragraph that may be changed by an OCR correction, expressed as a
+     * fraction of the original length.
+     */
     static final double MAX_CORRECTION = 0.1;
 
     private static final Pattern ANSWER_LINE = Pattern.compile("^\\s*(\\d+)\\s*[:.)\\-]\\s*([A-Za-z][A-Za-z-]*)\\s*$");
 
     /**
-     * What the writer is asked to correct in one paragraph.
+     * Returns a prompt that asks a writer to correct OCR misreadings in a specific paragraph.
+     *
+     * <p>The prompt includes the target {@code paragraph} and the {@code before} and {@code after} paragraphs for
+     * context. It instructs the writer to correct only misread characters or symbols without rephrasing, reordering,
+     * or adding words, and to return the corrected paragraph alone.</p>
      *
      * @param paragraph the paragraph as read from the book
-     * @param before    the paragraph before it, or {@code ""}
-     * @param after     the paragraph after it, or {@code ""}
+     * @param before the paragraph before it, or {@code ""} if none
+     * @param after the paragraph after it, or {@code ""} if none
+     * @return a string containing the instructions and the context paragraphs for the writer
      */
     public String ocrPrompt(String paragraph, String before, String after) {
         return "Below is a paragraph of a book that was read by OCR, with the paragraphs around it for context.\n\n"
@@ -63,8 +87,16 @@ public final class BookRules {
     }
 
     /**
-     * @return whether a correction changes few enough characters to be taken as corrections rather
-     *         than a rewrite: at most {@link #MAX_CORRECTION} of them, by edit distance
+     * Returns whether the number of changes in the corrected text is small enough to be considered a correction rather
+     * than a rewrite.
+     *
+     * The result is true if the edit distance between the original and the corrected text, divided by the length of
+     * the longer string, is at most {@link #MAX_CORRECTION}.
+     *
+     * A result of false is returned if the corrected text is null, blank, or exceeds the allowed change ratio.
+     *
+     * @param original the text as read from the book
+     * @param corrected the text after the writer's proposed corrections
      */
     public boolean correctionAccepted(String original, String corrected) {
         if (corrected == null || corrected.isBlank()) return false;
@@ -74,7 +106,12 @@ public final class BookRules {
         return longest == 0 || (double) editDistance(a, b) / longest <= MAX_CORRECTION;
     }
 
-    /** What the writer is asked about one paragraph: which sentence is the nucleus, and how each other one relates to it. */
+    /**
+     * Returns a string that instructs a writer to identify the nucleus of a paragraph and the Rhetorical Structure
+     * Theory relations of its satellite sentences.
+     *
+     * @param sentences the sentences of the paragraph, in order
+     */
     public String relationPrompt(List<String> sentences) {
         StringBuilder sb = new StringBuilder("Below are the sentences of one paragraph of a book, numbered.\n\n");
         for (int i = 0; i < sentences.size(); i++) sb.append(i + 1).append(". ").append(sentences.get(i)).append('\n');
@@ -87,10 +124,13 @@ public final class BookRules {
     }
 
     /**
-     * @param reply the writer's answer
-     * @param count how many sentences the paragraph has
-     * @return {@code "nucleus"} or a relation name for each sentence, in order
-     * @throws IllegalArgumentException when a sentence is left out, a name is not a relation, or there is not exactly one nucleus
+     * Parses a writer's response into a list of relation names for each sentence in a paragraph.
+     *
+     * @param reply the writer's answer, where each line contains a sentence number and a relation name
+     * @param count the number of sentences in the paragraph
+     * @return a list of {@code "nucleus"} or a relation name for each sentence, in the order of the sentences
+     * @throws IllegalArgumentException if a sentence number is missing from the reply, a name is not a valid relation,
+     * or there is not exactly one nucleus
      */
     public List<String> parseRelations(String reply, int count) {
         TreeMap<Integer, String> byNumber = new TreeMap<>();
@@ -120,10 +160,14 @@ public final class BookRules {
     }
 
     /**
-     * @param name      the paragraph's rule name
-     * @param sentences its sentences, in order
+     * Returns a string containing the Lisp-style rule for a paragraph and the individual rules for each of its
+     * sentences.
+     *
+     * @param name the paragraph's rule name
+     * @param sentences the paragraph's sentences, in order
      * @param relations {@code "nucleus"} or a relation name for each sentence
-     * @return the paragraph's rule, then one rule per sentence, one per line
+     * @return a string starting with a rule for the paragraph that links the name to its sentences via their
+     * relations, followed by one rule per sentence on new lines
      */
     public String paragraphRules(String name, List<String> sentences, List<String> relations) {
         StringBuilder head = new StringBuilder("(defrule " + name + " ->");
@@ -136,7 +180,12 @@ public final class BookRules {
         return head.append(")\n").append(leaves).toString();
     }
 
-    /** @return a rule file for one use, with no section yet */
+    /**
+     * Returns a string that is a new rst-on-lisp rule file containing a document definition and a title rule.
+     *
+     * @param documentId the identifier for the document
+     * @param title the title of the document
+     */
     public String newUseFile(String documentId, String title) {
         return ";;; " + title + ". The sentences are the books' own, with OCR misreadings corrected; each section's\n"
                 + ";;; :source names the file it was read from.\n"
@@ -147,14 +196,15 @@ public final class BookRules {
     }
 
     /**
-     * Adds one section of a book to the end of a use's rule file.
+     * Appends a section to a rule file, including its title, source path, and the rules for its constituent blocks.
      *
-     * @param file     the use's rule file
-     * @param section  the section's rule name
-     * @param heading  the section's title, without {@code #}
-     * @param source   the path of the book's file the section was read from
-     * @param children the section's blocks, by rule name, in order
-     * @param body     the rules of those blocks
+     * @param file the current content of the use's rule file
+     * @param section the name of the section being added
+     * @param heading the section's title, without the {@code #} character
+     * @param source the path of the book's file from which the section was read
+     * @param children the names of the section's blocks, in order
+     * @param body the rule definitions for the section's blocks
+     * @return a string containing the updated rule file content with the new section appended
      */
     public String addSection(String file, String section, String heading, String source, List<String> children, String body) {
         RuleFile rf = RuleFile.parse(file);

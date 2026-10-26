@@ -23,9 +23,12 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * Actor wrapper for {@link WorkflowFileSection}.
+ * Adds a section to a report containing the full content of the workflow YAML file.
  *
- * <p>Exposes the POJO's methods as actions via {@code @Action} annotations.</p>
+ * <ul><li>{@code generate} returns an action result containing the raw text of the workflow file.</li><li>{@code
+ * getTitle} returns an action result containing the section title.</li></ul>
+ *
+ * One instance may serve several workflows or threads at once.
  *
  * @author devteam@scivicslab.com
  * @since 2.16.0
@@ -33,10 +36,10 @@ import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 public class WorkflowFileSectionActor extends IIActorRef<WorkflowFileSection> {
 
     /**
-     * Constructs the actor with a new POJO instance.
+     * Initializes a new actor that adds a section containing the full content of the workflow YAML file to a report.
      *
-     * @param actorName the actor name
-     * @param system the actor system
+     * @param actorName the name assigned to this actor
+     * @param system the actor system in which this actor is registered
      */
     public WorkflowFileSectionActor(String actorName, IIActorSystem system) {
         super(actorName, new WorkflowFileSection(), system);
@@ -44,7 +47,7 @@ public class WorkflowFileSectionActor extends IIActorRef<WorkflowFileSection> {
     }
 
     /**
-     * Initializes the POJO with workflow information from nodeGroup.
+     * Sets the workflow file path in the underlying section object by retrieving it from the {@code nodeGroup} actor.
      */
     private void initializeFromWorkflow() {
         String workflowPath = getWorkflowPath();
@@ -65,12 +68,11 @@ public class WorkflowFileSectionActor extends IIActorRef<WorkflowFileSection> {
     }
 
     /**
-     * Generates the workflow file path section content.
-     *
-     * <p><strong>Expected args:</strong> unused (may be empty or null).</p>
+     * Returns the full text of the workflow YAML file as a section content.
      *
      * @param args unused
-     * @return an {@link ActionResult} with the generated section content
+     * @return an {@link ActionResult} that is a success and whose message holds the entire content of the workflow
+     * file.
      */
     @Action("generate")
     public ActionResult generate(String args) {
@@ -79,12 +81,11 @@ public class WorkflowFileSectionActor extends IIActorRef<WorkflowFileSection> {
     }
 
     /**
-     * Returns the section title.
-     *
-     * <p><strong>Expected args:</strong> unused (may be empty or null).</p>
+     * Returns the title of the workflow file section as a string.
      *
      * @param args unused
-     * @return an {@link ActionResult} with the title string (empty if no title)
+     * @return an action result that is a success containing the section title string, or an empty string if no title
+     * is available
      */
     @Action("getTitle")
     public ActionResult getTitle(String args) {

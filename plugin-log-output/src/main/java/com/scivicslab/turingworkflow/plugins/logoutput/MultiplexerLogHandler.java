@@ -29,33 +29,37 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * A java.util.logging Handler that forwards log messages to MultiplexerAccumulatorActor.
+ * Sends java.util.logging records to the {@code outputMultiplexer} actor so that system logs appear in the same
+ * destinations as workflow command output.
  *
- * <p>Bridges java.util.logging with the MultiplexerAccumulator system,
- * allowing all log messages to be captured in the same output destinations
- * (console, file, database) as command output and cowsay.</p>
+ * <p>The handler delivers log entries as action results to the multiplexer, using a source name derived from the
+ * logger, a type prefixed with {@code log-}, and a data string containing an ISO 8601 timestamp, the log level, and
+ * the message or stack trace.</p>
+ *
+ * <p>If the handler is closed, the record is null, or the {@code outputMultiplexer} actor is not registered, the
+ * record is silently discarded.</p>
  *
  * @author devteam@scivicslab.com
  * @since 1.0
  */
 public class MultiplexerLogHandler extends Handler {
 
-    /** ISO 8601 formatter with timezone offset for log timestamps. */
+    /** ISO 8601 formatter with timezone offset used to format log timestamps. */
     private static final DateTimeFormatter ISO_FORMATTER =
         DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX");
 
-    /** The system default timezone used for formatting timestamps. */
+    /** The system default timezone used to format log timestamps. */
     private static final ZoneId SYSTEM_ZONE = ZoneId.systemDefault();
 
-    /** The actor system used to look up the {@code outputMultiplexer} actor. */
+    /** The actor system used to locate the {@code outputMultiplexer} actor. */
     private final IIActorSystem system;
 
-    /** Flag indicating whether this handler has been closed. */
+    /** Indicates whether the handler is no longer accepting log records. */
     private volatile boolean closed = false;
 
     /**
-     * Constructs a {@code MultiplexerLogHandler} that forwards log records
-     * to the {@code outputMultiplexer} actor within the given actor system.
+     * Initializes a {@code MultiplexerLogHandler} that forwards log records to the {@code outputMultiplexer} actor
+     * within the specified actor system.
      *
      * @param system the actor system containing the {@code outputMultiplexer} actor
      */
@@ -64,21 +68,20 @@ public class MultiplexerLogHandler extends Handler {
     }
 
     /**
-     * Publishes a log record by formatting it as an ISO 8601 timestamped message
-     * and forwarding it to the {@code outputMultiplexer} actor via the {@code add} action.
+     * Sends a log record to the {@code outputMultiplexer} actor as a formatted message.
      *
-     * <p>The log entry is sent with:</p>
+     * <p>The record is sent to the actor with a JSON argument containing:
      * <ul>
-     *   <li>{@code source} - a short name derived from the logger name
-     *       (e.g., {@code "turing-workflow"}, {@code "pojo-actor"}, or the simple class name)</li>
-     *   <li>{@code type} - {@code "log-"} followed by the log level name
-     *       (e.g., {@code "log-INFO"}, {@code "log-SEVERE"})</li>
-     *   <li>{@code data} - the formatted log message including timestamp, level, and
-     *       optional stack trace</li>
+     * <li>{@code source} - a short name derived from the logger name (e.g., {@code "turing-workflow"}, {@code
+     * "pojo-actor"}, or the simple class name)</li>
+     * <li>{@code type} - {@code "log-"} followed by the log level name (e.g., {@code "log-INFO"}, {@code
+     * "log-SEVERE"})</li>
+     * <li>{@code data} - a string containing an ISO 8601 timestamp, the log level, and the formatted message or stack
+     * trace</li>
      * </ul>
      *
-     * <p>If the handler is closed, the record is {@code null}, or the
-     * {@code outputMultiplexer} actor is not registered, the record is silently discarded.</p>
+     * <p>If the handler is closed, the record is {@code null}, or the {@code outputMultiplexer} actor is not
+     * registered, the record is silently discarded.
      *
      * @param record the log record to publish; may be {@code null}
      */
@@ -164,15 +167,15 @@ public class MultiplexerLogHandler extends Handler {
     }
 
     /**
-     * No-op flush. Log entries are forwarded immediately on {@link #publish}.
+     * Performs no operation. Log entries are forwarded to the {@code outputMultiplexer} actor immediately upon calling
+     * {@link #publish}.
      */
     @Override
     public void flush() {
     }
 
     /**
-     * Closes this handler. After closing, subsequent calls to {@link #publish}
-     * will silently discard log records.
+     * Closes the handler. After this call, any subsequent calls to {@link #publish} are silently discarded.
      *
      * @throws SecurityException if a security manager denies the operation
      */

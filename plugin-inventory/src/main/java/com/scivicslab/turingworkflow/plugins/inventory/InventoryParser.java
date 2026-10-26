@@ -30,54 +30,50 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
- * Parser for Ansible inventory files in INI format.
+ * Parses Ansible-style INI inventory files into a structured representation of hosts, groups, and variables.
  *
- * <p>This parser supports a subset of Ansible inventory file format.
- * Turing-workflow supports both Ansible-compatible syntax (ansible_*) and
- * native syntax (actoriac_*).</p>
- *
- * <h2>Supported Features</h2>
+ * <p>The parser supports a subset of the Ansible INI format, including:
  * <ul>
- *   <li>Groups: {@code [groupname]}</li>
- *   <li>Group variables: {@code [groupname:vars]}</li>
- *   <li>Global variables: {@code [all:vars]}</li>
- *   <li>Host-specific variables: {@code hostname key=value}</li>
- *   <li>Comments: lines starting with {@code #} or {@code ;}</li>
+ * <li>Groups: {@code [groupname]}</li>
+ * <li>Group variables: {@code [groupname:vars]}</li>
+ * <li>Global variables: {@code [all:vars]}</li>
+ * <li>Host-specific variables: {@code hostname key=value}</li>
+ * <li>Comments: lines starting with {@code #} or {@code ;}</li>
  * </ul>
  *
- * <h2>Supported Variables</h2>
- * <table border="1">
- *   <caption>Supported inventory variables</caption>
- *   <tr><th>Turing-workflow</th><th>Ansible</th><th>Description</th></tr>
- *   <tr><td>actoriac_host</td><td>ansible_host</td><td>Actual hostname/IP to connect</td></tr>
- *   <tr><td>actoriac_user</td><td>ansible_user</td><td>SSH username</td></tr>
- *   <tr><td>actoriac_port</td><td>ansible_port</td><td>SSH port</td></tr>
- *   <tr><td>actoriac_connection</td><td>ansible_connection</td><td>Connection type (ssh/local)</td></tr>
- * </table>
+ * <p>It recognizes both Ansible-compatible variable names (prefixed with {@code ansible_}) and native Turing-workflow
+ * names (prefixed with {@code actoriac_}) for host, user, port, and connection settings.
  *
- * <h2>Unsupported Ansible Features</h2>
- * <p>The following Ansible features are NOT supported and will generate warnings:</p>
+ * <p>The parser generates warnings for unsupported features such as:
  * <ul>
- *   <li>Children groups: {@code [group:children]}</li>
- *   <li>Range patterns: {@code web[01:50].example.com}</li>
- *   <li>Privilege escalation: {@code ansible_become}, {@code ansible_become_user}</li>
- *   <li>Python interpreter: {@code ansible_python_interpreter}</li>
+ * <li>Children groups: {@code [group:children]}</li>
+ * <li>Range patterns: {@code web[01:50]}</li>
+ * <li>Privilege escalation: {@code ansible_become} or {@code ansible_become_user}</li>
+ * <li>Python interpreter settings: {@code ansible_python_interpreter}</li>
  * </ul>
+ *
+ * <p>The {@code ParseResult} returned by the parser contains the resulting {@link Inventory} and a list of warning
+ * messages that the caller should log.
  *
  * @author devteam@scivicslab.com
  * @since 1.0
  */
 public class InventoryParser {
 
-    /** Pattern to detect Ansible range notation like [01:50] or [a:z] */
+    /** Matches strings containing Ansible range notation, such as {@code [01:50]} or {@code [a:z]}. */
     private static final Pattern RANGE_PATTERN = Pattern.compile(".*\\[[0-9a-zA-Z]+:[0-9a-zA-Z]+\\].*");
 
-    /** Set of supported variable suffixes (without prefix) */
+    /**
+     * The suffixes of the {@code actoriac_} and {@code ansible_} variables that the parser recognizes as valid for
+     * connection settings.
+     */
     private static final Set<String> SUPPORTED_VAR_SUFFIXES = Set.of(
         "host", "user", "port", "connection"
     );
 
-    /** Set of known unsupported Ansible variables that should trigger warnings */
+    /**
+     * Contains the names of Ansible variables that the parser does not support and for which it generates a warning.
+     */
     private static final Set<String> UNSUPPORTED_ANSIBLE_VARS = Set.of(
         "ansible_become",
         "ansible_become_user",
@@ -97,15 +93,15 @@ public class InventoryParser {
     );
 
     /**
-     * Parses an Ansible inventory file.
+     * Parses an Ansible-style INI inventory file from the given input stream into an {@link ParseResult}.
      *
-     * <p>This method collects warnings for unsupported Ansible features.
-     * Warnings are stored in the returned {@link ParseResult} and should be
-     * logged by the caller using the appropriate logging mechanism.</p>
+     * <p>The result contains the structured inventory and a list of warnings for unsupported features like `:children`
+     * groups, range patterns, or specific Ansible variables. The caller is responsible for logging any warnings found
+     * in the result.</p>
      *
      * @param input the input stream of the inventory file
-     * @return the parse result containing inventory and any warnings
-     * @throws IOException if reading the file fails
+     * @return a {@link ParseResult} containing the parsed inventory and any warnings
+     * @throws IOException if an error occurs while reading the input stream
      */
     public static ParseResult parse(InputStream input) throws IOException {
         Inventory inventory = new Inventory();
@@ -215,12 +211,13 @@ public class InventoryParser {
     }
 
     /**
-     * Checks if a variable is unsupported and adds a warning if so.
+     * Adds a warning to the list if the variable is an unsupported Ansible feature or an unrecognized {@code
+     * ansible_*} or {@code actoriac_*} variable.
      *
      * @param key the variable name
-     * @param lineNumber the line number for error reporting
-     * @param warnedVars set of already warned variables (to avoid duplicate warnings)
-     * @param warnings list to add warnings to
+     * @param lineNumber the line number in the inventory file where the variable was found
+     * @param warnedVars a set of variable names that have already been flagged to prevent duplicate warnings
+     * @param warnings the list of warning messages to which a new warning may be added
      */
     private static void checkUnsupportedVariable(String key, int lineNumber,
                                                   Set<String> warnedVars, List<String> warnings) {
@@ -254,10 +251,9 @@ public class InventoryParser {
     }
 
     /**
-     * Returns a helpful suggestion for unsupported Ansible variables.
+     * Returns a human-readable suggestion for how to achieve the intended behavior of an unsupported Ansible variable.
      *
      * @param key the unsupported variable name
-     * @return a human-readable suggestion string for how to achieve the intended behavior
      */
     private static String getUnsupportedVarSuggestion(String key) {
         if (key.startsWith("ansible_become") || key.equals("ansible_sudo") || key.equals("ansible_sudo_pass")) {
@@ -273,10 +269,13 @@ public class InventoryParser {
     }
 
     /**
-     * Result of parsing an inventory file.
+     * Holds the parsed inventory and any warnings generated during the parsing of an Ansible INI file.
      *
-     * <p>Contains the parsed inventory and any warnings generated during parsing.
-     * Warnings should be logged by the caller using the appropriate logging mechanism.</p>
+     * <ul>
+     * <li>{@link #getInventory()} returns the parsed {@link Inventory} object.</li>
+     * <li>{@link #getWarnings()} returns a list of warning messages regarding unsupported features or syntax.</li>
+     * <li>{@link #hasWarnings()} returns true if the list of warnings is not empty.</li>
+     * </ul>
      *
      * @since 1.0
      */
@@ -285,10 +284,10 @@ public class InventoryParser {
         private final List<String> warnings;
 
         /**
-         * Constructs a new ParseResult.
+         * Creates a new ParseResult containing the parsed inventory and a list of warnings.
          *
          * @param inventory the parsed inventory
-         * @param warnings list of warning messages
+         * @param warnings the list of warning messages
          */
         public ParseResult(Inventory inventory, List<String> warnings) {
             this.inventory = inventory;
@@ -296,27 +295,30 @@ public class InventoryParser {
         }
 
         /**
-         * Gets the parsed inventory.
+         * Returns the parsed inventory structure containing all groups, hosts, and variables extracted from the input
+         * file.
          *
-         * @return the inventory
+         * @return the inventory object containing the parsed data
          */
         public Inventory getInventory() {
             return inventory;
         }
 
         /**
-         * Gets the list of warnings generated during parsing.
+         * Returns a list of warning messages generated during the parsing of the inventory file.
          *
-         * @return list of warning messages (may be empty)
+         * @return a list of strings, where each string describes a detected unsupported Ansible feature or syntax, or
+         * an empty list if no warnings were generated.
          */
         public List<String> getWarnings() {
             return warnings;
         }
 
         /**
-         * Checks if any warnings were generated.
+         * Returns {@code true} if the parsing process encountered any unsupported Ansible features or unrecognized
+         * variables.
          *
-         * @return true if there are warnings
+         * @return {@code true} if the list of warnings is not empty, {@code false} otherwise
          */
         public boolean hasWarnings() {
             return !warnings.isEmpty();
@@ -324,27 +326,35 @@ public class InventoryParser {
     }
 
     /**
-     * Represents a parsed Ansible inventory.
+     * Holds the structured data from a parsed Ansible INI inventory, including groups, hosts, and variables.
      *
-     * <p>Stores the complete inventory structure including groups, hosts,
-     * global variables, group-specific variables, and host-specific variables.
-     * Variable precedence follows Ansible conventions: host vars override
-     * group vars, which override global vars.</p>
+     * <p>The data follows a precedence hierarchy where host-specific variables override group variables, which in turn
+     * override global variables. The following methods allow access to the inventory structure:
+     * <ul>
+     * <li>{@code getHosts(String groupName)} returns the list of hostnames belonging to the specified group, or an
+     * empty list if the group does not exist.</li>
+     * <li>{@code getGlobalVars()} returns a map of all variables defined in the {@code [all:vars]} section.</li>
+     * <li>{@code getGroupVars(String groupName)} returns a map of variables assigned to the specified group.</li>
+     * <li>{@code getHostVars(String hostname)} returns a map of variables assigned to the specified host.</li>
+     * <li>{@code getAllGroups()} returns a map of all group names to their respective lists of hostnames.</li>
+     * </ul>
+     *
+     * <p>One instance may serve several workflows or threads at once.
      *
      * @since 1.0
      */
     public static class Inventory {
-        /** Map of group names to their list of hostnames. */
+        /** Maps group names to their lists of hostnames. */
         private final Map<String, List<String>> groups = new HashMap<>();
-        /** Global variables defined in the {@code [all:vars]} section. */
+        /** Holds the variables defined in the {@code [all:vars]} section of the inventory. */
         private final Map<String, String> globalVars = new HashMap<>();
-        /** Group-specific variables, keyed by group name. */
+        /** Holds variables defined for specific groups, keyed by the group name. */
         private final Map<String, Map<String, String>> groupVars = new HashMap<>();
-        /** Host-specific variables, keyed by hostname. */
+        /** Holds variables specific to individual hosts, keyed by hostname. */
         private final Map<String, Map<String, String>> hostVars = new HashMap<>();
 
         /**
-         * Registers a group name in the inventory, creating an empty host list if absent.
+         * Adds a group to the inventory.
          *
          * @param groupName the name of the group to add
          */
@@ -353,9 +363,9 @@ public class InventoryParser {
         }
 
         /**
-         * Adds a host to the specified group.
+         * Adds a hostname to the specified group.
          *
-         * @param groupName the name of the group
+         * @param groupName the name of the group to which the host is added
          * @param hostname the hostname to add
          */
         public void addHost(String groupName, String hostname) {
@@ -363,17 +373,17 @@ public class InventoryParser {
         }
 
         /**
-         * Adds a global variable (from the {@code [all:vars]} section).
+         * Stores a variable that applies to all hosts in the inventory.
          *
-         * @param key the variable name
-         * @param value the variable value
+         * @param key the name of the variable
+         * @param value the value of the variable
          */
         public void addGlobalVar(String key, String value) {
             globalVars.put(key, value);
         }
 
         /**
-         * Adds a variable to the specified group's variable section.
+         * Adds a variable to the variables section of a specific group.
          *
          * @param groupName the name of the group
          * @param key the variable name
@@ -384,7 +394,7 @@ public class InventoryParser {
         }
 
         /**
-         * Adds a host-specific variable.
+         * Associates a variable with a specific host.
          *
          * @param hostname the hostname to associate the variable with
          * @param key the variable name
@@ -395,48 +405,49 @@ public class InventoryParser {
         }
 
         /**
-         * Gets the list of hosts belonging to the specified group.
+         * Returns a list of hostnames that belong to the specified group.
          *
          * @param groupName the name of the group
-         * @return the list of hostnames in the group, or an empty list if the group does not exist
+         * @return a list of hostnames in the group, or an empty list if the group does not exist
          */
         public List<String> getHosts(String groupName) {
             return groups.getOrDefault(groupName, new ArrayList<>());
         }
 
         /**
-         * Gets a defensive copy of all global variables.
+         * Returns a map containing all variables defined in the {@code [all:vars]} section.
          *
-         * @return a new map containing all global variables
+         * @return a map of variable names to their values
          */
         public Map<String, String> getGlobalVars() {
             return new HashMap<>(globalVars);
         }
 
         /**
-         * Gets a defensive copy of the variables for the specified group.
+         * Returns a map containing the variables defined for the specified group.
          *
          * @param groupName the name of the group
-         * @return a new map containing the group's variables, or an empty map if the group has no variables
+         * @return a map of the group's variables, or an empty map if the group has no variables or does not exist
          */
         public Map<String, String> getGroupVars(String groupName) {
             return new HashMap<>(groupVars.getOrDefault(groupName, new HashMap<>()));
         }
 
         /**
-         * Gets a defensive copy of the variables for the specified host.
+         * Returns a map containing the variables assigned specifically to the given hostname.
          *
-         * @param hostname the hostname
-         * @return a new map containing the host's variables, or an empty map if the host has no variables
+         * @param hostname the hostname to look up
+         * @return a new map containing the host's variables, or an empty map if the host has no variables or does not
+         * exist in the inventory
          */
         public Map<String, String> getHostVars(String hostname) {
             return new HashMap<>(hostVars.getOrDefault(hostname, new HashMap<>()));
         }
 
         /**
-         * Gets a defensive copy of all groups and their host lists.
+         * Returns a map where each key is a group name and the value is a list of hostnames belonging to that group.
          *
-         * @return a new map of group names to their host lists
+         * @return a new map containing all group names and their associated host lists
          */
         public Map<String, List<String>> getAllGroups() {
             return new HashMap<>(groups);

@@ -8,18 +8,27 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * {@link SectionIterator} をアクターとして動かし、その操作をワークフローYAMLへ公開する。
+ * Iterates through sections of markdown text extracted from OCR.
  *
- * <p>状態は持たない。持つのは包んだ {@code SectionIterator} のほうであり、これが {@code ActorRef} の
- * 前提である——アクターとは、素のオブジェクトと、それを動かす参照の対である。状態をこちら側に置き
- * {@code null} を包むと、{@code isAlive()} が偽を返し、{@code tell}/{@code ask} が黙って失敗する
- * （{@code ActorSuffixAndOwnedActorRef_260722_oo01} 「実例（2026-08-30）」）。</p>
+ * <ul>
+ * <li>{@code extractSections} takes a markdown string and returns a result containing the extracted sections.</li>
+ * <li>{@code getNext} returns the next section in the sequence as a result message.</li>
+ * <li>{@code setMinChars} sets the minimum character threshold for a section to be kept and returns a success
+ * result.</li>
+ * <li>{@code reset} restarts the iteration from the beginning and returns a success result.</li>
+ * </ul>
+ *
+ * <p>The actor holds a {@code SectionIterator} which maintains the current position in the text between calls.</p>
+ *
+ * <p>One instance serves one workflow at a time.</p>
  */
 public class SectionIteratorActor extends IIActorRef<SectionIterator> {
 
     /**
-     * @param name   このアクターの登録名
-     * @param system 所属するアクターシステム
+     * Creates a new actor named name within the given system to iterate through sections of markdown text.
+     *
+     * @param name the name used to call this actor in a workflow
+     * @param system the actor system where this actor is registered
      */
     public SectionIteratorActor(String name, IIActorSystem system) {
         super(name, new SectionIterator(), system);
@@ -34,14 +43,14 @@ public class SectionIteratorActor extends IIActorRef<SectionIterator> {
      * @return 包んだオブジェクトが返した結果
      */
     /**
-     * The markdown to split into sections.
+     * The markdown text to be split into sections.
      *
      * @param markdown the text produced by OCR
      */
     public record MarkdownArgs(@NotNull String markdown) {}
 
     /**
-     * How short a section may be before it is dropped.
+     * Specifies the minimum number of characters a section must contain to be kept during extraction.
      *
      * @param minChars the smallest section kept, in characters
      */
@@ -53,8 +62,11 @@ public class SectionIteratorActor extends IIActorRef<SectionIterator> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Returns the next unit of explanation from the iterator.
+     *
+     * @param args the argument string, which is unused
+     * @return an action result containing the text of the next unit if the iterator has more elements, or a failure if
+     * no more elements remain
      */
     @Action("getNext")
     public ActionResult getNext(String args) {
@@ -62,8 +74,10 @@ public class SectionIteratorActor extends IIActorRef<SectionIterator> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Sets the minimum number of characters required for a section to be kept during extraction.
+     *
+     * @param args an object containing the minimum number of characters as an integer
+     * @return an action result that is a success if the value was set, or contains an error message otherwise
      */
     @Action(value = "setMinChars", argsType = MinCharsArgs.class)
     public ActionResult setMinChars(MinCharsArgs args) {
@@ -71,8 +85,10 @@ public class SectionIteratorActor extends IIActorRef<SectionIterator> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Resets the section iterator to its initial state.
+     *
+     * @param args the argument string, which is unused
+     * @return an action result that is a success if the reset completed, or a failure otherwise
      */
     @Action("reset")
     public ActionResult reset(String args) {

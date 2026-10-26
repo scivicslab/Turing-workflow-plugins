@@ -28,29 +28,31 @@ import java.util.logging.Logger;
 import com.scivicslab.turingworkflow.plugins.ssh.Node;
 
 /**
- * Manages a group of nodes based on an Ansible inventory file.
+ * Generates {@link Node} objects from Ansible INI inventory files, applying variable precedence and connection
+ * settings.
  *
- * <p>This is a pure POJO class that reads Ansible inventory files and creates
- * Node objects for a specific group. It does not depend on ActorSystem -
- * the responsibility of converting Node objects to actors belongs to the caller.</p>
+ * <ul><li>{@link #createNodesForGroup(String)} returns a list of {@link Node} objects for the hosts in the named
+ * group, applying global, group, and host-specific variables.</li><li>{@link #createLocalNode()} returns a single
+ * {@link Node} configured for local execution.</li><li>{@link #getParseWarnings()} returns a list of messages
+ * describing unsupported or problematic syntax found in the inventory file.</li><li>{@link #setHostLimit(String)}
+ * restricts subsequent node creation to the specified comma-separated list of hostnames.</li><li>{@link
+ * #setSshPassword(String)} sets a password to be used for all nodes created by this instance.</li></ul>
  *
- * <p>SSH authentication is handled by ssh-agent. Make sure ssh-agent is running
- * and your SSH key is added before creating nodes.</p>
+ * <p>This instance holds the parsed inventory data, any parsing warnings, a common SSH password, and an optional host
+ * limit.</p>
  *
- * <h2>Usage Examples</h2>
+ * <p>One instance may serve several workflows or threads at once, provided the underlying {@link Node} objects are
+ * used to create independent actors.</p>
  *
- * <h3>Using Builder Pattern (Recommended)</h3>
  * <pre>{@code
- * NodeGroup nodeGroup = new NodeGroup.Builder()
+ * NodeGroup ng = new NodeGroup.Builder()
  *     .withInventory(new FileInputStream("inventory.ini"))
  *     .build();
+ * List<Node> nodes = ng.createNodesForGroup("webservers");
  * }</pre>
  *
- * <h3>Legacy Constructor Pattern</h3>
- * <pre>{@code
- * NodeGroup nodeGroup = new NodeGroup();
- * nodeGroup.loadInventory(new FileInputStream("inventory.ini"));
- * }</pre>
+ * <p>If the inventory has not been loaded, {@link #createNodesForGroup(String)} throws an {@link
+ * IllegalStateException}.</p>
  *
  * @author devteam@scivicslab.com
  * @since 1.0
@@ -65,16 +67,21 @@ public class NodeGroup {
     private List<String> hostLimit;
 
     /**
-     * Builder for creating NodeGroup instances with fluent API.
+     * Provides a fluent API for configuring and creating {@link NodeGroup} instances.
      *
-     * <p>This is the recommended way to create NodeGroup instances.</p>
+     * <p>Use this to set up an inventory and any other settings before producing a {@link NodeGroup}.
      *
-     * <p><strong>Example:</strong></p>
      * <pre>{@code
      * NodeGroup nodeGroup = new NodeGroup.Builder()
      *     .withInventory(new FileInputStream("inventory.ini"))
      *     .build();
      * }</pre>
+     *
+     * <ul><li>{@link #withInventory(InputStream)} loads an Ansible inventory file and returns this builder for method
+     * chaining.</li><li>{@link #build()} returns a new {@link NodeGroup} instance with the configured
+     * settings.</li></ul>
+     *
+     * <p>If reading the inventory fails, {@link #withInventory(InputStream)} throws an {@link java.io.IOException}.
      *
      * @since 1.0
      */
@@ -83,11 +90,12 @@ public class NodeGroup {
         private List<String> warnings = new ArrayList<>();
 
         /**
-         * Loads an Ansible inventory file.
+         * Parses an Ansible inventory file from the provided stream and configures the builder with the resulting
+         * inventory and any parsing warnings.
          *
          * @param inventoryStream the input stream containing the inventory file
          * @return this builder for method chaining
-         * @throws IOException if reading the inventory fails
+         * @throws IOException if an error occurs while reading the stream
          */
         public Builder withInventory(InputStream inventoryStream) throws IOException {
             InventoryParser.ParseResult result = InventoryParser.parse(inventoryStream);
@@ -97,25 +105,20 @@ public class NodeGroup {
         }
 
         /**
-         * Builds the NodeGroup instance.
-         *
-         * @return a new NodeGroup instance with the configured settings
+         * Returns a new {@code NodeGroup} instance configured with the inventory and warnings provided during the
+         * building process.
          */
         public NodeGroup build() {
             return new NodeGroup(inventory, warnings);
         }
     }
 
-    /**
-     * Constructs an empty NodeGroup.
-     *
-     * <p><strong>Note:</strong> Consider using {@link Builder} for a more fluent API.</p>
-     */
+    /** Initializes an empty {@code NodeGroup} without any loaded inventory or configuration. */
     public NodeGroup() {
     }
 
     /**
-     * Private constructor used by Builder.
+     * Initializes a {@code NodeGroup} with a parsed inventory and its associated warnings.
      *
      * @param inventory the parsed inventory
      * @param warnings list of warnings from parsing
@@ -126,10 +129,10 @@ public class NodeGroup {
     }
 
     /**
-     * Loads an inventory file from an input stream.
+     * Loads an Ansible inventory file from the provided input stream.
      *
-     * <p>Any warnings generated during parsing are stored and can be retrieved
-     * via {@link #getParseWarnings()}.</p>
+     * <p>Any warnings generated during parsing, such as unsupported group nesting or range patterns, are stored and
+     * can be retrieved via {@link #getParseWarnings()}.</p>
      *
      * @param inventoryStream the input stream containing the inventory file
      * @throws IOException if reading the inventory fails
@@ -141,39 +144,34 @@ public class NodeGroup {
     }
 
     /**
-     * Gets the warnings generated during inventory parsing.
+     * Returns a list of warning messages generated during the parsing of the Ansible inventory file.
      *
-     * <p>These warnings should be logged by the caller using the appropriate
-     * logging mechanism.</p>
-     *
-     * @return list of warning messages (may be empty)
+     * @return a list of strings containing the warning messages, which is empty if no warnings were generated.
      */
     public List<String> getParseWarnings() {
         return parseWarnings;
     }
 
     /**
-     * Checks if there are any parse warnings.
+     * Returns true if the inventory parsing produced any warnings.
      *
-     * @return true if there are warnings
+     * @return true if the list of parse warnings is not empty, false otherwise.
      */
     public boolean hasParseWarnings() {
         return !parseWarnings.isEmpty();
     }
 
     /**
-     * Creates Node objects for all hosts in the specified group.
+     * Returns a list of {@link Node} objects for all hosts belonging to the specified group.
      *
-     * <p>This method reads the group from the inventory, applies global and
-     * group-specific variables, and creates a Node POJO for each host.</p>
+     * <p>The returned list contains one {@link Node} for each host in the group, with connection parameters (host,
+     * user, port, and connection mode) and SSH password determined by the precedence of host-specific, group-specific,
+     * and global variables defined in the inventory. If a host limit is set, only hosts within that limit are included
+     * in the result.</p>
      *
-     * <p>Note: This method returns plain Node objects, not actors. The caller
-     * is responsible for converting them to actors using ActorSystem.actorOf()
-     * if needed.</p>
-     *
-     * @param groupName the name of the group from the inventory file
-     * @return the list of created Node objects
-     * @throws IllegalStateException if inventory has not been loaded
+     * @param groupName the name of the group to expand
+     * @return a list of {@link Node} objects representing the hosts in the group
+     * @throws IllegalStateException if the inventory has not been loaded
      */
     public List<Node> createNodesForGroup(String groupName) {
         if (inventory == null) {
@@ -217,12 +215,10 @@ public class NodeGroup {
     }
 
     /**
-     * Creates a single Node for localhost execution.
+     * Returns a list containing a single {@link Node} configured for local execution on the current machine.
      *
-     * <p>This method creates a Node configured for local execution without requiring
-     * an inventory file.</p>
-     *
-     * @return a list containing a single localhost Node
+     * @return a list containing one {@link Node} with the current system user, port 22, and local connection mode
+     * enabled
      */
     public List<Node> createLocalNode() {
         Node localNode = new Node("localhost",
@@ -233,36 +229,32 @@ public class NodeGroup {
     }
 
     /**
-     * Gets the inventory object.
+     * Returns the parsed inventory data.
      *
-     * @return the loaded inventory, or null if not loaded
+     * @return the inventory object, or {@code null} if no inventory has been loaded
      */
     public InventoryParser.Inventory getInventory() {
         return inventory;
     }
 
     /**
-     * Sets the SSH password for all nodes in this group.
+     * Sets the SSH password to be used for all nodes created by this group.
      *
-     * @param password the SSH password to use for all nodes
+     * @param password the password string to be applied to every node
      */
     public void setSshPassword(String password) {
         this.sshPassword = password;
     }
 
-    /**
-     * Gets the SSH password.
-     *
-     * @return the SSH password, or null if not set
-     */
+    /** Returns the SSH password used for all nodes in this group, or {@code null} if no password has been set. */
     public String getSshPassword() {
         return sshPassword;
     }
 
     /**
-     * Sets the host limit to restrict execution to specific hosts.
+     * Sets the host limit to restrict the nodes produced by {@link #createNodesForGroup(String)} to a specific subset.
      *
-     * @param limitString comma-separated list of hosts
+     * @param limitString a comma-separated list of hostnames to include, or a null or empty string to remove any limit
      */
     public void setHostLimit(String limitString) {
         if (limitString == null || limitString.trim().isEmpty()) {
@@ -279,21 +271,23 @@ public class NodeGroup {
     }
 
     /**
-     * Gets the host limit.
+     * Returns the list of hostnames that restrict the nodes created for a group.
      *
-     * @return the list of limited hosts, or null if no limit is set
+     * @return the list of limited hostnames, or {@code null} if no limit is set
      */
     public List<String> getHostLimit() {
         return hostLimit;
     }
 
     /**
-     * Gets a variable value with support for both actoriac_* and ansible_* prefixes.
+     * Returns the value associated with the specified suffix, prioritizing the {@code actoriac_} prefix over the
+     * {@code ansible_} prefix.
      *
-     * @param vars the variable map to search
-     * @param suffix the variable suffix
-     * @param defaultValue the default value if neither prefix is found
-     * @return the variable value, or defaultValue if not found
+     * @param vars the map of variables to search
+     * @param suffix the name of the variable without its prefix
+     * @param defaultValue the value to return if neither prefix is found
+     * @return the value found for the {@code actoriac_} or {@code ansible_} prefixed key, or defaultValue if no match
+     * exists
      */
     private String getVar(Map<String, String> vars, String suffix, String defaultValue) {
         // Check actoriac_* first (preferred)
@@ -312,7 +306,7 @@ public class NodeGroup {
     }
 
     /**
-     * Returns a string representation of this NodeGroup, including the loaded group names.
+     * Returns a string containing the names of all groups defined in the loaded inventory.
      *
      * @return a string in the format {@code NodeGroup{groups=[group1, group2, ...]}}
      */

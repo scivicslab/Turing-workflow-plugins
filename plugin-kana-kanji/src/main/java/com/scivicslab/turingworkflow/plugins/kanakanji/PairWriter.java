@@ -12,18 +12,25 @@ import java.util.List;
 import java.util.logging.Logger;
 
 /**
- * 対データの書き出し先と件数 を保持する素のオブジェクト。アクターとして動かすのは PairsActor の役目であり、
- * 「アクターであること」はこのクラスの性質ではない（ActorSuffixAndOwnedActorRef_260722_oo01）。
+ * Validates LLM output and writes kana-kanji pairs to a TSV file.
  *
- * Actor that validates LLM output and writes kana-kanji pairs to a TSV file.
- *
- * <p>Supported actions:</p>
  * <ul>
- *   <li>{@code openOutput} - Open output TSV file and write header</li>
- *   <li>{@code checkHiragana} - Validate that hiragana column contains hiragana; fails if not</li>
- *   <li>{@code writePairs} - Write validated pairs to output (with page/source metadata)</li>
- *   <li>{@code closeOutput} - Flush and close output file</li>
+ * <li>{@code openOutput} - Opens the output TSV file, appending to it if it exists or creating it with a header if it
+ * does not.</li>
+ * <li>{@code setPageInfo} - Sets the page number and source filename to be attached to subsequent writes.</li>
+ * <li>{@code checkHiragana} - Verifies that tab-separated lines containing Japanese characters include a hiragana
+ * reading in the first column.</li>
+ * <li>{@code writePairs} - Writes the validated tab-separated pairs to the file, appending the current page and source
+ * metadata.</li>
+ * <li>{@code closeOutput} - Flushes and closes the output file.</li>
  * </ul>
+ *
+ * <p>The instance holds an open file handle and the current page/source metadata between calls.</p>
+ *
+ * <p>One instance may serve several workflows at once.</p>
+ *
+ * <p>An action fails if the file cannot be accessed, if the response is empty, if no tab-separated lines are found, or
+ * if the hiragana validation fails.</p>
  */
 public class PairWriter {
 
@@ -35,8 +42,14 @@ public class PairWriter {
     private int totalPairs = 0;
 
     /**
-     * Open the output TSV file. Appends if file exists, creates if not.
-     * Writes header row on creation.
+     * Opens the output TSV file for writing.
+     *
+     * Returns a success result if the file was opened or created, with a message containing the file path; returns a
+     * failure result if the filePath is null, blank, or if an I/O error occurs. If the file already exists, the new
+     * content is appended to the end of the file. If the file is being created for the first time, a header row of
+     * hiragana, kanji, page, and source is written.
+     *
+     * @param filePath the path to the file to be opened or created
      */
     public ActionResult openOutput(String filePath) {
         if (filePath == null || filePath.isBlank()) {
@@ -58,8 +71,16 @@ public class PairWriter {
     }
 
     /**
-     * Set page metadata (page number and source filename) for subsequent writePairs calls.
-     * Argument format: "pageNum\tsourceFile"
+     * Sets the page number and source filename to be used for subsequent {@code writePairs} calls.
+     *
+     * Returns a success result if the input is non-blank, with a message containing the set page and source; otherwise
+     * returns a failure result.
+     *
+     * If the input contains a tab, the part before the tab is the page number and the part after is the source; if no
+     * tab is present, the entire input is treated as the page number and the source is set to an empty string.
+     *
+     * @param pageInfo a string containing the page number and source filename, separated by a tab (e.g.,
+     * "12\tbook.md")
      */
     public ActionResult setPageInfo(String pageInfo) {
         String info = pageInfo == null ? "" : pageInfo;
@@ -78,11 +99,14 @@ public class PairWriter {
     }
 
     /**
-     * Validate that the LLM response has proper tab-separated format and
-     * that the hiragana column actually contains hiragana characters.
+     * Validates that a text response contains tab-separated lines where Japanese characters are accompanied by
+     * hiragana readings.
      *
-     * Returns failure if any tab-separated line has no hiragana in the left column.
-     * Returns success with the count of valid lines if all lines pass.
+     * Returns a success result with a message containing the count of lines processed if the validation passes;
+     * returns a failure result if the response is blank, contains no tab-separated lines, or if any line containing
+     * Japanese characters lacks a corresponding hiragana reading in the first column.
+     *
+     * @param response the text containing the potential kana-kanji pairs to validate
      */
     public ActionResult checkHiragana(String response) {
         String text = response == null ? "" : response;
@@ -125,8 +149,18 @@ public class PairWriter {
     }
 
     /**
-     * Write tab-separated pairs from the LLM response to the output file.
-     * Appends page and source columns. Skips lines without a tab.
+     * Writes tab-separated kana-kanji pairs from a text response to the open output file, appending the current page
+     * and source metadata to each line.
+     *
+     * Returns a success result with a message containing the number of lines written if the response is non-empty and
+     * the output file is open; otherwise returns a failure result. Lines in the response that do not contain a tab are
+     * skipped.
+     *
+     * If the output file is not open, returns a failure result.
+     *
+     * @param response the text containing tab-separated pairs to be written
+     * @return a success result with the count of written lines as the message, or a failure result if the output is
+     * not open, the response is blank, or an I/O error occurs
      */
     public ActionResult writePairs(String response) {
         if (writer == null) {
@@ -161,7 +195,14 @@ public class PairWriter {
     }
 
     /**
-     * Close the output file.
+     * Closes the output TSV file and flushes any remaining data.
+     *
+     * Returns a success result with a message containing the total number of pairs written if the file is closed
+     * successfully, or a failure result if an error occurs during closing. If no output file is currently open, it
+     * returns a success result.
+     *
+     * @return an action result that is a success and contains the total number of pairs written as a message, or is
+     * not a success if an error occurs during the close operation.
      */
     public ActionResult closeOutput() {
         if (writer == null) {

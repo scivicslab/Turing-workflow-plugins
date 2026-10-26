@@ -15,27 +15,16 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * fineWeb 検索サーバへの問い合わせ を保持する素のオブジェクト。アクターとして動かすのは FineWebSearchActor の役目であり、
- * 「アクターであること」はこのクラスの性質ではない（ActorSuffixAndOwnedActorRef_260722_oo01）。
+ * Queries a FineWeb BM25 search server via HTTP to return ranked URLs.
  *
- * Actor that queries a FineWeb BM25 search server via HTTP.
+ * <ul><li>{@code setUrl} — configures the server endpoint</li><li>{@code search} — searches with the default top_k=10
+ * and returns a numbered list of URLs</li><li>{@code searchTopK} — searches with an explicit top_k and returns a
+ * numbered list of URLs</li><li>{@code health} — verifies the server is reachable</li></ul>
  *
- * <p>Default target: {@code http://fineweb-search.user-pods:9000} (the k8s Service
- * deployed by {@code quarkus-fineweb-search/k8s/fineweb-search.yaml}).
- * Can be overridden with {@code setUrl}.</p>
+ * <p>The index stores only {@code id} and {@code url} fields; text is not returned. To obtain page content for an LLM,
+ * pipe the returned URLs through {@code plugin-web}'s {@code FetchActor}.</p>
  *
- * <p>The FineWeb index stores {@code id} and {@code url} fields only;
- * {@code text} is indexed for BM25 but not stored. Search results therefore
- * return ranked URLs, not text snippets. To obtain page content for an LLM,
- * pipe the URLs through {@code plugin-web}'s {@code FetchActor}.</p>
- *
- * <p>Supported actions:</p>
- * <ul>
- *   <li>{@code setUrl}     — configure the server endpoint</li>
- *   <li>{@code search}     — search with default top_k=10; result stored in {@code ${result}}</li>
- *   <li>{@code searchTopK} — search with explicit top_k via JSON object</li>
- *   <li>{@code health}     — verify the server is reachable</li>
- * </ul>
+ * <p>One instance may serve several workflows or threads at once.</p>
  */
 public class FineWebSearchClient {
 
@@ -50,12 +39,12 @@ public class FineWebSearchClient {
             .build();
 
     /**
-     * Sets the FineWeb search server base URL. Trailing slash is stripped.
+     * Sets the FineWeb search server base URL.
      *
-     * <p>Expected argument: URL string, e.g. {@code "http://fineweb-search.user-pods:9000"}.</p>
+     * Returns an ActionResult that is a success if the URL is non-blank, with a message containing the new URL;
+     * otherwise returns a failure with a message stating that a URL is required.
      *
-     * @param args the server URL
-     * @return ActionResult indicating success or failure
+     * @param url the server URL to use
      */
     public ActionResult setUrl(String url) {
         if (url == null || url.isBlank()) {
@@ -66,33 +55,37 @@ public class FineWebSearchClient {
     }
 
     /**
-     * Searches FineWeb with the default top_k=10 and stores the result in {@code ${result}}.
+     * Returns an action result that is a success containing a numbered list of ranked URLs and their BM25 scores, or a
+     * failure with an error message if the query is blank, the server is unreachable, or the request fails.
      *
-     * <p>The result is a numbered list of ranked URLs (text is not stored in the index).
-     * To obtain page content, fetch the returned URLs with {@code plugin-web}'s FetchActor.</p>
+     * <p>The list contains only URLs and scores, as the index does not store text snippets. To obtain page content,
+     * pipe the returned URLs through {@code plugin-web}'s {@code FetchActor}.</p>
      *
-     *
-     * @param query the search query
-     * @return ActionResult with numbered URL list on success
+     * @param query the search terms to look for
+     * @return an ActionResult that is a success with a message containing a numbered list of URLs and scores, or a
+     * failure with an error message if the query is blank, the server is unreachable, or the request fails
      */
     public ActionResult search(String query) {
         return doSearch(query, DEFAULT_TOP_K);
     }
 
     /**
-     * Searches FineWeb with an explicit top_k.
+     * Returns a numbered list of ranked URLs found via FineWeb search, using a specific maximum number of results.
      *
-     * @param query the search query
-     * @param topK  how many results to return
-     * @return ActionResult with numbered URL list on success
+     * @param query the search terms to look for
+     * @param topK the maximum number of results to return
+     * @return an ActionResult that is a success containing a numbered list of URLs and scores, or a failure with an
+     * error message if the query is blank, the server is unreachable, or the request fails
      */
     public ActionResult searchTopK(String query, Integer topK) {
         return doSearch(query, topK != null ? topK : DEFAULT_TOP_K);
     }
     /**
-     * Checks that the FineWeb search server is reachable and healthy.
+     * Returns an action result that is a success if the server is reachable and returns HTTP 200, with a message
+     * containing the JSON string {@code {"status":"ok"}}; otherwise returns a failure with an error message.
      *
-     * @return ActionResult with {@code {"status":"ok"}} body on success
+     * @return an action result that is a success with the body {@code {"status":"ok"}} if the server is reachable and
+     * returns HTTP 200, and is not a success if the server is unreachable or returns a non-200 status code
      */
     public ActionResult health() {
         try {
@@ -143,8 +136,14 @@ public class FineWebSearchClient {
     }
 
     /**
-     * Converts the server's JSON response to a numbered list of ranked URLs.
-     * Falls back to raw JSON if parsing fails.
+     * Returns a string that is a numbered list of ranked URLs and their scores, or the raw JSON if parsing fails.
+     *
+     * The result is a string starting with a header containing the query, followed by lines in the format "index. URL
+     * (score: value)", where the value is a decimal formatted to three places. If the JSON is invalid or missing the
+     * results array, the result is the original JSON string.
+     *
+     * @param query the search query used in the header
+     * @param json the raw JSON response from the server
      */
     private static String formatResults(String query, String json) {
         try {

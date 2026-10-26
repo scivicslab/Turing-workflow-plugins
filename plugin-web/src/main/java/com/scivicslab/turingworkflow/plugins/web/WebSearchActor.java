@@ -8,18 +8,24 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * {@link WebSearcher} をアクターとして動かし、その操作をワークフローYAMLへ公開する。
+ * Performs web searches via a {@code WebSearcher} and returns search results or lists of URLs as action results.
  *
- * <p>状態は持たない。持つのは包んだ {@code WebSearcher} のほうであり、これが {@code ActorRef} の
- * 前提である——アクターとは、素のオブジェクトと、それを動かす参照の対である。状態をこちら側に置き
- * {@code null} を包むと、{@code isAlive()} が偽を返し、{@code tell}/{@code ask} が黙って失敗する
- * （{@code ActorSuffixAndOwnedActorRef_260722_oo01} 「実例（2026-08-30）」）。</p>
+ * <ul>
+ * <li>search: returns an action result containing search results for the given query.</li>
+ * <li>searchUrls: returns an action result containing only URLs for the given query.</li>
+ * </ul>
+ *
+ * <p>This actor is stateless; the underlying {@code WebSearcher} holds the state. One instance may serve several
+ * workflows at the same time.</p>
  */
 public class WebSearchActor extends IIActorRef<WebSearcher> {
 
     /**
-     * @param name   このアクターの登録名
-     * @param system 所属するアクターシステム
+     * Registers a new actor named {@code name} in the {@code system} that performs web searches using a {@link
+     * WebSearcher}.
+     *
+     * @param name the name to register this actor under in the system
+     * @param system the actor system where this actor will reside
      */
     public WebSearchActor(String name, IIActorSystem system) {
         super(name, new WebSearcher(), system);
@@ -34,9 +40,9 @@ public class WebSearchActor extends IIActorRef<WebSearcher> {
      * @return 包んだオブジェクトが返した結果
      */
     /**
-     * What to search for.
+     * Holds the search terms for a web search.
      *
-     * @param query the search terms
+     * @param query the search terms to be used for the query
      */
     public record QueryArgs(@NotNull String query) {}
 
@@ -46,8 +52,11 @@ public class WebSearchActor extends IIActorRef<WebSearcher> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Returns an action result containing a list of URLs found for the given search terms.
+     *
+     * @param args the search terms to be used for the query
+     * @return a success result with a message containing the URLs, or a failure result if the search could not be
+     * completed
      */
     @Action(value = "searchUrls", argsType = QueryArgs.class)
     public ActionResult searchUrls(QueryArgs args) {

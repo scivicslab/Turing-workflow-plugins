@@ -17,13 +17,17 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * How the concepts of one section relate ({@code FrameOntology_261021_oo01}, step 6): one question per section,
- * showing its sentences numbered as its rule file has them and the concepts step 5 kept, asking which is a kind of
- * which ({@code is-a}), a part of which ({@code part-of}), a feature of which ({@code feature}), an operation on which
- * ({@code operation}), and which are related in another way ({@code other}, so that no relation is forced into the
- * first four), one per line as
- * {@code concept | relation | concept | sentence numbers}. Only the concepts listed are taken, by their names as
- * listed; a line naming any other is dropped.
+ * Generates and records how concepts in a textbook section relate to one another by asking an LLM to identify specific
+ * relational patterns.
+ *
+ * <ul><li><li>{@code question} returns a text prompt for a section that lists its sentences and the concepts it
+ * explains, asking the LLM to describe relations in the form {@code A | relation | B | sentence
+ * numbers}.</li><li>{@code read} parses an LLM's reply into a list of {@link BookStore.Relation} objects, matching
+ * concept names regardless of case and filtering out invalid or duplicate relations.</li><li>{@code relateAll}
+ * iterates through sections of a book, asks the LLM for relations, and saves the results to a {@link
+ * BookStore}.</li></ul>
+ *
+ * <p>One instance may serve several workflows or threads at once.</p>
  */
 public final class SectionRelations {
 
@@ -33,7 +37,18 @@ public final class SectionRelations {
     private SectionRelations() {
     }
 
-    /** @return the question for one section, its sentences numbered from 1 in the order of {@code units} */
+    /**
+     * Returns a text prompt that asks an LLM to identify how the concepts in a section relate to one another.
+     *
+     * The text includes the section's title and number, a list of the section's sentences numbered from 1, and a list
+     * of the concepts to be related. The prompt instructs the LLM to use one of five relation types—{@code is-a},
+     * {@code part-of}, {@code feature}, {@code operation}, or {@code other}—and to append the sentence numbers that
+     * justify each relation.
+     *
+     * <pre>{@code
+     * String prompt = SectionRelations.question(node, units, concepts);
+     * }</pre>
+     */
     public static String question(BookOutline.Node node, List<ConceptImportance.Unit> units, List<String> concepts) {
         StringBuilder text = new StringBuilder();
         for (int i = 0; i < units.size(); i++) {
@@ -64,10 +79,21 @@ public final class SectionRelations {
     }
 
     /**
-     * @param concepts  the concepts the question listed; a name is matched to one of them whatever its case
-     * @param sentences how many sentences the question showed; a number past it is dropped
-     * @return the relations read from a reply, in its order, without repeats, a concept related to itself, or a line
-     *         naming a concept not listed or a relation not one of the three
+     * Parses a text reply into a list of relations between concepts.
+     *
+     * @param reply the text containing the relations, one per line
+     * @param concepts the list of concept names the question provided; a name in the reply is matched to one of these
+     * regardless of case
+     *
+     * @param sentences the number of sentences shown in the question; sentence numbers in the reply must be between 1
+     * and this value inclusive
+     *
+     * @return a list of {@link BookStore.Relation} objects found in the reply, in the order they appeared, excluding
+     * repeats, relations of a concept to itself, lines naming concepts not in the provided list, or relations of a
+     * type not among the five allowed
+     *
+     * @implNote The method normalizes concept names by stripping bullets, numbers, quotes, and backticks, and ignores
+     * case.
      */
     public static List<BookStore.Relation> read(String reply, List<String> concepts, int sentences) {
         Map<String, String> byLower = new LinkedHashMap<>();
@@ -94,18 +120,33 @@ public final class SectionRelations {
         return out;
     }
 
-    /** A concept's name as a reply may write it: bullets, numbering, quotes and case taken off. */
+    /**
+     * Normalizes a concept name by stripping whitespace, bullets, numbering, quotes, and backticks, and converting it
+     * to lowercase.
+     */
     private static String norm(String s) {
         return s.strip().replaceFirst("^(?:[-*•]|\\d+[.)])\\s*", "").replaceAll("^[`*\"']+|[`*\"'.]+$", "").replace("`", "")
                 .replaceAll("\\s+", " ").strip().toLowerCase(Locale.ROOT);
     }
 
     /**
-     * Asks how the concepts relate in every section of the book that has two or more concepts kept and no relations
-     * asked yet ({@code only} empty), or in the sections named, {@code parallel} at a time, and stores each as soon as
-     * it is read. A section that fails is reported and left out, so a run started again goes on with it.
+     * Asks how the concepts in a book's sections relate and saves the results to the {@code BookStore}.
      *
-     * @return how many sections were asked, how many relations found, and how many failed, in one line
+     * <ul><li>If {@code only} is empty, it asks for relations in every section of {@code book} that has at least two
+     * kept concepts, has rule files, and has not yet been asked; otherwise, it only asks for the sections listed in
+     * {@code only}.</li><li>The results are written using {@code writer} and saved to the {@code store} immediately
+     * after each section is processed.</li></ul>
+     *
+     * <p>The method runs up to {@code parallel} sections at a time. If a section fails, it is reported via {@code log}
+     * and skipped, allowing the rest of the run to continue.
+     *
+     * @param store the database to read from and write to
+     * @param book the name of the book to process
+     * @param only a list of specific section numbers to process; if empty, all unasked sections are processed
+     * @param writer a function that takes the question text and returns the text to be sent to the LLM
+     * @param parallel the maximum number of sections to process simultaneously
+     * @param log a consumer for progress and error messages
+     * @return a string stating how many sections were asked, how many relations were found, and how many failed
      */
     public static String relateAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
             Consumer<String> log) throws Exception {

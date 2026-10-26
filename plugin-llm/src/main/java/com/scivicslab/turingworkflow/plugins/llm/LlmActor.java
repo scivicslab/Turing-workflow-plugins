@@ -8,18 +8,23 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * {@link LlmClient} をアクターとして動かし、その操作をワークフローYAMLへ公開する。
+ * Communicates with an LLM via two modes: MCP-based tool calling or Direct REST text processing.
  *
- * <p>状態は持たない。持つのは包んだ {@code LlmClient} のほうであり、これが {@code ActorRef} の
- * 前提である——アクターとは、素のオブジェクトと、それを動かす参照の対である。状態をこちら側に置き
- * {@code null} を包むと、{@code isAlive()} が偽を返し、{@code tell}/{@code ask} が黙って失敗する
- * （{@code ActorSuffixAndOwnedActorRef_260722_oo01} 「実例（2026-08-30）」）。</p>
+ * <ul><li ><code>setDirectUrl</code> sets the base URL for Direct REST mode.</li><li ><code>setOpenAiUrl</code> sets
+ * the base URL and model ID for OpenAI-compatible requests.</li><li ><code>setSystemPrompt</code> sets the system
+ * instructions for the model.</li><li ><code>setEnableThinking</code> enables or disables the model's reasoning
+ * step.</li><li ><code>callOpenAi</code> sends a prompt to the OpenAI-compatible endpoint.</li><li
+ * ><code>submitDirect</code> sends a prompt to the Direct REST endpoint.</li></ul>
+ *
+ * <p>One instance may serve several workflows at once, as actions are executed one at a time.</p>
  */
 public class LlmActor extends IIActorRef<LlmClient> {
 
     /**
-     * @param name   このアクターの登録名
-     * @param system 所属するアクターシステム
+     * Initializes a new {@code LlmActor} with a new {@code LlmClient}.
+     *
+     * @param name the name to register this actor under
+     * @param system the actor system this actor belongs to
      */
     public LlmActor(String name, IIActorSystem system) {
         super(name, new LlmClient(), system);
@@ -34,31 +39,31 @@ public class LlmActor extends IIActorRef<LlmClient> {
      * @return 包んだオブジェクトが返した結果
      */
     /**
-     * The endpoint to send to.
+     * The base URL of an endpoint to be used by the actor.
      *
-     * @param url base URL of the endpoint
+     * @param url the base URL of the endpoint
      */
     public record UrlArgs(@NotNull String url) {}
 
     /**
-     * The endpoint to send to and the model to ask for.
+     * Holds the base URL of an OpenAI-compatible endpoint and an optional model ID.
      *
-     * @param url   base URL of the OpenAI-compatible endpoint
-     * @param model model id to request; omit to keep the current one
+     * @param url the base URL of the endpoint
+     * @param model the model ID to request; if null, the current model is kept
      */
     public record OpenAiUrlArgs(@NotNull String url, String model) {}
 
     /**
-     * The text to send.
+     * The text to be sent to the LLM.
      *
      * @param prompt the text to send
      */
     public record PromptArgs(@NotNull String prompt) {}
 
     /**
-     * Whether the model should be asked to think before answering.
+     * Sets whether the model should be asked to think before answering.
      *
-     * @param enabled true to ask for it
+     * @param enabled true to enable thinking, false to disable it
      */
     public record EnableThinkingArgs(@NotNull Boolean enabled) {}
 
@@ -68,8 +73,12 @@ public class LlmActor extends IIActorRef<LlmClient> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Sets the base URL of the OpenAI-compatible endpoint and the model ID to be used.
+     *
+     * @param args a record containing the base URL and the model ID to request; omitting the model ID keeps the
+     * current one
+     *
+     * @return an action result representing the outcome of the operation
      */
     @Action(value = "setOpenAiUrl", argsType = OpenAiUrlArgs.class)
     public ActionResult setOpenAiUrl(OpenAiUrlArgs args) {
@@ -77,8 +86,9 @@ public class LlmActor extends IIActorRef<LlmClient> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Sets the system prompt used by the LLM to guide its behavior.
+     *
+     * @param args the text to be used as the system prompt
      */
     @Action(value = "setSystemPrompt", argsType = PromptArgs.class)
     public ActionResult setSystemPrompt(PromptArgs args) {
@@ -86,8 +96,10 @@ public class LlmActor extends IIActorRef<LlmClient> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Sets whether the model should be asked to think before answering.
+     *
+     * @param args a record containing the boolean value to set
+     * @return an action result that is a success if the setting was applied, or a failure otherwise
      */
     @Action(value = "setEnableThinking", argsType = EnableThinkingArgs.class)
     public ActionResult setEnableThinking(EnableThinkingArgs args) {
@@ -95,8 +107,11 @@ public class LlmActor extends IIActorRef<LlmClient> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Sends a prompt to an OpenAI-compatible endpoint and returns the model's response.
+     *
+     * @param args the text to send as a prompt
+     * @return an action result that is a success if the model responded, with the response text in the message;
+     * otherwise, a failure result
      */
     @Action(value = "callOpenAi", argsType = PromptArgs.class)
     public ActionResult callOpenAi(PromptArgs args) {
@@ -104,8 +119,11 @@ public class LlmActor extends IIActorRef<LlmClient> {
     }
 
     /**
-     * @param promptText ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Sends a text prompt directly to the configured REST endpoint and returns the LLM's response.
+     *
+     * @param args the text to send as the prompt
+     * @return an action result that is a success containing the LLM's response text in the message, or a failure if
+     * the request could not be completed
      */
     @Action(value = "submitDirect", argsType = PromptArgs.class)
     public ActionResult submitDirect(PromptArgs args) {

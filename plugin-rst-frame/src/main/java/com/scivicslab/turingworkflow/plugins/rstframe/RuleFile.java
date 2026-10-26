@@ -4,38 +4,81 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * A rst-on-lisp rule file as text, cut into its top-level forms and the gaps between them, so that
- * one rule can be replaced or added and everything else stays as it was, byte for byte.
+ * Represents an rst-on-lisp rule file as a sequence of top-level forms and the text between them, allowing a user to
+ * replace or add rules while keeping the rest of the file byte-for-byte identical.
  *
- * <p>This reads only as much Lisp as a rule file uses: parentheses, strings with backslash escapes,
- * and {@code ;} comments. A form is {@code (defrule NAME -> ITEM ...)}; an item is a symbol, a
- * keyword such as {@code :instruction}, or a string. Anything else ({@code (in-package :rst)},
- * {@code (defdocument ...)}) is kept as a form that is not a rule.</p>
+ * <ul>
+ * <li>{@link #segments()} returns the pieces of the file in order.</li>
+ * <li>{@link #rules()} returns the {@link Rule} objects for every {@code (defrule ...)} form in the file.</li>
+ * <li>{@link #rule(String)} returns the {@link Rule} with the specified name, or {@code null} if it does not
+ * exist.</li>
+ * <li>{@link #replace(String, String)} returns a new {@code RuleFile} where the rule of the given name is replaced by
+ * the new form.</li>
+ * <li>{@link #insertAfter(String, java.util.List)} returns a new {@code RuleFile} where the specified forms are added
+ * immediately after the rule of the given name.</li>
+ * <li>{@link #text()} returns the entire file content as a single string.</li>
+ * </ul>
+ *
+ * <p>One instance represents one file and may be used by several workflows.</p>
  */
 public final class RuleFile {
 
-    /** One piece of the file: a top-level form, or the text between forms (blank lines, comments). */
+    /**
+     * Represents a single piece of a rule file, either a top-level Lisp form or the text between forms.
+     *
+     * @param text the text of the segment
+     * @param form true if the segment is a Lisp form, false if it is text between forms (such as blank lines or
+     * comments)
+     */
     public record Segment(String text, boolean form) {}
 
-    /** One token of a rule's items. */
+    /**
+     * Represents a single item within a rule's body, such as a symbol, a keyword, or a string.
+     *
+     * @param kind the type of the token, being {@link Kind#SYMBOL}, {@link Kind#KEYWORD}, or {@link Kind#STRING}
+     * @param raw the text of the token as it appears in the file, including any quotes or escapes for strings
+     */
     public record Token(Kind kind, String raw) {
         public enum Kind { SYMBOL, KEYWORD, STRING }
 
-        /** @return the string's characters with the Lisp escapes undone; the symbol's text otherwise */
+        /**
+         * Returns the text of the string with Lisp escapes undone, or the symbol's text otherwise.
+         *
+         * @return the string's characters with the Lisp escapes undone; the symbol's text otherwise
+         */
         public String value() {
             return kind == Kind.STRING ? unescape(raw.substring(1, raw.length() - 1)) : raw;
         }
     }
 
     /**
-     * A {@code defrule} form.
+     * Represents a single {@code (defrule ...)} form from a rule file, providing access to its name and the sequence
+     * of items that follow the {@code ->} arrow.
      *
-     * @param name  the rule's name
-     * @param items everything after {@code ->}, in order
+     * <ul>
+     * <li>{@code name()} returns the name of the rule.</li>
+     * <li>{@code items()} returns the list of tokens following the arrow.</li>
+     * </ul>
+     *
+     * <p>An instance is immutable and may be used by several workflows or threads at once.</p>
+     *
+     * <pre>{@code
+     * Rule rule = ruleFile.rule("s1");
+     * String kind = rule.attr(":kind");
+     * String code = rule.symbolAfter(":code-block");
+     * boolean isSentence = rule.isSentence();
+     * }</pre>
+     *
+     * @param name the name of the rule
+     * @param items the list of tokens following the arrow
      */
     public record Rule(String name, List<Token> items) {
 
-        /** @return the string that follows {@code key}, or {@code null} when the rule has no such attribute */
+        /**
+         * Returns the string that follows the keyword {@code key}, or {@code null} if the rule has no such attribute.
+         *
+         * @param key the keyword to look for, such as {@code :instruction}
+         */
         public String attr(String key) {
             for (int i = 0; i + 1 < items.size(); i++) {
                 Token t = items.get(i);
@@ -47,7 +90,10 @@ public final class RuleFile {
             return null;
         }
 
-        /** @return the symbol that follows {@code key} (as {@code code-block} follows {@code :kind}), or {@code null} */
+        /**
+         * Returns the text of the symbol that follows the given {@code key} in the rule's items, such as the symbol
+         * {@code code-block} that follows {@code :kind}, or {@code null} if no such symbol exists.
+         */
         public String symbolAfter(String key) {
             for (int i = 0; i + 1 < items.size(); i++) {
                 Token t = items.get(i);
@@ -59,7 +105,11 @@ public final class RuleFile {
             return null;
         }
 
-        /** @return whether the rule's body is one string and nothing else, i.e. it has been written */
+        /**
+         * Returns true if the rule's body consists of exactly one string and no other items.
+         *
+         * @return true if the rule's body is a single string, false otherwise
+         */
         public boolean isSentence() {
             return items.size() == 1 && items.get(0).kind() == Token.Kind.STRING;
         }
@@ -71,7 +121,11 @@ public final class RuleFile {
         this.segments = segments;
     }
 
-    /** @param text the whole rule file */
+    /**
+     * Parses a text into a {@link RuleFile} by splitting it into top-level Lisp forms and the text between them.
+     *
+     * @param text the whole rule file
+     */
     public static RuleFile parse(String text) {
         List<Segment> out = new ArrayList<>();
         int i = 0;
@@ -95,8 +149,13 @@ public final class RuleFile {
     }
 
     /**
-     * @return the {@code defrule} form of the rule named {@code name} as the rule file writes it, or {@code null} when the
-     *         file has no such rule
+     * Returns the {@code (defrule NAME -> ...)} form of the rule named {@code name} exactly as it appears in the
+     * provided {@code text}.
+     *
+     * @param text the full text of the rule file
+     * @param name the name of the rule to find
+     * @return the complete {@code (defrule ...)} string, or {@code null} if no rule with that name exists or if the
+     * form is syntactically invalid
      */
     public static String formOf(String text, String name) {
         java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\(defrule\\s+" + java.util.regex.Pattern.quote(name) + "\\s").matcher(text);
@@ -108,7 +167,13 @@ public final class RuleFile {
         }
     }
 
-    /** @return the index just past the form that starts at {@code start} */
+    /**
+     * Returns the index just past the Lisp form that starts at start.
+     *
+     * @param start the offset where the form begins
+     * @return the index of the character immediately following the closing parenthesis of the form
+     * @throws IllegalArgumentException if the form starting at start has unbalanced parentheses
+     */
     private static int endOfForm(String text, int start) {
         int depth = 0;
         int i = start;
@@ -131,19 +196,22 @@ public final class RuleFile {
         throw new IllegalArgumentException("unbalanced parentheses in the form that starts at offset " + start);
     }
 
-    /** @return the pieces in file order */
+    /** Returns the list of segments in the order they appear in the file. */
     public List<Segment> segments() {
         return segments;
     }
 
-    /** @return the whole file, as it was read unless something was replaced or added */
+    /**
+     * Returns the entire content of the rule file as a single string, preserving the original text of all segments
+     * including any modifications made via {@code replace} or {@code insertAfter}.
+     */
     public String text() {
         StringBuilder sb = new StringBuilder();
         for (Segment s : segments) sb.append(s.text());
         return sb.toString();
     }
 
-    /** @return the {@code defrule} forms, in file order; the other forms are not rules */
+    /** Returns a list of all {@code defrule} forms found in the file, in the order they appear. */
     public List<Rule> rules() {
         List<Rule> rules = new ArrayList<>();
         for (Segment s : segments) {
@@ -153,16 +221,23 @@ public final class RuleFile {
         return rules;
     }
 
-    /** @return the rule of that name, or {@code null} */
+    /**
+     * Returns the {@code defrule} form with the specified name, or {@code null} if no such rule exists.
+     *
+     * @param name the name of the rule to find
+     */
     public Rule rule(String name) {
         for (Rule r : rules()) if (r.name().equals(name)) return r;
         return null;
     }
 
     /**
-     * Replaces the rule of that name with new text.
+     * Returns a new {@code RuleFile} in which the rule named {@code name} is replaced by the text in {@code newForm}.
      *
-     * @throws IllegalArgumentException when there is no such rule
+     * @param name the name of the rule to replace
+     * @param newForm the new text for the rule, as a single Lisp form
+     * @return a new {@code RuleFile} containing the replacement
+     * @throws IllegalArgumentException if no rule with the given {@code name} exists
      */
     public RuleFile replace(String name, String newForm) {
         List<Segment> out = new ArrayList<>();
@@ -181,9 +256,13 @@ public final class RuleFile {
     }
 
     /**
-     * Adds forms, one per line, right after the rule of that name.
+     * Returns a new {@code RuleFile} that contains the original forms plus the specified forms inserted immediately
+     * after the rule named {@code name}.
      *
-     * @throws IllegalArgumentException when there is no such rule
+     * @param name the name of the rule after which the new forms are inserted
+     * @param forms a list of strings, each representing a top-level form to be inserted
+     * @return a new {@code RuleFile} instance containing the inserted forms
+     * @throws IllegalArgumentException if no rule with the given {@code name} exists in the file
      */
     public RuleFile insertAfter(String name, List<String> forms) {
         List<Segment> out = new ArrayList<>();
@@ -203,7 +282,13 @@ public final class RuleFile {
         return new RuleFile(out);
     }
 
-    /** @return the rule a form text is, or {@code null} when it is not {@code (defrule NAME -> ...)} */
+    /**
+     * Returns a {@link Rule} if the text is a {@code (defrule NAME -> ...)} form, or {@code null} if the text is not a
+     * rule.
+     *
+     * @param form the text of a single top-level form
+     * @return a {@link Rule} containing the name and items if the form is a rule; {@code null} otherwise
+     */
     static Rule ruleOf(String form) {
         List<Token> tokens = tokens(form.substring(1, form.length() - 1));
         if (tokens.size() < 3 || tokens.get(0).kind() != Token.Kind.SYMBOL
@@ -215,7 +300,11 @@ public final class RuleFile {
         return new Rule(tokens.get(1).raw(), List.copyOf(tokens.subList(3, tokens.size())));
     }
 
-    /** @return the tokens of a form's inside, comments dropped */
+    /**
+     * Returns a list of tokens that make up the content of a Lisp form, with comments removed.
+     *
+     * @param inside the text of the form after the opening parenthesis and before the closing parenthesis
+     */
     static List<Token> tokens(String inside) {
         List<Token> out = new ArrayList<>();
         int i = 0;
@@ -242,12 +331,19 @@ public final class RuleFile {
         return out;
     }
 
-    /** @return {@code s} written as the inside of a Lisp string */
+    /**
+     * Returns a string that is the input string with backslashes and double quotes escaped for use inside a Lisp
+     * string.
+     */
     public static String escape(String s) {
         return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
-    /** @return {@code s}, the inside of a Lisp string, with its escapes undone */
+    /**
+     * Returns a string that is the content of a Lisp string with its backslash escapes undone.
+     *
+     * @param s the string to unescape
+     */
     public static String unescape(String s) {
         StringBuilder sb = new StringBuilder(s.length());
         for (int i = 0; i < s.length(); i++) {

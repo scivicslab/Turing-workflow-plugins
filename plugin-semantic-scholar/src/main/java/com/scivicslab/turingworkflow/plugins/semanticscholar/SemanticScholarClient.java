@@ -16,19 +16,23 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Semantic Scholar の Graph API への問い合わせを保持する素のオブジェクト。アクターとして動かすのは
- * {@link SemanticScholarActor} の役目であり、「アクターであること」はこのクラスの性質ではない
- * （{@code ActorSuffixAndOwnedActorRef_260722_oo01}）。
+ * Queries the Semantic Scholar Graph API to retrieve bibliographic data and citation graphs.
  *
- * <p>What this reaches that OpenAlex and arXiv do not: the citation graph. {@code getCitations}
- * answers who cited a paper and {@code getReferences} what it cited, both as one call rather than
- * as a search to be assembled.</p>
+ * <ul><li><code>searchPapers(query)</code> returns a list of up to ten papers matching the query, ranked by
+ * relevance.</li><li><code>searchPapersTopK(query, limit, year, fields)</code> returns a list of papers matching the
+ * query, with a specific count, year range, and field of study.</li><li><code>getPaper(id)</code> returns a single
+ * paper's details including its abstract.</li><li><code>getPdfUrl(id)</code> returns the URL of an open-access PDF if
+ * one is available.</li><li><code>getCitations(id, limit)</code> returns a list of papers that cite the given
+ * paper.</li><li><code>getReferences(id, limit)</code> returns a list of papers that the given paper
+ * cites.</li><li><code>setApiKey(key)</code> sets the API key used in the {@code x-api-key} header.</li></ul>
  *
- * <p>A key is optional. Without one the API is shared and answers HTTP 429 when the pool is busy,
- * so this paces its requests and asks a refused one again, three times, before giving up. With one,
- * set it through {@code setApiKey}; it is sent as {@code x-api-key}.</p>
+ * <p>An API key is optional; without one, the client uses a shared pool that is subject to rate limits. If the API
+ * returns an HTTP 429 or 503, the client retries up to three times with increasing delays (5, 15, and 45 seconds)
+ * before failing. If retries are exhausted, the client enters a 15-minute cooldown period during which all subsequent
+ * calls fail immediately without attempting network communication.</p>
  *
- * <p>Base URL: {@code https://api.semanticscholar.org/graph/v1}</p>
+ * <p>One instance may serve several workflows or threads at once, but the request pacing is shared across the entire
+ * JVM to respect the API's limits.</p>
  */
 public class SemanticScholarClient {
 
@@ -38,40 +42,52 @@ public class SemanticScholarClient {
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
     private static final int DEFAULT_LIMIT = 10;
 
-    /** Polite pace for the shared pool: the unauthenticated limit is counted per five minutes. */
+    /**
+     * The minimum time in milliseconds to wait between requests to the shared Semantic Scholar pool to avoid rate
+     * limits.
+     */
     private static final long MIN_INTERVAL_MILLIS = 3000;
 
-    /** How long to wait after the API says the pace was too fast, before asking once more. */
+    /**
+     * The initial duration in milliseconds to wait after receiving an HTTP 429 or 503 response before attempting a
+     * retry.
+     */
     private static final long RETRY_AFTER_MILLIS = 5000;
 
-    /** How many times a refused request is asked again before the workflow is told. */
+    /** The number of times a refused request is asked again before the workflow is told. */
     private static final int RETRIES = 3;
 
     /**
-     * How long this process stops asking after the retries ran out. The refusal is per caller and
-     * lasts minutes, so asking again inside that window only deepens it — and a workflow looping
-     * over search results would do exactly that, several times a second, without this.
+     * The duration in milliseconds that the process refuses to send any new requests after all retries have been
+     * exhausted.
      */
     private static final long COOLDOWN_MILLIS = 15 * 60 * 1000L;
 
-    /** What a paper record carries in a list of results. */
+    /**
+     * The list of fields requested from the Semantic Scholar API when retrieving multiple papers, including title,
+     * year, authors, venue, citation counts, external IDs, and open access PDF availability.
+     */
     private static final String LIST_FIELDS =
             "title,year,authors,venue,citationCount,influentialCitationCount,externalIds,openAccessPdf";
 
-    /** The same, with the abstract, for one paper on its own. */
+    /** The fields to request for a single paper, including the abstract, publication types, and TLDR. */
     private static final String ONE_FIELDS = LIST_FIELDS + ",abstract,publicationTypes,tldr";
 
-    /** How long an abstract is allowed to be in a list of results. */
+    /** The maximum number of characters an abstract may occupy in a list of search results. */
     private static final int ABSTRACT_SNIPPET = 400;
 
     /**
-     * When the last request went out, for the whole JVM rather than for one instance: the limit
-     * belongs to the endpoint, not to a client object.
+     * A lock used to pace requests to the Semantic Scholar API across the entire JVM.
+     *
+     * <p>It ensures that no two requests, regardless of which instance of {@link SemanticScholarClient} makes them,
+     * are sent closer than 3 seconds apart.</p>
      */
     private static final Object PACE = new Object();
     private static long lastRequestAt = 0;
 
-    /** Until when this process refuses to ask at all, set when the retries ran out. */
+    /**
+     * The timestamp, in milliseconds since the epoch, until which this process refuses to make any network requests.
+     */
     private static volatile long refusingUntil = 0;
 
     private String apiKey = "";
@@ -86,6 +102,8 @@ public class SemanticScholarClient {
      * Sets the API key sent as {@code x-api-key}. Without one the shared pool is used.
      *
      * @param key the key Semantic Scholar issued
+     * @return an action result that is a success if the key is not blank, with a message containing the key's length;
+     * otherwise, a failure indicating that a key is required
      */
     public ActionResult setApiKey(String key) {
         if (key == null || key.isBlank()) return new ActionResult(false, "API key is required");
@@ -94,21 +112,32 @@ public class SemanticScholarClient {
     }
 
     /**
-     * Searches for papers, ten of them, as the API ranks them.
+     * Returns an action result containing a list of up to ten papers ranked by the API as a formatted text block.
      *
-     * @param query what to look for
+     * @param query the search term to look for
      */
     public ActionResult searchPapers(String query) {
         return searchPapersTopK(query, DEFAULT_LIMIT, null, null);
     }
 
     /**
-     * Searches for papers with an explicit count and, optionally, a year range and field of study.
+     * Searches for papers using a query and optional filters for count, year, and field of study. Returns an action
+     * result containing a formatted list of up to {@code limit} papers, including their titles, years, venues,
+     * citation counts, and external IDs.
      *
-     * @param query  what to look for
-     * @param limit  how many to return; ten when absent
-     * @param year   a year or a range such as {@code 2020-2024}; every year when absent
-     * @param fields a field of study such as {@code Computer Science}; every field when absent
+     * If {@code limit} is null or less than or equal to 0, it returns 10 papers. If {@code year} is absent, it returns
+     * papers from all years. If {@code fields} is absent, it returns papers from all fields of study.
+     *
+     * Returns a success result with a text message listing the papers if results are found, or a success result with a
+     * message stating no papers were found if the query matches nothing. Returns a failure result if the query is
+     * blank or if the search fails.
+     *
+     * @param query the search term or expression (e.g., {@code "cat:cs.AI AND abs:actor"})
+     * @param limit the maximum number of papers to return; 10 if null or non-positive
+     * @param year a year or a range such as {@code "2020-2024"}; all years if null or blank
+     * @param fields a field of study such as {@code "Computer Science"}; all fields if null or blank
+     * @return an action result that is a success with a formatted list of papers if found, a success with a "No papers
+     * found" message if the query is valid but empty, or a failure if the query is blank or the request fails
      */
     public ActionResult searchPapersTopK(String query, Integer limit, String year, String fields) {
         if (query == null || query.isBlank()) return new ActionResult(false, "Query is required");
@@ -142,11 +171,13 @@ public class SemanticScholarClient {
     }
 
     /**
-     * Reads one paper, with its abstract.
+     * Returns a text description of a single paper, including its abstract, title, and metadata.
      *
-     * @param id a Semantic Scholar id, or one of the forms the API takes as a prefix:
-     *           {@code DOI:10.1038/…}, {@code arXiv:2203.02155}, {@code CorpusId:…},
-     *           {@code PMID:…}. A bare DOI or arXiv id is prefixed here
+     * @param id a Semantic Scholar id, or one of the forms the API takes as a prefix: {@code DOI:10.1038/…}, {@code
+     * arXiv:2203.02155}, {@code CorpusId:…}, {@code PMID:…}. A bare DOI or arXiv id is prefixed here.
+     *
+     * @return an action result that is a success and holds the formatted paper text in its message, or is not a
+     * success if the id is blank or the paper cannot be found.
      */
     public ActionResult getPaper(String id) {
         if (id == null || id.isBlank()) return new ActionResult(false, "Paper id is required");
@@ -162,9 +193,11 @@ public class SemanticScholarClient {
     }
 
     /**
-     * The open-access PDF of one paper, when Semantic Scholar knows of one.
+     * Returns the URL of the open-access PDF for a paper, if Semantic Scholar has one.
      *
      * @param id the paper, in the same forms {@link #getPaper} takes
+     * @return an action result that is a success and holds the URL string if a PDF is found, or is not a success with
+     * a message stating no open-access PDF was found or describing a failure
      */
     public ActionResult getPdfUrl(String id) {
         if (id == null || id.isBlank()) return new ActionResult(false, "Paper id is required");
@@ -184,20 +217,24 @@ public class SemanticScholarClient {
     }
 
     /**
-     * The papers that cite this one, newest first as the API returns them.
+     * Returns a text list of the papers that cite the specified paper, ordered by the API's default (newest first).
      *
-     * @param id    the paper, in the same forms {@link #getPaper} takes
+     * @param id the paper, in the same forms {@link #getPaper} takes
      * @param limit how many to return; ten when absent
+     * @return an action result that is a success with a formatted list of citing papers, or a failure if the paper id
+     * is required or the request fails
      */
     public ActionResult getCitations(String id, Integer limit) {
         return related(id, limit, "citations", "citingPaper", "Papers citing");
     }
 
     /**
-     * The papers this one cites.
+     * Returns an action result containing a list of papers that the specified paper cites.
      *
-     * @param id    the paper, in the same forms {@link #getPaper} takes
+     * @param id the paper, in the same forms {@link #getPaper} takes
      * @param limit how many to return; ten when absent
+     * @return a success result with a formatted list of papers cited by the given paper, or a failure result if the ID
+     * is blank or the request fails
      */
     public ActionResult getReferences(String id, Integer limit) {
         return related(id, limit, "references", "citedPaper", "Papers cited by");
@@ -229,7 +266,14 @@ public class SemanticScholarClient {
         }
     }
 
-    /** @return what the API takes as a paper id: a bare DOI or arXiv id gets its prefix here */
+    /**
+     * Returns a string that is a valid Semantic Scholar identifier.
+     *
+     * If the input is a bare DOI or an arXiv ID, the result is the same identifier prefixed with {@code DOI:} or
+     * {@code arXiv:} respectively. If the input already contains a colon, it is returned as is.
+     *
+     * @param id the paper identifier to resolve, such as a DOI, an arXiv ID, or a Semantic Scholar ID
+     */
     static String resolveId(String id) {
         String s = id.strip();
         if (s.contains(":")) return s;                      // already prefixed (DOI:, arXiv:, PMID:, …)
@@ -300,11 +344,20 @@ public class SemanticScholarClient {
     }
 
     /**
-     * One GET, waiting out a refusal rather than failing at the first one.
+     * Performs an HTTP GET request to the specified URL, retrying if the service is busy.
      *
-     * <p>Semantic Scholar answers HTTP 429 when the pool it shares among callers without a key is busy. That
-     * is a matter of when, not of what was asked, so this waits and asks again — three times, for
-     * 5, 15 and 45 seconds, and only then reports the refusal to the workflow.</p>
+     * <p>If the service returns an HTTP 429 (Too Many Requests) or 503 (Service Unavailable), the method waits and
+     * retries up to three times, with increasing delays of 5, 15, and 45 seconds, or longer if the server's {@code
+     * Retry-After} header specifies a greater duration. If the retries are exhausted or the service is unavailable,
+     * the method throws an exception. If the service is currently in a cooldown period due to previous failures, the
+     * method throws an exception immediately without attempting a request, stating how many seconds remain until the
+     * next allowed attempt.</p>
+     *
+     * <p>Returns the response body as a string if the request succeeds with an HTTP 200 status.</p>
+     *
+     * @param url the full URL to query
+     * @throws Exception if the request fails, the service is in a cooldown period, or the server returns a non-200
+     * status code.
      */
     private String get(String url) throws Exception {
         long waitingOut = refusingUntil - System.currentTimeMillis();
@@ -342,12 +395,11 @@ public class SemanticScholarClient {
     }
 
     /**
-     * Stops this process from asking for a while.
+     * Prevents all outgoing requests to Semantic Scholar for a 15-minute period.
      *
-     * <p>The refusal is against the caller and lasts minutes. Asking again inside that window only
-     * deepens it, and a workflow looping over search results would ask several times a second.
-     * Everything this client is asked for during the window fails immediately, saying how much
-     * longer it will be, and nothing leaves the machine.</p>
+     * <p>This occurs when the API has refused the caller or retries have been exhausted. During this window, any
+     * attempt to perform an action fails immediately with a message stating how many seconds remain before the next
+     * allowed request, and no network traffic is sent.</p>
      */
     private static void startCooldown() {
         refusingUntil = System.currentTimeMillis() + COOLDOWN_MILLIS;
@@ -355,7 +407,10 @@ public class SemanticScholarClient {
                 + (COOLDOWN_MILLIS / 60000) + " minutes");
     }
 
-    /** @return how long the answer's {@code Retry-After} asks for, or 0 when it carries none */
+    /**
+     * Returns the number of milliseconds the {@code Retry-After} header asks to wait, or 0 if the header is absent or
+     * contains an HTTP date.
+     */
     private static long retryAfterMillis(HttpResponse<String> resp) {
         return resp.headers().firstValue("retry-after").map(value -> {
             try {
@@ -366,7 +421,11 @@ public class SemanticScholarClient {
         }).orElse(0L);
     }
 
-    /** @return whether the answer says "not now": too many requests, or the service is out */
+    /**
+     * Returns true if the HTTP status code indicates the service is temporarily unavailable or rate-limited.
+     *
+     * @param status the HTTP response status code
+     */
     private static boolean busy(int status) {
         return status == 429 || status == 503;
     }

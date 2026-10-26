@@ -25,41 +25,75 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * Similar concepts ({@code FrameDataWorkflow_261024_oo01}, step 4): for the main concept of every smallest unit of
- * explanation, in every book of the database, the units elsewhere that explain a concept of the same kind, with the more
- * general concept the two share ("int" and "long": integer type; "for loop" and "while loop": loop). A writer who
- * explains a concept follows them to what was written about its kin; no generalized frame is built.
+ * Identifies pairs of similar concepts across books and the more general concept they share, such as "int" and "long"
+ * both being "integer types".
  *
- * <p>Each unit's main concept is embedded by its name alone: a longer text is dominated by the words a whole book shares
- * ("Java", "sequence of") and puts "integer types" nearer to anything in chapter 3 than to "floating-point types". The
- * units nearest to it from other sections are its candidates; each is shown to the model in one line of text (its main
- * concept, its axis, its members or parts, the main sentence of its first block); one question per unit
- * asks which candidates share a more general concept with it, and what that concept is. The answers are kept in a table
- * of their own, keyed by the criterion they were judged by, so that similarity judged another way can be put beside them
- * or in their place.
+ * <p>The class offers the following operations:
+ * <ul>
+ * <li>{@code units}: returns a list of all units in the database, each containing its book, section, ordinal, main
+ * concept, and a text representation.</li>
+ * <li>{@code embed}: returns a list of vectors for the provided texts by calling an OpenAI-compatible embedding
+ * service.</li>
+ * <li>{@code nearest}: returns up to {@code k} units from the provided list that are closest to the given unit {@code
+ * u} based on their vectors, excluding units from the same section.</li>
+ * <li>{@code question}: returns a formatted string containing a prompt for a model to judge the similarity of a unit
+ * against a list of candidates.</li>
+ * <li>{@code read}: returns a list of {@link Similar} records parsed from a model's text reply.</li>
+ * <li>{@code askAll}: embeds missing units and performs the similarity judgment for all unjudged units (or a specific
+ * subset) using a local LLM.</li>
+ * </ul>
+ *
+ * <p>One instance of this class is not used; all operations are static.
+ *
+ * <p>A typical workflow step uses:
+ * <pre>{@code
+ * askAll(store, "http://localhost:8080/v1/embeddings", "e5-large", List.of(), writer, 4, log);
+ * }</pre>
  */
 public final class SimilarConcepts {
 
-    /** The criterion of this class's judgements, kept with each of them. */
+    /** The criterion used to label each similarity judgement in the database. */
     public static final String CRITERION = "e5large-nearest8/common-general-concept";
 
-    /** How many nearest units are a unit's candidates. */
+    /** The number of nearest units used as candidates for similarity comparison. */
     public static final int CANDIDATES = 8;
 
-    /** One unit of a book, as this step reads it. */
+    /**
+     * Represents a single smallest unit of explanation within a book.
+     *
+     * @param book the name of the book
+     * @param number the section number in the book
+     * @param ordinal the sequence number of the unit within the section
+     * @param concept the main concept of the unit
+     * @param text a string containing the concept, the axis, the members or parts, and the first nucleus sentence
+     */
     public record Unit(String book, String number, int ordinal, String concept, String text) {
         public String key() {
             return book + "|" + number + "|" + ordinal;
         }
     }
 
-    /** One judgement: a unit, a similar unit, and the more general concept they share. */
+    /**
+     * Represents a single judgement that a unit and another unit are of the same kind, along with the more general
+     * concept they share.
+     *
+     * @param unit the first unit
+     * @param other the similar unit
+     * @param common the more general concept they share
+     */
     public record Similar(Unit unit, Unit other, String common) {}
 
     private SimilarConcepts() {
     }
 
-    /** @return the units of every book, each with its line of text; a unit with no concept is left out */
+    /**
+     * Returns a list of all units from every book in the store, where each unit contains its main concept and a text
+     * string describing its axis, members or parts, and the first block's nucleus.
+     *
+     * <p>A unit with no concept is omitted from the list.
+     *
+     * @param store the source of books and section groups
+     */
     public static List<Unit> units(BookStore store) throws Exception {
         List<Unit> out = new ArrayList<>();
         for (String book : store.books()) {
@@ -90,7 +124,18 @@ public final class SimilarConcepts {
         return out;
     }
 
-    /** @return the embeddings of the texts, in order, from an OpenAI-compatible /v1/embeddings endpoint */
+    /**
+     * Returns a list of normalized embedding vectors for the given texts by calling an OpenAI-compatible {@code
+     * /v1/embeddings} endpoint.
+     *
+     * @param url the URI of the embedding endpoint
+     * @param model the name of the model to use for embedding
+     * @param texts the list of strings to be embedded
+     * @return a list of float arrays, where each array is a normalized vector corresponding to the text at the same
+     * index in {@code texts}
+     *
+     * @throws IllegalStateException if the endpoint returns a status code other than 200
+     */
     public static List<float[]> embed(String url, String model, List<String> texts) throws Exception {
         HttpClient http = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(Duration.ofSeconds(20)).build();
         JSONArray input = new JSONArray();
@@ -119,7 +164,16 @@ public final class SimilarConcepts {
         return out;
     }
 
-    /** @return the units nearest to {@code u}, at most {@code k}, leaving out the units of its own section */
+    /**
+     * Returns at most k units from the provided list that are most similar to {@code u} based on their embeddings,
+     * excluding any units from the same section as {@code u}.
+     *
+     * @param u the unit to find matches for
+     * @param units the list of all units to search through
+     * @param vectors a map of unit keys to their embedding vectors
+     * @param k the maximum number of similar units to return; a value of 0 or less returns an empty list
+     * @return a list of up to k similar units, ordered by descending similarity score
+     */
     public static List<Unit> nearest(Unit u, List<Unit> units, Map<String, float[]> vectors, int k) {
         float[] a = vectors.get(u.key());
         if (a == null) return List.of();
@@ -137,7 +191,18 @@ public final class SimilarConcepts {
         return s.stream().limit(k).map(Scored::unit).toList();
     }
 
-    /** @return the question for one unit and its candidates */
+    /**
+     * Returns a text prompt that asks a model to identify which of the provided candidates share a more general
+     * concept with the main concept of {@code u}.
+     *
+     * <p>The prompt contains the text of {@code u}, followed by the text of each unit in {@code candidates} labeled as
+     * c1, c2, etc. It instructs the model to identify candidates that are of the same kind by naming the candidate
+     * index and the shared general concept (e.g., "c2 | integer type"), or to respond with "none" if no such
+     * candidates exist.
+     *
+     * @param u the unit whose main concept is being described
+     * @param candidates the list of nearby units to be presented as potential matches
+     */
     public static String question(Unit u, List<Unit> candidates) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < candidates.size(); i++) sb.append("c").append(i + 1).append(": ").append(candidates.get(i).text()).append('\n');
@@ -152,7 +217,22 @@ public final class SimilarConcepts {
                 + "Write \"none\" when none is of the same kind. Write nothing else.";
     }
 
-    /** @return the similar units the reply names, with what they share; a candidate it names twice counts once */
+    /**
+     * Parses a text reply to extract the similar units and the more general concept they share.
+     *
+     * Returns a list of {@link Similar} objects representing the matches found in the reply, where each match links
+     * the unit {@code u} to a candidate and the identified common concept.
+     *
+     * A candidate named multiple times in the reply results in a single entry in the list.
+     *
+     * @param reply the text containing the names of candidates and their shared concepts in the format "c[number] |
+     * [concept]";
+     *
+     * @param u the unit being compared;
+     * @param candidates the list of possible units to match against;
+     * @return a list of similarities found in the reply, which is empty if no valid matches are found or if the reply
+     * contains "none".
+     */
     public static List<Similar> read(String reply, Unit u, List<Unit> candidates) {
         Map<Integer, Similar> by = new LinkedHashMap<>();
         Matcher m = Pattern.compile("(?im)^\\W*c(\\d+)\\W*\\|\\s*(.+?)\\s*$").matcher(reply);
@@ -166,12 +246,24 @@ public final class SimilarConcepts {
     }
 
     /**
-     * Embeds the units whose text has no embedding yet, then asks, for every unit not judged yet under {@link #CRITERION}
-     * ({@code only} empty: every book; else the sections named), which of its nearest units are of the same kind.
+     * Performs a full pass of the similarity identification process by embedding missing unit concepts and asking a
+     * model to identify similar concepts for all unjudged units.
      *
-     * @param embedUrl   the /v1/embeddings endpoint
-     * @param embedModel the embedding model
-     * @return how many units were judged and how many similar pairs they gave, in one line
+     * <p>If {@code only} is empty, it processes every unit in the {@code store} that has not yet been judged under
+     * {@link #CRITERION}; otherwise, it only processes units belonging to the sections listed in {@code only}.
+     *
+     * <p>Returns a string summarizing the number of units judged, the number of similar pairs found, and the number of
+     * units that failed.
+     *
+     * @param store the source of books and units
+     * @param embedUrl the /v1/embeddings endpoint
+     * @param embedModel the name of the embedding model
+     * @param only a list of section numbers to restrict the work to, or an empty list to process all unjudged units
+     * @param writer a function that takes the question text and returns the model's reply
+     * @param parallel the number of units to process at a time
+     * @param log a consumer for progress and error messages
+     * @return a string in the form "X unit(s) judged under [criterion]: Y similar pair(s), Z failed"
+     * @throws Exception if an error occurs during embedding or if the model's reply is invalid
      */
     public static String askAll(BookStore store, String embedUrl, String embedModel, List<String> only, Function<String, String> writer,
             int parallel, Consumer<String> log) throws Exception {

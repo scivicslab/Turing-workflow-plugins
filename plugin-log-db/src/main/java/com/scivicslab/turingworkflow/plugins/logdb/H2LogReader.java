@@ -24,11 +24,34 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Read-only H2 log reader for querying workflow logs.
+ * Queries workflow execution logs from an H2 database.
  *
- * <p>This class provides access to the H2 log database for querying logs.
- * Uses AUTO_SERVER=TRUE to connect to the H2 server started by the writer process,
- * allowing concurrent access while logs are being written.</p>
+ * <p>Users can retrieve session summaries, log entries, and node information through several operations:
+ * <ul>
+ * <li>{@link #getLogsByNode(long, String)} returns a list of log entries for a specific node within a session.</li>
+ * <li>{@link #getLogsByLevel(long, LogLevel)} returns a list of log entries at or above the specified level.</li>
+ * <li>{@link #getSummary(long)} returns a {@link SessionSummary} containing execution metadata and statistics, or
+ * {@code null} if the session ID is not found.</li>
+ * <li>{@link #getLatestSessionId()} returns the ID of the most recent session, or -1 if no sessions exist.</li>
+ * <li>{@link #listSessions(int)} returns a list of recent session summaries, ordered by start time descending.</li>
+ * <li>{@link #listSessionsFiltered(String, String, String, java.time.LocalDateTime, java.time.LocalDateTime, int)}
+ * returns a list of session summaries matching the specified criteria.</li>
+ * <li>{@link #getNodesInSession(long)} returns a list of {@link NodeInfo} for all nodes in a session.</li>
+ * </ul>
+ *
+ * <p>The reader holds a JDBC connection that remains open until {@link #close()} is called. If the reader was
+ * initialized with an existing connection, calling {@link #close()} does not close that connection. One instance may
+ * serve several threads at once.
+ *
+ * <p>Example of querying a session:
+ * <pre>{@code
+ * H2LogReader reader = new H2LogReader(Path.of("/path/to/db"));
+ * SessionSummary summary = reader.getSummary(123L);
+ * if (summary != null) {
+ *     System.out.println(summary.status());
+ * }
+ * reader.close();
+ * }</pre>
  *
  * @author devteam@scivicslab.com
  * @since 1.0
@@ -37,14 +60,15 @@ public class H2LogReader implements AutoCloseable {
 
     /** The JDBC connection used for read operations. */
     private final Connection connection;
-    /** Whether this reader owns (and should close) the connection. */
+    /** Indicates whether this reader is responsible for closing the underlying database connection. */
     private final boolean ownsConnection;
 
     /**
-     * Opens the log database for reading.
+     * Connects to an H2 log database file for reading.
      *
-     * @param dbPath path to the database file (without extension)
-     * @throws SQLException if database connection fails
+     * @param dbPath the path to the database file, excluding the extension
+     *
+     * @throws SQLException if the connection to the database fails
      */
     public H2LogReader(Path dbPath) throws SQLException {
         String url = "jdbc:h2:" + dbPath.toAbsolutePath().toString() + ";AUTO_SERVER=TRUE";
@@ -53,12 +77,12 @@ public class H2LogReader implements AutoCloseable {
     }
 
     /**
-     * Opens a remote log database via H2 TCP server.
+     * Connects to a remote log database via an H2 TCP server.
      *
-     * @param host H2 server hostname (typically "localhost")
-     * @param port H2 server TCP port
-     * @param dbPath database path on the server
-     * @throws SQLException if database connection fails
+     * @param host the H2 server hostname (typically "localhost")
+     * @param port the H2 server TCP port
+     * @param dbPath the database path on the server
+     * @throws SQLException if the database connection fails
      */
     public H2LogReader(String host, int port, String dbPath) throws SQLException {
         String url = "jdbc:h2:tcp://" + host + ":" + port + "/" + dbPath;
@@ -67,10 +91,9 @@ public class H2LogReader implements AutoCloseable {
     }
 
     /**
-     * Creates a reader using an existing connection.
+     * Initializes a reader using an existing database connection.
      *
-     * <p>Used internally by H2LogStore to delegate read operations.
-     * The connection will NOT be closed when this reader is closed.</p>
+     * <p>The connection is used for all subsequent log queries but will not be closed when this reader is closed.</p>
      *
      * @param connection the database connection to use
      */
@@ -80,11 +103,12 @@ public class H2LogReader implements AutoCloseable {
     }
 
     /**
-     * Gets logs filtered by node ID.
+     * Returns a list of log entries belonging to a specific session and node, ordered by timestamp.
      *
-     * @param sessionId the session ID
+     * @param sessionId the session ID to filter by
      * @param nodeId the node ID to filter by
-     * @return list of log entries for the specified node
+     * @return a list of {@link LogEntry} objects for the specified session and node, or an empty list if no entries
+     * match
      */
     public List<LogEntry> getLogsByNode(long sessionId, String nodeId) {
         List<LogEntry> entries = new ArrayList<>();
@@ -104,11 +128,10 @@ public class H2LogReader implements AutoCloseable {
     }
 
     /**
-     * Gets logs filtered by minimum log level.
+     * Returns a list of log entries from the specified session that have a log level at or above {@code minLevel}.
      *
-     * @param sessionId the session ID
-     * @param minLevel the minimum log level to include
-     * @return list of log entries at or above the specified level
+     * @param sessionId the session ID to query
+     * @param minLevel the minimum log level to include in the results
      */
     public List<LogEntry> getLogsByLevel(long sessionId, LogLevel minLevel) {
         List<LogEntry> entries = new ArrayList<>();
@@ -135,10 +158,11 @@ public class H2LogReader implements AutoCloseable {
     }
 
     /**
-     * Gets a summary of the specified session.
+     * Returns a {@link SessionSummary} containing the execution metadata and statistics for the specified session.
      *
-     * @param sessionId the session ID
-     * @return the session summary, or null if not found
+     * @param sessionId the session ID to look up
+     * @return a {@link SessionSummary} containing the session's details, or {@code null} if no session exists with the
+     * given ID
      */
     public SessionSummary getSummary(long sessionId) {
         try {
@@ -249,7 +273,7 @@ public class H2LogReader implements AutoCloseable {
     }
 
     /**
-     * Gets the latest session ID.
+     * Returns the ID of the most recently started session.
      *
      * @return the latest session ID, or -1 if no sessions exist
      */
@@ -267,10 +291,10 @@ public class H2LogReader implements AutoCloseable {
     }
 
     /**
-     * Lists recent sessions.
+     * Retrieves a list of the most recent workflow execution sessions, ordered by start time descending.
      *
-     * @param limit maximum number of sessions to return
-     * @return list of session summaries, ordered by start time descending
+     * @param limit the maximum number of sessions to return
+     * @return a list of session summaries for the most recent sessions up to the specified limit
      */
     public List<SessionSummary> listSessions(int limit) {
         List<SessionSummary> sessions = new ArrayList<>();
@@ -289,14 +313,13 @@ public class H2LogReader implements AutoCloseable {
     }
 
     /**
-     * Lists sessions filtered by criteria.
+     * Returns a list of session summaries that match the specified criteria, ordered by start time descending.
      *
-     * @param workflowName filter by workflow name (null to skip)
-     * @param overlayName filter by overlay name (null to skip)
-     * @param inventoryName filter by inventory name (null to skip)
-     * @param startedAfter filter by start time (null to skip)
-     * @param limit maximum number of sessions to return
-     * @return list of session summaries matching the criteria
+     * @param workflowName the workflow name to filter by, or {@code null} to include all workflows
+     * @param overlayName the overlay name to filter by, or {@code null} to include all overlays
+     * @param inventoryName the inventory name to filter by, or {@code null} to include all inventories
+     * @param startedAfter the earliest start time to include, or {@code null} to include all sessions
+     * @param limit the maximum number of sessions to return
      */
     public List<SessionSummary> listSessionsFiltered(String workflowName, String overlayName,
                                                       String inventoryName, LocalDateTime startedAfter,
@@ -305,15 +328,15 @@ public class H2LogReader implements AutoCloseable {
     }
 
     /**
-     * Lists sessions filtered by criteria including end time.
+     * Returns a list of session summaries matching the specified criteria, ordered by start time descending.
      *
-     * @param workflowName  filter by workflow name ({@code null} to skip)
-     * @param overlayName   filter by overlay name ({@code null} to skip)
-     * @param inventoryName filter by inventory name ({@code null} to skip)
-     * @param startedAfter  filter sessions started at or after this time ({@code null} to skip)
-     * @param endedAfter    filter sessions ended at or after this time ({@code null} to skip)
-     * @param limit         maximum number of sessions to return
-     * @return list of session summaries matching the criteria, ordered by start time descending
+     * @param workflowName the name of the workflow to filter by (null to skip)
+     * @param overlayName the name of the overlay to filter by (null to skip)
+     * @param inventoryName the name of the inventory to filter by (null to skip)
+     * @param startedAfter the earliest start time to include (null to skip)
+     * @param endedAfter the earliest end time to include (null to skip)
+     * @param limit the maximum number of sessions to return
+     * @return a list of session summaries matching the criteria
      */
     public List<SessionSummary> listSessionsFiltered(String workflowName, String overlayName,
                                                       String inventoryName, LocalDateTime startedAfter,
@@ -349,19 +372,20 @@ public class H2LogReader implements AutoCloseable {
     }
 
     /**
-     * Information about a node in a session.
+     * A summary of a single node's execution and logging activity within a session.
      *
      * @param nodeId the node identifier
      * @param status the node status (SUCCESS, FAILED, or null if not yet recorded)
-     * @param logCount the number of log entries for this node
+     * @param logCount the number of log entries recorded for this node
      */
     public record NodeInfo(String nodeId, String status, int logCount) {}
 
     /**
-     * Gets all nodes that participated in a session.
+     * Returns a list of {@link NodeInfo} for all nodes recorded in the specified session, ordered by node ID.
      *
-     * @param sessionId the session ID
-     * @return list of node information, ordered by node ID
+     * @param sessionId the session ID to query
+     * @return a list of node information containing the node ID, its status, and the number of log entries associated
+     * with it
      */
     public List<NodeInfo> getNodesInSession(long sessionId) {
         List<NodeInfo> nodes = new ArrayList<>();
@@ -415,12 +439,12 @@ public class H2LogReader implements AutoCloseable {
     }
 
     /**
-     * Closes this reader, releasing the database connection if owned.
+     * Releases the database connection used by this reader, provided the reader was responsible for opening it.
      *
-     * <p>If this reader was created with an external connection (via
-     * {@link #H2LogReader(Connection)}), the connection is not closed.</p>
+     * <p>If the reader was created using an existing {@link Connection}, the connection remains open. A call to this
+     * method has no effect if the connection is already closed.</p>
      *
-     * @throws SQLException if a database error occurs while closing the connection
+     * @throws SQLException if a database error occurs while closing the connection.
      */
     @Override
     public void close() throws SQLException {

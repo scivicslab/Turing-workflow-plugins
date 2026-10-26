@@ -37,20 +37,36 @@ import com.scivicslab.turingworkflow.workflow.Transition;
 import com.scivicslab.turingworkflow.plugins.logoutput.WorkflowStreamingAccumulator;
 
 /**
- * Level 3 wrapper that adds workflow capabilities to a Node POJO.
+ * Executes workflows that control remote nodes via SSH and manages document change detection and deployment.
  *
- * <p>This class extends {@link Interpreter} to provide workflow execution
- * capabilities while delegating SSH operations to a wrapped {@link Node} instance.</p>
- *
- * <p>This demonstrates the three-level architecture:</p>
  * <ul>
- * <li><strong>Level 1 (POJO):</strong> {@link Node} - pure POJO with SSH functionality</li>
- * <li><strong>Level 2 (Actor):</strong> ActorRef&lt;Node&gt; - actor wrapper for concurrent execution</li>
- * <li><strong>Level 3 (Workflow):</strong> NodeInterpreter - workflow capabilities + IIActorRef wrapper</li>
+ * <li>`executeCommand(String command)` or `executeCommand(String command, Node.OutputCallback callback)` runs a
+ * command on the remote node and returns a {@link Node.CommandResult} containing the exit code and output.</li>
+ * <li>`executeSudoCommand(String command)` or `executeSudoCommand(String command, Node.OutputCallback callback)` runs
+ * a command with sudo privileges using the {@code SUDO_PASSWORD} environment variable and returns a {@link
+ * Node.CommandResult}.</li>
+ * <li>`runWorkflow(String workflowFile, int maxIterations)` loads and executes a workflow file, optionally applying
+ * variables from an overlay directory, and returns an {@link ActionResult} indicating completion success.</li>
+ * <li>`detectDocumentChanges(String docListPath)` identifies changed documents by checking git status for each path in
+ * the provided list and returns an {@link ActionResult} with a summary.</li>
+ * <li>`cloneChangedDocuments(String docListPath)` performs a fresh git clone for each changed document identified in
+ * the list and returns an {@link ActionResult} with the count of cloned documents.</li>
+ * <li>`buildChangedDocuments(String docListPath)` runs build commands for changed documents and returns an {@link
+ * ActionResult} with the count of successfully built documents.</li>
+ * <li>`deployChangedDocuments(String docListPath)` copies the build directories of changed documents to a public HTML
+ * directory and returns an {@link ActionResult} with the count of deployed documents.</li>
  * </ul>
  *
- * <p><strong>Design principle:</strong> Node remains a pure POJO, independent of ActorSystem.
- * NodeInterpreter wraps Node to add workflow capabilities without modifying the Node class.</p>
+ * <p>The class holds a set of detected document names and the current transition's YAML snippet for reporting.</p>
+ *
+ * <p>One instance serves a single workflow execution at a time.</p>
+ *
+ * <pre>{@code
+ * nodeInterpreter.executeCommand("ls -la");
+ * }</pre>
+ *
+ * <p>If a command fails or an SSH connection cannot be established, the actions return a failure {@link ActionResult}
+ * with an error message.</p>
  *
  * @author devteam@scivicslab.com
  * @since 2.0.0
@@ -59,38 +75,29 @@ public class NodeInterpreter extends Interpreter {
 
     private static final Logger logger = Logger.getLogger(NodeInterpreter.class.getName());
 
-    /**
-     * The wrapped Node POJO that handles actual SSH operations.
-     */
+    /** The {@link Node} instance that performs the actual SSH operations and command execution. */
     private final Node node;
 
-    /**
-     * The overlay directory path for YAML overlay feature.
-     */
+    /** The path to the directory containing {@code overlay-conf.yaml} for the YAML overlay feature. */
     private String overlayDir;
 
-    /**
-     * The current transition YAML snippet (first 10 lines) for accumulator reporting.
-     */
+    /** Holds the first 10 lines of the current transition in YAML format for reporting. */
     private String currentTransitionYaml = "";
 
-    /**
-     * Set of changed document names detected by workflow.
-     * This replaces the /tmp/changed_docs.txt file-based approach.
-     */
+    /** Holds the names of documents identified as changed during the current workflow execution. */
     private final Set<String> changedDocuments = new HashSet<>();
 
     /**
-     * WorkflowStreamingAccumulator for cowsay display.
-     * When set, workflow step transitions are displayed using cowsay.
+     * Holds the {@link WorkflowStreamingAccumulator} used to render workflow step transitions as cowsay messages.
      */
     private WorkflowStreamingAccumulator accumulator = null;
 
     /**
-     * Constructs a NodeInterpreter that wraps the specified Node.
+     * Initializes a new workflow interpreter that executes steps on the specified {@link Node} using the given actor
+     * system.
      *
-     * @param node the {@link Node} instance to wrap
-     * @param system the actor system for workflow execution
+     * @param node the {@link Node} instance to use for SSH and command execution
+     * @param system the actor system used to coordinate workflow execution and communication between actors
      */
     public NodeInterpreter(Node node, IIActorSystem system) {
         super();
@@ -103,25 +110,24 @@ public class NodeInterpreter extends Interpreter {
     /**
      * Executes a command on the remote node via SSH.
      *
-     * <p>Delegates to the wrapped {@link Node#executeCommand(String)} method.</p>
+     * Returns a {@link Node.CommandResult} containing the exit code, stdout, and stderr of the execution.
      *
-     * @param command the command to execute
-     * @return the result of the command execution
-     * @throws IOException if SSH connection fails
+     * An {@link IOException} is thrown if the SSH connection fails.
+     *
+     * @param command the command string to execute on the remote host
+     * @return the result of the command execution, including its exit status and output
      */
     public Node.CommandResult executeCommand(String command) throws IOException {
         return node.executeCommand(command);
     }
 
     /**
-     * Executes a command on the remote node via SSH with real-time output callback.
-     *
-     * <p>Delegates to the wrapped {@link Node#executeCommand(String, Node.OutputCallback)} method.</p>
+     * Executes a command on the remote node via SSH and provides real-time access to its output through a callback.
      *
      * @param command the command to execute
-     * @param callback the callback for real-time output (may be null)
-     * @return the result of the command execution
-     * @throws IOException if SSH connection fails
+     * @param callback the callback for real-time output, which may be null if no streaming is desired
+     * @return the result of the command execution, containing the exit code and captured stdout/stderr
+     * @throws IOException if the SSH connection fails or an I/O error occurs during execution
      */
     public Node.CommandResult executeCommand(String command, Node.OutputCallback callback) throws IOException {
         return node.executeCommand(command, callback);
@@ -130,111 +136,101 @@ public class NodeInterpreter extends Interpreter {
     /**
      * Executes a command with sudo privileges on the remote node.
      *
-     * <p>Delegates to the wrapped {@link Node#executeSudoCommand(String)} method.
-     * Requires SUDO_PASSWORD environment variable to be set.</p>
+     * Returns a {@link Node.CommandResult} containing the exit code and output of the command.
+     *
+     * An {@link IOException} is thrown if the SSH connection fails or if the {@code SUDO_PASSWORD} environment
+     * variable is not set.
      *
      * @param command the command to execute with sudo
      * @return the result of the command execution
-     * @throws IOException if SSH connection fails or SUDO_PASSWORD is not set
+     * @throws IOException if the SSH connection fails or if {@code SUDO_PASSWORD} is not set
      */
     public Node.CommandResult executeSudoCommand(String command) throws IOException {
         return node.executeSudoCommand(command);
     }
 
     /**
-     * Executes a command with sudo privileges on the remote node with real-time output callback.
+     * Executes a command with sudo privileges on the remote node and sends its output to the specified callback.
      *
-     * <p>Delegates to the wrapped {@link Node#executeSudoCommand(String, Node.OutputCallback)} method.
-     * Requires SUDO_PASSWORD environment variable to be set.</p>
+     * Returns a {@link Node.CommandResult} containing the exit code and the combined stdout and stderr of the command.
+     *
+     * Requires the {@code SUDO_PASSWORD} environment variable to be set.
      *
      * @param command the command to execute with sudo
-     * @param callback the callback for real-time output (may be null)
-     * @return the result of the command execution
-     * @throws IOException if SSH connection fails or SUDO_PASSWORD is not set
+     * @param callback the callback for real-time output, which may be null
+     * @return a result containing the exit code and output of the command
+     * @throws IOException if the SSH connection fails or the {@code SUDO_PASSWORD} environment variable is not set
      */
     public Node.CommandResult executeSudoCommand(String command, Node.OutputCallback callback) throws IOException {
         return node.executeSudoCommand(command, callback);
     }
 
-    /**
-     * Gets the hostname of the node.
-     *
-     * @return the hostname
-     */
+    /** Returns the hostname of the remote node. */
     public String getHostname() {
         return node.getHostname();
     }
 
-    /**
-     * Gets the username for SSH connections.
-     *
-     * @return the username
-     */
+    /** Returns the username used for SSH connections. */
     public String getUser() {
         return node.getUser();
     }
 
-    /**
-     * Gets the SSH port.
-     *
-     * @return the SSH port number
-     */
+    /** Returns the SSH port number used for the connection. */
     public int getPort() {
         return node.getPort();
     }
 
     /**
-     * Gets the wrapped Node instance.
+     * Returns the underlying {@link Node} instance.
      *
-     * <p>This allows direct access to the underlying POJO when needed.</p>
+     * <p>Use this to access the core SSH functionality directly when workflow-level features are not required.</p>
      *
-     * @return the wrapped Node
+     * @return the wrapped {@link Node} instance
      */
     public Node getNode() {
         return node;
     }
 
     /**
-     * Sets the overlay directory for YAML overlay feature.
+     * Sets the directory path used for the YAML overlay feature.
      *
-     * @param overlayDir the path to the overlay directory containing overlay-conf.yaml
+     * @param overlayDir the path to the directory containing {@code overlay-conf.yaml}
      */
     public void setOverlayDir(String overlayDir) {
         this.overlayDir = overlayDir;
     }
 
     /**
-     * Gets the overlay directory path.
-     *
-     * @return the overlay directory path, or null if not set
+     * Returns the path to the directory containing the YAML overlay configuration, or {@code null} if no overlay is
+     * configured.
      */
     public String getOverlayDir() {
         return overlayDir;
     }
 
     /**
-     * Sets the WorkflowStreamingAccumulator for cowsay display.
+     * Sets the accumulator that renders cowsay-style visual transitions during workflow execution.
      *
-     * @param accumulator the accumulator to use for cowsay display
+     * @param accumulator the object that renders the cowsay output
      */
     public void setAccumulator(WorkflowStreamingAccumulator accumulator) {
         this.accumulator = accumulator;
     }
 
     /**
-     * Gets the WorkflowStreamingAccumulator for cowsay display.
-     *
-     * @return the cowsay accumulator, or null if not set
+     * Returns the {@link WorkflowStreamingAccumulator} used to render workflow transitions as cowsay art, or {@code
+     * null} if no accumulator is set.
      */
     public WorkflowStreamingAccumulator getAccumulator() {
         return accumulator;
     }
 
     /**
-     * Hook called when entering a transition during workflow execution.
+     * Triggers a visual notification to the output multiplexer when a workflow enters a new transition.
      *
-     * <p>Displays the workflow name and first 10 lines of the transition definition
-     * in YAML format using cowsay to provide visual separation between workflow steps.</p>
+     * <p>The notification contains the workflow name and the first 10 lines of the transition definition in YAML
+     * format, rendered as a cowsay message if a {@link WorkflowStreamingAccumulator} is set. If no accumulator is set,
+     * the notification is sent as plain text. The output is sent to the {@code outputMultiplexer} actor.</p>
      *
      * @param transition the transition being entered
      */
@@ -271,14 +267,15 @@ public class NodeInterpreter extends Interpreter {
     }
 
     /**
-     * Hook called after a transition completes (success or failure).
+     * Sends a transition report to the {@code outputMultiplexer} after a transition finishes.
      *
-     * <p>Logs the transition result to the outputMultiplexer for
-     * workflow execution reporting.</p>
+     * <p>The report contains the transition label (or the state names if no label is present), the status (SUCCESS or
+     * FAILED), any transition note (truncated to 60 characters), and the result message (truncated to 500 characters).
+     * The report is sent as a JSON object with the type {@code transition-success} or {@code transition-failed}.</p>
      *
      * @param transition the transition that was attempted
-     * @param success true if the transition succeeded, false if it failed
-     * @param result the ActionResult from executing the transition's actions
+     * @param success whether the transition succeeded
+     * @param result the result of the transition's actions, which provides the message for the report
      */
     @Override
     protected void onExitTransition(Transition transition, boolean success, ActionResult result) {
@@ -314,8 +311,10 @@ public class NodeInterpreter extends Interpreter {
     }
 
     /**
-     * Gets the note from a transition, limited to 60 chars or first line.
-     * Returns empty string if no note is present.
+     * Returns a string that is the first line of the transition's note, truncated to 60 characters.
+     *
+     * An empty string is returned if the note is null or empty. If the note exceeds 60 characters, the result ends
+     * with "...".
      */
     private String getTransitionNote(Transition transition) {
         String note = transition.getNote();
@@ -334,24 +333,24 @@ public class NodeInterpreter extends Interpreter {
         return note.trim();
     }
 
-    /**
-     * Returns the current transition YAML snippet for accumulator reporting.
-     *
-     * @return the first 10 lines of the current transition in YAML format
-     */
+    /** Returns a string that is the first 10 lines of the current transition in YAML format. */
     public String getCurrentTransitionYaml() {
         return currentTransitionYaml;
     }
 
     /**
-     * Loads and runs a workflow file to completion with overlay support.
+     * Runs a workflow file to completion, optionally applying variables from an overlay directory.
      *
-     * <p>If overlayDir is set, the workflow is loaded with overlay applied.
-     * Variables defined in overlay-conf.yaml are substituted before execution.</p>
+     * Returns an {@link ActionResult} that is a success if the workflow reaches the "end" state, or a failure with an
+     * error message if an exception occurs or the workflow fails to complete.
      *
-     * @param workflowFile the workflow file path (YAML or JSON)
-     * @param maxIterations maximum number of state transitions allowed
-     * @return ActionResult with success=true if completed, false otherwise
+     * If an overlay directory is set via {@link #setOverlayDir(String)}, the workflow is loaded with variables from
+     * the {@code overlay-conf.yaml} in that directory substituted into the workflow definition before execution.
+     *
+     * @param workflowFile the path to the workflow file (YAML or JSON)
+     * @param maxIterations the maximum number of state transitions allowed before stopping
+     * @return an ActionResult indicating whether the workflow completed successfully and any error messages
+     * encountered
      */
     @Override
     public ActionResult runWorkflow(String workflowFile, int maxIterations) {
@@ -390,15 +389,22 @@ public class NodeInterpreter extends Interpreter {
     // ========================================================================
 
     /**
-     * Detects changed documents and stores them in POJO state.
+     * Identifies which documents in a list require processing by checking for new files or remote git changes, and
+     * stores their names in the actor's state.
      *
-     * <p>This method replaces the shell script that wrote to /tmp/changed_docs.txt.
-     * It reads the document list, checks git status for each, and stores changed
-     * document names in the changedDocuments set.</p>
+     * Returns an action result that is a success with a message containing the count of detected documents if the list
+     * was found and processed, and a failure if the file does not exist or an error occurs.
      *
-     * @param docListPath path to the document list file
-     * @return ActionResult with detection summary
-     * @throws IOException if file operations fail
+     * If the environment variable {@code FORCE_FULL_BUILD} is set to {@code true}, all documents in the list are
+     * marked as changed regardless of their actual status.
+     *
+     * @param docListPath the path to the file containing the list of document paths and optional git URLs, which may
+     * use {@code ~} to represent the home directory
+     *
+     * @return an action result that is a success with a message stating the number of detected documents, or a failure
+     * if the file is missing or an error occurs
+     *
+     * @throws IOException if an error occurs during file reading or git operations
      */
     public ActionResult detectDocumentChanges(String docListPath) throws IOException {
         // Clear previous results
@@ -484,10 +490,12 @@ public class NodeInterpreter extends Interpreter {
     }
 
     /**
-     * Checks git status for a document directory.
+     * Returns a status string indicating whether the document's remote repository has changes relative to the local
+     * version.
      *
-     * @param docPath path to the document directory
-     * @return status string like "[CHANGED]", "[UP-TO-DATE]", or "[UNKNOWN]"
+     * The result is one of "[CHANGED]", "[UP-TO-DATE]", or "[UNKNOWN]".
+     *
+     * @param docPath the path to the document directory
      */
     private String checkGitStatus(Path docPath) {
         try {
@@ -526,7 +534,12 @@ public class NodeInterpreter extends Interpreter {
     }
 
     /**
-     * Runs a git command and returns the output.
+     * Returns the first line of output from a git command executed in the specified directory.
+     *
+     * @param workDir the directory in which the command is executed
+     * @param command the command and its arguments to run
+     * @return the first line of the command's standard output, trimmed of whitespace, or "unknown" if the command
+     * fails or produces no output
      */
     private String runGitCommand(Path workDir, String... command) {
         try {
@@ -546,17 +559,17 @@ public class NodeInterpreter extends Interpreter {
     }
 
     /**
-     * Checks if a specific document is in the changed list.
+     * Returns true if the specified document name is among those detected as changed during the last document change
+     * detection.
      *
-     * @param docName the document name to check
-     * @return true if the document was detected as changed
+     * @param docName the name of the document to check
      */
     public boolean isDocumentChanged(String docName) {
         return changedDocuments.contains(docName);
     }
 
     /**
-     * Gets the number of changed documents.
+     * Returns the number of documents currently marked as changed.
      *
      * @return the count of changed documents
      */
@@ -565,48 +578,50 @@ public class NodeInterpreter extends Interpreter {
     }
 
     /**
-     * Gets all changed document names.
+     * Returns an unmodifiable set containing the names of the documents that were detected as changed.
      *
-     * @return unmodifiable set of changed document names
+     * @return a set of the names of the changed documents
      */
     public Set<String> getChangedDocuments() {
         return Set.copyOf(changedDocuments);
     }
 
     /**
-     * Checks if there are any changed documents to process.
-     *
-     * @return true if at least one document needs processing
+     * Returns true if the set of documents detected as changed by {@link #detectDocumentChanges(String)} is not empty.
      */
     public boolean hasChangedDocuments() {
         return !changedDocuments.isEmpty();
     }
 
-    /**
-     * Clears the changed documents list.
-     */
+    /** Removes all document names currently held in the changed documents list. */
     public void clearChangedDocuments() {
         changedDocuments.clear();
     }
 
     /**
-     * Adds a document to the changed list (for testing or manual override).
+     * Adds a document name to the set of documents marked for processing.
      *
-     * @param docName the document name to add
+     * @param docName the name of the document to add
      */
     public void addChangedDocument(String docName) {
         changedDocuments.add(docName);
     }
 
     /**
-     * Clones changed documents from git.
+     * Performs a fresh git clone of all documents identified as changed in the current session.
      *
-     * <p>Only clones documents that are in the changedDocuments set.
-     * Removes existing directory and does fresh clone to avoid conflicts.</p>
+     * Returns an action result that is a success with a message containing the number of cloned documents if at least
+     * one document was cloned or if no documents were marked as changed; it is a failure if the document list file is
+     * not found or if an I/O error occurs.
      *
-     * @param docListPath path to the document list file
-     * @return ActionResult with clone summary
-     * @throws IOException if operations fail
+     * If a document is in the changed list, it removes the existing directory at the specified path and executes a
+     * fresh git clone using the URL provided in the document list.
+     *
+     * @param docListPath the path to the file containing the list of document paths and their corresponding git URLs,
+     * where {@code ~} may be used to represent the home directory
+     *
+     * @return an action result indicating whether the cloning process completed, with a message stating the number of
+     * documents cloned
      */
     public ActionResult cloneChangedDocuments(String docListPath) throws IOException {
         if (changedDocuments.isEmpty()) {
@@ -659,13 +674,15 @@ public class NodeInterpreter extends Interpreter {
     }
 
     /**
-     * Builds changed Docusaurus documents.
+     * Runs {@code yarn install} and {@code yarn build} in the directories of documents identified as changed.
      *
-     * <p>Only builds documents that are in the changedDocuments set.</p>
+     * <p>Returns an ActionResult that is a success if the build process for the documents was attempted, with a
+     * message containing the count of successfully built documents; it is not a success if an {@link IOException}
+     * occurs or if the document list cannot be read.</p>
      *
-     * @param docListPath path to the document list file
-     * @return ActionResult with build summary
-     * @throws IOException if operations fail
+     * @param docListPath the path to the file containing the list of document directories
+     * @return an ActionResult where success is true and the message holds the number of built documents
+     * @throws IOException if the document list file cannot be read or accessed
      */
     public ActionResult buildChangedDocuments(String docListPath) throws IOException {
         if (changedDocuments.isEmpty()) {
@@ -710,13 +727,17 @@ public class NodeInterpreter extends Interpreter {
     }
 
     /**
-     * Copies changed document builds to public_html.
+     * Copies the built versions of changed documents to the {@code ~/public_html} directory on the remote node.
      *
-     * <p>Only copies documents that are in the changedDocuments set.</p>
+     * <p>Returns an ActionResult that is a success if the deployment process completes, with a message containing the
+     * number of documents copied. If no documents are marked as changed, it returns a success result stating that no
+     * documents were copied. If an I/O error occurs, it throws an IOException.</p>
      *
-     * @param docListPath path to the document list file
-     * @return ActionResult with copy summary
-     * @throws IOException if operations fail
+     * @param docListPath the path to the file listing the document directories, which may include {@code ~} for the
+     * home directory
+     *
+     * @return an ActionResult that is a success if the deployment process completes, with a message containing the
+     * number of documents copied; otherwise, a failure result with an error message
      */
     public ActionResult deployChangedDocuments(String docListPath) throws IOException {
         // Ensure public_html exists

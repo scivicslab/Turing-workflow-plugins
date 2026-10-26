@@ -13,20 +13,39 @@ import java.util.TreeMap;
 import java.util.logging.Logger;
 
 /**
- * OCR結果のページ集合と読み出し位置 を保持する素のオブジェクト。アクターとして動かすのは OcrActor の役目であり、
- * 「アクターであること」はこのクラスの性質ではない（ActorSuffixAndOwnedActorRef_260722_oo01）。
+ * Reads OCR TSV files and yields the kanji text of one page at a time. The TSV format must contain a hiragana column
+ * (which is ignored), a kanji column, and a page number column.
  *
- * Actor that reads OCR TSV files and provides page text one page at a time.
- *
- * <p>OCR TSV format: hiragana TAB kanji TAB page (hiragana column is always empty).</p>
- *
- * <p>Supported actions:</p>
  * <ul>
- *   <li>{@code loadFile} - Load a single OCR TSV file</li>
- *   <li>{@code nextPage} - Advance to next page; returns fail when exhausted</li>
- *   <li>{@code getPageText} - Get current page OCR text (newline-joined fragments)</li>
- *   <li>{@code getPageInfo} - Get current page number and source filename</li>
+ * <li>{@code loadFile} - Loads a single OCR TSV file and resets the current page position.</li>
+ * <li>{@code nextPage} - Advances to the next available page; returns a failure if no more pages exist.</li>
+ * <li>{@code getPageText} - Returns the kanji text of the current page as a single string with fragments joined by
+ * newlines.</li>
+ * <li>{@code getPageInfo} - Returns the current page number and the source filename as a tab-separated string.</li>
  * </ul>
+ *
+ * <p>The object holds the loaded pages and the current position in the file. A new file must be loaded via {@code
+ * loadFile} before {@code nextPage} or other actions can succeed.</p>
+ *
+ * <p>One instance serves one workflow at a time, as the state of the current page is held within the instance.</p>
+ *
+ * <p>Example workflow usage:</p>
+ * <pre>{@code
+ * actor: ocr_pages
+ * method: loadFile
+ * arguments:
+ *   filePath: "data/book.tsv"
+ * ---
+ * actor: ocr_pages
+ * method: nextPage
+ * ---
+ * actor: ocr_pages
+ * method: getPageText
+ * }</pre>
+ *
+ * <p>If {@code loadFile} fails due to an invalid path or an {@code IOException}, the action result is a failure. If
+ * {@code nextPage} is called when no pages remain, or if {@code getPageText} or {@code getPageInfo} are called before
+ * any page is loaded, the actions return a failure.</p>
  */
 public class OcrPages {
 
@@ -39,7 +58,11 @@ public class OcrPages {
     private int currentPageNum = -1;
 
     /**
-     * Load an OCR TSV file. Groups kanji-column text by page number.
+     * Loads an OCR TSV file and groups the kanji-column text by page number.
+     *
+     * @param filePath the path to the TSV file to be loaded
+     * @return a success result with a message containing the number of pages loaded if the file was read successfully,
+     * or a failure result with an error message if the path is blank or the file cannot be read
      */
     public ActionResult loadFile(String filePath) {
         if (filePath == null || filePath.isBlank()) {
@@ -76,8 +99,13 @@ public class OcrPages {
     }
 
     /**
-     * Advance to the next page. Returns failure (false) when all pages are exhausted.
-     * This causes the workflow to try the next row (e.g., transition to end state).
+     * Advances to the next page in the loaded file.
+     *
+     * Returns a success result with a message containing the new page number if a next page exists; otherwise, returns
+     * a failure result with the message "No more pages" if all pages have been exhausted.
+     *
+     * @return an action result that is a success with the new page number as its message, or a failure if no more
+     * pages are available
      */
     public ActionResult nextPage() {
         currentPageIndex++;
@@ -91,7 +119,13 @@ public class OcrPages {
     }
 
     /**
-     * Get the OCR text of the current page (fragments joined by newlines).
+     * Returns the OCR text of the current page as a single string with fragments joined by newlines.
+     *
+     * <p>A failure is returned if no page has been loaded via {@code nextPage} or if the current page contains no
+     * text.</p>
+     *
+     * @return an action result that is a success with the newline-joined text as its message, or a failure if the page
+     * is not loaded or is empty.
      */
     public ActionResult getPageText() {
         if (currentPageNum < 0) {
@@ -106,7 +140,10 @@ public class OcrPages {
     }
 
     /**
-     * Get metadata about the current page: "pageNum\tsourceFile".
+     * Returns a string containing the current page number and the source filename separated by a tab.
+     *
+     * @return an action result that is a success containing the page number and filename as "pageNum\tsourceFile" if a
+     * page is loaded, or a failure if no page has been loaded via {@code nextPage}.
      */
     public ActionResult getPageInfo() {
         if (currentPageNum < 0) {

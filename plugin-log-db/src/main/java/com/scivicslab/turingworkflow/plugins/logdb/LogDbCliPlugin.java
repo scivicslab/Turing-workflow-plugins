@@ -21,14 +21,15 @@ import com.scivicslab.pluggablecli.CliPlugin;
 import com.scivicslab.pluggablecli.CommandRepository;
 
 /**
- * CLI command plugin for the log database: contributes the {@code log-search} subcommand to
- * the host CLI via the pluggable-cli {@code ServiceLoader} mechanism.
+ * Adds the log database management commands to the host CLI.
  *
- * <p>The host (turing-workflow {@code App}) discovers this plugin from the JAR's
- * {@code META-INF/services/com.scivicslab.pluggablecli.CliPlugin} entry and calls
- * {@link #registerCommands(CommandRepository)} at startup, which registers the command
- * defined in {@link LogsCLI}. The command then appears in the host's command list and its
- * {@code -h} help.</p>
+ * <p>The plugin provides the following subcommands to the host application:
+ * <ul>
+ * <li>{@code log-search}: searches the H2 database for logs.</li>
+ * <li>{@code log-merge}: merges log files.</li>
+ * <li>{@code db-clear}: clears the log database.</li>
+ * <li>{@code log-serve}: serves the logs.</li>
+ * </ul>
  *
  * @author devteam@scivicslab.com
  * @since 1.5.0
@@ -60,19 +61,11 @@ public class LogDbCliPlugin implements CliPlugin {
     }
 
     /**
-     * Registers the H2 JDBC driver with {@link java.sql.DriverManager}.
+     * Registers the H2 JDBC driver with the system's driver manager so that database connections can be established.
      *
-     * <p>When this plugin JAR is loaded through a child {@link ClassLoader} (as the host does
-     * for plugins), the H2 driver is not auto-discovered by {@code DriverManager}, whose service
-     * lookup runs against the system class path. Loading the driver class here, from this
-     * plugin's class loader, registers it so that {@code DriverManager.getConnection} called
-     * from this plugin's code can find it.</p>
-     *
-     * <p>This JAR does not contain H2; the host resolves one JAR per plugins-config entry and
-     * does not follow a plugin's transitive dependencies. The host's plugins config must
-     * therefore list {@code com.h2database:h2} as its own entry, which puts H2 on the same
-     * plugin class loader. Without that entry the class below is absent and every command in
-     * this plugin fails with {@code No suitable driver found for jdbc:h2:...}.</p>
+     * <p>If the H2 driver is not found on the plugin's class path, it prints a warning to standard error. This occurs
+     * if the host's plugins configuration does not include {@code com.h2database:h2} as a dependency, in which case
+     * all database-related commands in this plugin will fail with a "No suitable driver found" error.</p>
      */
     private static void ensureH2Driver() {
         try {

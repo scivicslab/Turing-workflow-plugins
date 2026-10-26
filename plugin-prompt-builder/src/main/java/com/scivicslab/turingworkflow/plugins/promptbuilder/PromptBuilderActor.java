@@ -8,23 +8,47 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * Runs a {@link PromptBuffer} as an actor and exposes its operations to workflow YAML.
+ * Assembles structured prompts for LLMs by accumulating constraints, context, and a task message into a single
+ * formatted string.
  *
- * <p>Workflow steps call {@code addWarning}/{@code addContext}/{@code addMessage} in sequence and
- * then {@code build}, which puts the assembled prompt in {@code ${result}}. Constraints are stated
- * in the prompt every time rather than left to the model's memory of an earlier turn.</p>
+ * <ul><li>{@code addWarning} adds a text item to the [Constraints] section.</li><li>{@code addContext} adds a text
+ * item to the [Background] section.</li><li>{@code addMessage} sets the [Message] section.</li><li>{@code build}
+ * returns the complete formatted prompt as a single string in {@code ${result}}.</li><li>{@code clear} resets all
+ * sections and the buffer.</li><li>{@code getWarningCount} and {@code getContextCount} return the number of items in
+ * each section.</li><li>{@code getWarning} and {@code getContext} return the item at the specified zero-based
+ * index.</li><li>{@code getNextWarning} and {@code getNextContext} return the next available item in each
+ * section.</li><li>{@code resetCursor} resets the iteration cursors for warnings and contexts.</li><li>{@code
+ * getMessage} returns the current task message.</li><li>{@code buildMessages} returns a JSON-formatted array of
+ * messages containing the constraints, background, and a user message containing the provided history and
+ * task.</li></ul>
  *
- * <p>This class holds no state. It converts workflow arguments (which arrive as JSON) into plain
- * strings, calls {@link PromptBuffer}, and turns the answer back into an {@link ActionResult}.
- * The state lives in the wrapped {@code PromptBuffer}, which is what {@code ActorRef} expects: an
- * actor is a plain object plus the reference that runs it. Keeping the state here instead — with
- * {@code null} passed as the wrapped object — left the actor reporting itself as not alive and
- * made {@code tell}/{@code ask} against it fail silently.</p>
+ * <p>The actor holds a {@link PromptBuffer} that maintains the state of the current prompt being built. One instance
+ * serves one workflow at a time, but several actors can run in parallel across different workflows.</p>
+ *
+ * <pre>{@code
+ * - actor: promptBuilder
+ *   method: addWarning
+ *   arguments: "Do not modify files unless explicitly instructed."
+ * - actor: promptBuilder
+ *   method: addContext
+ *   arguments: "Repository: oogasawa/k8s-tree"
+ * - actor: promptBuilder
+ *   method: addMessage
+ *   arguments: "${task}"
+ * - actor: promptBuilder
+ *   method: build
+ * }</pre>
+ *
+ * <p>The {@code build} action fails if {@code addMessage} has not been called. {@code addWarning} and {@code
+ * addContext} fail if the provided text is blank. {@code getWarning} and {@code getContext} return a failure if the
+ * index is out of range.</p>
  */
 public class PromptBuilderActor extends IIActorRef<PromptBuffer> {
 
     /**
-     * @param name   this actor's registry name
+     * Initializes a new prompt builder actor with a fresh, empty buffer.
+     *
+     * @param name the registry name for this actor
      * @param system the actor system it belongs to
      */
     public PromptBuilderActor(String name, IIActorSystem system) {
@@ -36,16 +60,16 @@ public class PromptBuilderActor extends IIActorRef<PromptBuffer> {
     }
 
     /**
-     * A piece of text to add to the buffer.
+     * Holds the text to be added to a section of the prompt buffer.
      *
-     * @param text the text to add
+     * @param text the text to be added to the constraints, context, or message section
      */
     public record TextArgs(@NotNull String text) {}
 
     /**
-     * A position in one of the buffer's lists.
+     * Represents a zero-based position within one of the buffer's lists.
      *
-     * @param index zero-based position
+     * @param index the zero-based position in the list
      */
     public record IndexArgs(@NotNull Integer index) {}
 
@@ -152,9 +176,24 @@ public class PromptBuilderActor extends IIActorRef<PromptBuffer> {
     }
 
     /**
-     * Puts the request's {@code messages} array in {@code ${result}}: a system message with the
-     * constraints and background, the history given as the argument, and the message body as the
-     * user message. Pass {@code []} for no history.
+     * Returns a JSON array of messages for an LLM chat completion, containing a system message with the current
+     * constraints and background, the conversation history provided in the argument, and the task body as a user
+     * message.
+     *
+     * <p>The result is a string representing the messages array, where the history is formatted as a JSON array of
+     * objects. If the argument is an empty array {@code []}, no history is included.</p>
+     *
+     * <p>Returns a failure if {@code addMessage} has not been called.</p>
+     *
+     * <pre>{@code
+     * - actor: promptBuilder
+     *   method: buildMessages
+     *   arguments: '{"text": "[{\"role\": \"user\", \"content\": \"hi\"}]"}'
+     * }</pre>
+     *
+     * @param args a {@link TextArgs} object containing the conversation history as a JSON string.
+     * @return a success result with the JSON array of messages in its message, or a failure result if {@code
+     * addMessage} was not called or if the input is invalid.
      */
     @Action(value = "buildMessages", argsType = TextArgs.class)
     public ActionResult buildMessages(TextArgs args) {

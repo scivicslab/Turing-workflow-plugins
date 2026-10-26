@@ -8,18 +8,24 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * {@link OpenAlexClient} をアクターとして動かし、その操作をワークフローYAMLへ公開する。
+ * Provides access to the OpenAlex database for searching papers, authors, and retrieving metadata or PDF URLs.
  *
- * <p>状態は持たない。持つのは包んだ {@code OpenAlexClient} のほうであり、これが {@code ActorRef} の
- * 前提である——アクターとは、素のオブジェクトと、それを動かす参照の対である。状態をこちら側に置き
- * {@code null} を包むと、{@code isAlive()} が偽を返し、{@code tell}/{@code ask} が黙って失敗する
- * （{@code ActorSuffixAndOwnedActorRef_260722_oo01} 「実例（2026-08-30）」）。</p>
+ * <ul><li >{@code setEmail}: sets the email address to be included in the user agent for requests</li><li >{@code
+ * searchWorks}: searches for works matching a query and returns a list</li><li >{@code searchWorksTopK}: searches for
+ * works with a specific count and sort order</li><li >{@code getWork}: returns a single work and its abstract by its
+ * identifier or DOI</li><li >{@code getPdfUrl}: returns the URL for the work's PDF</li><li >{@code searchAuthors}:
+ * searches for authors matching a query</li></ul>
+ *
+ * <p>The actor itself is stateless; all state is held within the underlying {@link OpenAlexClient}. One instance may
+ * serve several workflows at once.</p>
  */
 public class OpenAlexActor extends IIActorRef<OpenAlexClient> {
 
     /**
-     * @param name   このアクターの登録名
-     * @param system 所属するアクターシステム
+     * Initializes a new OpenAlex actor that performs bibliographic searches and paper lookups via the OpenAlex API.
+     *
+     * @param name the name used to call this actor in a workflow
+     * @param system the actor system this actor belongs to
      */
     public OpenAlexActor(String name, IIActorSystem system) {
         super(name, new OpenAlexClient(), system);
@@ -34,32 +40,31 @@ public class OpenAlexActor extends IIActorRef<OpenAlexClient> {
      * @return 包んだオブジェクトが返した結果
      */
     /**
-     * The address OpenAlex asks callers to send along with each request.
+     * The email address that OpenAlex asks callers to include with each request.
      *
      * @param email the caller's mail address
      */
     public record EmailArgs(@NotNull String email) {}
 
     /**
-     * What to search OpenAlex for.
+     * The search terms to use for an OpenAlex query.
      *
      * @param query the search terms
      */
     public record QueryArgs(@NotNull String query) {}
 
     /**
-     * What to search for, how many papers to return, and in what order.
+     * Arguments for a search that specifies the query, the number of papers to return, and the sort order.
      *
-     * @param query   the search terms
-     * @param perPage how many papers to return; ten when absent
-     * @param sort    the ordering: {@code citations}, {@code relevance}, {@code newest},
-     *                or an OpenAlex sort string such as {@code publication_date:desc};
-     *                most cited first when absent
+     * @param query the search terms
+     * @param perPage the number of papers to return
+     * @param sort the ordering, such as {@code citations}, {@code relevance}, {@code newest}, or an OpenAlex sort
+     * string like {@code publication_date:desc}
      */
     public record TopWorksArgs(@NotNull String query, Integer perPage, String sort) {}
 
     /**
-     * Which paper to look up.
+     * The OpenAlex identifier or DOI of the paper to look up.
      *
      * @param id the paper's OpenAlex identifier or its DOI
      */
@@ -71,8 +76,12 @@ public class OpenAlexActor extends IIActorRef<OpenAlexClient> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Searches OpenAlex for works matching the query.
+     *
+     * @param args the search terms
+     *
+     * @return an action result that is a success if the search completed, with the results in its message, and is not
+     * a success otherwise
      */
     @Action(value = "searchWorks", argsType = QueryArgs.class)
     public ActionResult searchWorks(QueryArgs args) {
@@ -80,8 +89,11 @@ public class OpenAlexActor extends IIActorRef<OpenAlexClient> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Searches OpenAlex for works with a specified number of results and an ordering.
+     *
+     * @param args the arguments containing the search terms, the number of papers to return, and the sort order
+     * @return an action result that is a success and contains the list of works if the search succeeded, or a failure
+     * message if it did not
      */
     @Action(value = "searchWorksTopK", argsType = TopWorksArgs.class)
     public ActionResult searchWorksTopK(TopWorksArgs args) {
@@ -89,8 +101,11 @@ public class OpenAlexActor extends IIActorRef<OpenAlexClient> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Returns a single paper's details, including its abstract, from OpenAlex.
+     *
+     * @param args the argument object containing the paper's OpenAlex identifier or its DOI
+     * @return an action result that is a success and contains the paper's details, or a failure if the paper is not
+     * found or the request fails
      */
     @Action(value = "getWork", argsType = WorkArgs.class)
     public ActionResult getWork(WorkArgs args) {
@@ -98,8 +113,11 @@ public class OpenAlexActor extends IIActorRef<OpenAlexClient> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Returns the URL of the paper's PDF if an open access version is available.
+     *
+     * @param args the paper's OpenAlex identifier or its DOI
+     * @return an action result that is a success and contains the URL if found, or is not a success if no PDF URL is
+     * available
      */
     @Action(value = "getPdfUrl", argsType = WorkArgs.class)
     public ActionResult getPdfUrl(WorkArgs args) {
@@ -107,8 +125,12 @@ public class OpenAlexActor extends IIActorRef<OpenAlexClient> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Searches OpenAlex for authors matching the query and returns a list of results.
+     *
+     * @param args a record containing the search terms in {@code query()}
+     *
+     * @return an action result that is a success containing the list of authors, or a failure if the search could not
+     * be completed
      */
     @Action(value = "searchAuthors", argsType = QueryArgs.class)
     public ActionResult searchAuthors(QueryArgs args) {

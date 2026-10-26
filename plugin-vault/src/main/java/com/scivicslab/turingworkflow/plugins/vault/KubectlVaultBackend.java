@@ -20,8 +20,21 @@ package com.scivicslab.turingworkflow.plugins.vault;
 import java.io.IOException;
 
 /**
- * {@link VaultBackend} that reads secrets via {@code kubectl exec} into a Vault pod.
- * Used when Vault is ClusterIP-only inside a k8s cluster.
+ * Fetches secrets from HashiCorp Vault by executing {@code kubectl exec} into a specific Kubernetes pod.
+ *
+ * <p>Use this when Vault is only accessible via ClusterIP within a cluster and cannot be reached via HTTP.
+ *
+ * <ul>
+ * <li>{@code get(path, fieldName)} returns the value of the specified field from the KV v2 secret at the given
+ * path.</li>
+ * </ul>
+ *
+ * <p>The class holds the target namespace and pod name.
+ *
+ * <p>One instance may serve several workflows or threads at once.
+ *
+ * <p>An action fails if the {@code kubectl} command returns a non-zero exit code or if the execution fails, returning
+ * a failure result with the error message.
  */
 public class KubectlVaultBackend implements VaultBackend {
 

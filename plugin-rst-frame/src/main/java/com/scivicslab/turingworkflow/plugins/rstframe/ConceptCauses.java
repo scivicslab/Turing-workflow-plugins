@@ -16,44 +16,77 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The causes and motives of a section's concepts ({@code FrameDataWorkflow_261024_oo01}, step 2): every nucleus of the
- * section's rule file with a satellite joined to it by a relation of cause or motive (reason, consequence, result, cause,
- * purpose, enablement, means, problem-solution, explanation-argumentative) is a pair of sentences; one question per
- * section shows the pairs, numbered, each with the main concept of the group its block is in, and asks for each pair the
- * concept on the side of the cause (or the motive) and the concept on the side of the effect (or what is done for it).
+ * Identifies and links pairs of sentences in a section's rule file that express causal or motivational relationships
+ * between concepts.
+ *
+ * <ul><li>{@link #pairs(String, Map<String, String})} returns a list of {@link Pair} objects representing every
+ * nucleus and satellite joined by a cause or motive relation.</li><li>{@link #question(BookOutline.Node, List,
+ * Map<String, String>, Map<String, String>)} returns a text prompt for an LLM that presents the section's blocks and
+ * asks for the concepts tied by each pair.</li><li>{@link #read(String, List, Map<String, Integer>)} returns a list of
+ * {@link Link} objects extracted from an LLM's reply, matching the input pairs.</li><li>{@link #askAll(BookStore,
+ * String, List, Function, int, Consumer)} asks the LLM about every section in a book that lacks causal data and saves
+ * the results to the database.</li></ul>
+ *
+ * <p>One instance of this class is stateless and may serve several workflows or threads at once.</p>
  */
 public final class ConceptCauses {
 
-    /** The relations of cause and motive. */
+    /** The set of relation names used to identify cause and motive connections in a section's rule file. */
     public static final Set<String> RELATIONS = Set.of("reason", "consequence-n", "consequence-s", "result", "cause", "purpose",
             "enablement", "means", "problem-solution-n", "problem-solution-s", "explanation-argumentative");
 
-    /** A cause makes its effect happen; a motive is what something is done for. */
+    /** Represents the label for a relation where the first concept makes the second happen or leads to it. */
     public static final String CAUSE = "cause";
     public static final String MOTIVE = "motive";
 
-    /** One nucleus and one satellite joined by a relation of cause or motive, in the block they are in. */
+    /**
+     * A single nucleus and satellite sentence from a rule file, joined by a relation of cause or motive, and the name
+     * of the block containing them.
+     *
+     * @param block the name of the block in which these sentences appear
+     * @param relation the name of the relation joining the nucleus and satellite
+     * @param nucleusRule the name of the rule for the nucleus sentence
+     * @param nucleus the text of the nucleus sentence
+     * @param satelliteRule the name of the rule for the satellite sentence
+     * @param satellite the text of the satellite sentence
+     */
     public record Pair(String block, String relation, String nucleusRule, String nucleus, String satelliteRule, String satellite) {}
 
     /**
-     * What a pair says of two concepts.
+     * Represents the connection between two concepts identified in a pair of sentences, specifying whether the
+     * relationship is a cause or a motive.
      *
-     * @param group the ordinal of the group the pair's block is in, 0 when it is in none
-     * @param kind  cause or motive
-     * @param from  the concept on the side of the cause or the motive
-     * @param to    the concept on the side of the effect, or of what is done for the motive
+     * @param group the ordinal of the group the pair's block is in, or 0 if it is in no group
+     * @param relation the name of the relation from the rule file
+     * @param kind either {@link #CAUSE} or {@link #MOTIVE}
+     * @param from the concept on the side of the cause or the motive
+     * @param to the concept on the side of the effect, or of what is done for the motive
+     * @param nucleusRule the name of the nucleus rule
+     * @param satelliteRule the name of the satellite rule
      */
     public record Link(int group, String relation, String kind, String from, String to, String nucleusRule, String satelliteRule) {}
 
     private ConceptCauses() {
     }
 
-    /** @return the pairs of cause and motive of the rule file, in file order */
+    /**
+     * Returns the pairs of sentences from the rule file that are joined by a relation of cause or motive, in file
+     * order.
+     */
     public static List<Pair> pairs(String rules, Map<String, String> code) {
         return pairs(rules, code, RELATIONS);
     }
 
-    /** @return the pairs of the rule file whose satellite is joined to its nucleus by one of {@code relations}, in file order */
+    /**
+     * Returns a list of sentence pairs from the rule file where the satellite is joined to the nucleus by one of the
+     * specified relations.
+     *
+     * @param rules the text of the section's rule file
+     * @param code a map of symbol names to their source code text
+     * @param relations a set of relation names to filter by, such as those in {@link #RELATIONS}
+     * @return a list of {@link Pair} objects containing the nucleus and satellite sentences, their relation, and the
+     * block name, in the order they appear in the file
+     */
     public static List<Pair> pairs(String rules, Map<String, String> code, Set<String> relations) {
         RuleFile f = RuleFile.parse(rules);
         List<Pair> out = new ArrayList<>();
@@ -94,16 +127,28 @@ public final class ConceptCauses {
         }
     }
 
-    /** As {@link #question(BookOutline.Node, List, Map, Map)}, with the blocks shown only by their pairs. */
+    /**
+     * Returns a string that is a prompt for an LLM to identify the causal or motivational links between concepts in a
+     * textbook section, showing only the blocks that contain the given pairs.
+     *
+     * @param node the section node containing the book number and title
+     * @param pairs the list of nucleus-satellite sentence pairs to be presented
+     * @param concepts a mapping from block names to the main concept of the group they belong to
+     * @return a formatted prompt containing the section title, block names, main concepts, and the specific sentence
+     * pairs to be analyzed
+     */
     public static String question(BookOutline.Node node, List<Pair> pairs, Map<String, String> concepts) {
         return question(node, pairs, concepts, Map.of());
     }
 
     /**
-     * @param concepts the main concept of the group each block is in, by block; a block in no group is absent
-     * @param blocks   each block's sentences labelled by their relation to its nucleus, by block, shown above its pairs so
-     *                 that a pair is read with the rest of its block
-     * @return the question for one section's pairs
+     * Returns a string that is a prompt for an LLM to identify the concepts tied by cause or motive in a textbook
+     * section.
+     *
+     * @param node the section object containing the number and title
+     * @param pairs the list of nucleus-satellite sentence pairs to be queried
+     * @param concepts a mapping from block names to the main concept of the group each block belongs to
+     * @param blocks a mapping from block names to the text of the sentences in those blocks
      */
     public static String question(BookOutline.Node node, List<Pair> pairs, Map<String, String> concepts, Map<String, String> blocks) {
         StringBuilder sb = new StringBuilder();
@@ -144,7 +189,19 @@ public final class ConceptCauses {
         return s.length() > 300 ? s.substring(0, 300) + " ..." : s;
     }
 
-    /** @return the links the reply gives, in pair order; a pair the reply leaves out or gets wrong has none */
+    /**
+     * Parses a text reply into a list of identified cause and motive links.
+     *
+     * The result is a list of {@link Link} objects corresponding to the pairs in the input list that were successfully
+     * matched in the reply, in the order they appear in the input list.
+     *
+     * A pair that is not mentioned in the reply, or is formatted incorrectly, is omitted from the result.
+     *
+     * @param reply the text response from the LLM
+     * @param pairs the list of available sentence pairs to be matched
+     * @param groups a mapping from block names to their group ordinals (0 if the block is in no group)
+     * @return a list of links representing the identified relations between concepts
+     */
     public static List<Link> read(String reply, List<Pair> pairs, Map<String, Integer> groups) {
         Map<Integer, Link> by = new LinkedHashMap<>();
         Matcher m = Pattern.compile("(?im)^\\W*p(\\d+)\\W*\\|\\s*\\W*(cause|motive)\\W*\\|\\s*(.+?)\\s*\\|\\s*(.+?)\\s*$").matcher(reply);
@@ -165,11 +222,26 @@ public final class ConceptCauses {
     }
 
     /**
-     * Asks the links of every section that has groups and none yet ({@code only} empty), or of the sections named,
-     * {@code parallel} at a time, and stores each section's as soon as they are read. A section without a pair of cause
-     * or motive is stored with none, so a run started again skips it.
+     * Asks the local LLM to identify the causal and motivational links between concepts in the specified book's
+     * sections and saves the results to the {@code store}.
      *
-     * @return how many sections were asked and how many links of each kind they gave, in one line
+     * <p>If {@code only} is empty, it asks only for sections that have not yet been processed; otherwise, it asks only
+     * for the sections listed in {@code only}.
+     *
+     * <p>Returns a single line stating the total number of sections asked, the number of links identified as causes,
+     * the number of links identified as motives, and the number of sections that failed.
+     *
+     * <p>A section with no pairs of cause or motive is still processed and stored with an empty list of links, so
+     * subsequent runs will skip it.
+     *
+     * @param store the database containing the book's outline, rules, and results
+     * @param book the name of the book to process
+     * @param only a list of section numbers to process; if empty, all unprocessed sections are processed
+     * @param writer a function that takes the generated question text and returns the LLM's response
+     * @param parallel the maximum number of sections to process simultaneously
+     * @param log a consumer for progress and error messages
+     * @return a summary string: "X section(s) of [book] asked: Y cause(s), Z motive(s), W failed"
+     * @throws Exception if an error occurs during the orchestration or database operations
      */
     public static String askAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
             Consumer<String> log) throws Exception {

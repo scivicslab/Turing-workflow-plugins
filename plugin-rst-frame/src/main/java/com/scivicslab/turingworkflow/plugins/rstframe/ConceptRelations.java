@@ -17,20 +17,39 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The relations of a section's main concepts to other concepts ({@code FrameDataWorkflow_261024_oo01}, step 2b), from two
- * sources. The units themselves, with no question: each member of a set unit is a kind of its main concept, each part of
- * a structure unit a part of it. And the rule file: every nucleus with a satellite joined to it by a relation that ties
- * two things (comparison, antithesis, analogy, elaboration-part-whole, elaboration-set-member, background,
- * elaboration-general-specific, example) is a pair of sentences; one question per section shows each pair with its
- * block and asks which two things it ties. The relation's name says how they are tied; the model may say a pair ties
- * none, as a general-specific pair that only says the same thing again.
+ * Identifies and organizes the relations of a section's main concepts to other concepts, derived from both the unit
+ * axes and the rule file.
+ *
+ * <ul>
+ * <li>{@link #fromUnits(java.util.List)} returns a list of relations where each member of a set unit is a kind of its
+ * main concept, and each part of a structure unit is a part of it.</li>
+ * <li>{@link #question(BookOutline.Node, java.util.List, java.util.Map, java.util.Map)} returns a formatted
+ * instruction string for a local LLM to identify the two concepts tied by each pair of sentences in a section.</li>
+ * <li>{@link #read(String, java.util.List, java.util.Map)} returns a list of relations parsed from the LLM's reply,
+ * following the pair order; it leaves out any pair the reply says is none, leaves out, or ties a thing to itself.</li>
+ * <li>{@link #askAll(BookStore, String, java.util.List, java.util.function.Function, int,
+ * java.util.function.Consumer)} returns a summary string stating how many sections were asked and the tally of
+ * relations found for each link type.</li>
+ * </ul>
+ *
+ * <p>One instance may serve several workflows or threads at once.</p>
  */
 public final class ConceptRelations {
 
-    /** How each relation of the rule file ties its two things: the kind of link, and what the first and the second thing are. */
+    /**
+     * Describes how a specific relation ties two things together, specifying the type of link and the two concepts
+     * involved.
+     *
+     * @param link the kind of link (e.g., "compared with", "part of")
+     * @param first the first concept in the relation
+     * @param second the second concept in the relation
+     */
     public record Kind(String link, String first, String second) {}
 
-    /** The relations that tie two things, with the link each makes. */
+    /**
+     * Maps relation names to the description of how they tie two concepts, including the link text and the names of
+     * the two things being tied.
+     */
     public static final Map<String, Kind> KINDS = new LinkedHashMap<>();
     static {
         KINDS.put("comparison", new Kind("compared with", "the thing compared", "what it is compared with"));
@@ -43,27 +62,31 @@ public final class ConceptRelations {
         KINDS.put("example", new Kind("example of", "the example", "the concept it is an example of"));
     }
 
-    /** A kind of the unit's main concept: a member of a set unit. */
+    /** The relation name for a member of a set unit. */
     public static final String KIND_OF = "kind of";
     /** A part of the unit's main concept: a part of a structure unit. */
     public static final String PART_OF = "part of";
 
     /**
-     * One relation of a unit's main concept, or of a concept in its blocks, to another concept.
+     * Represents a single connection between two concepts, either derived from a unit's axis or from a rule file's
+     * satellite relation.
      *
-     * @param group    the ordinal of the unit, 0 when the pair's block is in none
-     * @param source   {@code unit} when read off the unit's axis, else the rule file's relation name
-     * @param link     how the two are tied: kind of, part of, compared with, ...
-     * @param from     the first concept
-     * @param to       the second
-     * @param rule     the satellite's rule, or the block, it was read from
+     * @param group the ordinal of the unit, 0 when the pair's block is in none
+     * @param source {@code unit} when read off the unit's axis, else the rule file's relation name
+     * @param link how the two are tied: kind of, part of, compared with, etc.
+     * @param from the first concept
+     * @param to the second concept
+     * @param rule the satellite's rule, or the block, it was read from
      */
     public record Relation(int group, String source, String link, String from, String to, String rule) {}
 
     private ConceptRelations() {
     }
 
-    /** @return the relations the units' axes give: each member of a set is a kind of its main concept, each part of a structure a part of it */
+    /**
+     * Returns a list of relations derived from the axes of the provided units, where each member of a set unit is a
+     * kind of its main concept, and each part of a structure unit is a part of it.
+     */
     public static List<Relation> fromUnits(List<SectionGroups.Group> units) {
         List<Relation> out = new ArrayList<>();
         for (SectionGroups.Group g : units) {
@@ -79,7 +102,27 @@ public final class ConceptRelations {
         return out;
     }
 
-    /** @return the question for one section's pairs, each read with its block */
+    /**
+     * Returns a string that instructs a local LLM to identify the two concepts tied by each relation in a section's
+     * rule file.
+     *
+     * <p>The string contains a header identifying the section's number and title, followed by a list of blocks. For
+     * each block, it shows the block's name, its associated main concept, and the text of the block itself. Under each
+     * block, it lists the pairs of sentences (nucleus and satellite) that form a relation, asking the model to name
+     * the two things the relation ties as short noun phrases.
+     *
+     * <p>The instruction specifies that if a pair does not tie two different things, the model should write "none".
+     *
+     * <pre>{@code
+     * String prompt = ConceptRelations.question(node, pairs, concepts, blocks);
+     * }</pre>
+     *
+     * @param node the section's position and title in the book's outline
+     * @param pairs the list of nucleus-satellite sentence pairs to be analyzed
+     * @param concepts a mapping from block names to their associated main concepts
+     * @param blocks a mapping from block names to their text content
+     * @return a formatted instruction string for the LLM
+     */
     public static String question(BookOutline.Node node, List<ConceptCauses.Pair> pairs, Map<String, String> concepts, Map<String, String> blocks) {
         StringBuilder sb = new StringBuilder();
         String shown = null;
@@ -115,7 +158,18 @@ public final class ConceptRelations {
         return s.length() > 300 ? s.substring(0, 300) + " ..." : s;
     }
 
-    /** @return the relations the reply gives, in pair order; a pair the reply says none of, leaves out, or ties a thing to itself has none */
+    /**
+     * Parses a text reply from an LLM to extract the relations between concepts.
+     *
+     * @param reply the text containing the answers, expected to follow the format "p[number] | [first thing] | [second
+     * thing]"
+     *
+     * @param pairs the list of pairs of sentences (nucleus and satellite) that were asked about
+     * @param units a map from block names to the ordinal of the unit they belong to
+     * @return a list of {@link Relation} objects for every successfully parsed pair; if a pair is answered with
+     * "none", or if the two things are the same, or if the reply omits or skips a pair, that pair is not included in
+     * the result
+     */
     public static List<Relation> read(String reply, List<ConceptCauses.Pair> pairs, Map<String, Integer> units) {
         Map<Integer, Relation> by = new LinkedHashMap<>();
         Matcher m = Pattern.compile("(?im)^\\W*p(\\d+)\\W*\\|\\s*(.+?)\\s*\\|\\s*(.+?)\\s*$").matcher(reply);
@@ -137,10 +191,18 @@ public final class ConceptRelations {
     }
 
     /**
-     * Reads the relations of every section that has units and none asked yet ({@code only} empty), or of the sections
-     * named, {@code parallel} at a time: the units' own, and the rule file's pairs asked in one question per section.
+     * Asks a writer to identify the relations of the main concepts in a book's sections and saves the results to a
+     * {@code BookStore}. If {@code only} is empty, it asks for the relations of every section that has not yet been
+     * asked; otherwise, it asks only for the sections listed in {@code only}.
      *
-     * @return how many sections were asked and how many relations of each link they gave, in one line
+     * @param store the {@code BookStore} where the results are saved
+     * @param book the name of the book to process
+     * @param only a list of section numbers to process; if empty, all unasked sections are processed
+     * @param writer a function that takes a question string and returns the reply string
+     * @param parallel the maximum number of sections to process at a time
+     * @param log a consumer for progress and error messages
+     * @return a string summarizing how many sections were asked, the count of relations found for each link type, and
+     * how many sections failed
      */
     public static String askAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
             Consumer<String> log) throws Exception {

@@ -16,26 +16,25 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * OpenAlex APIへの問い合わせ を保持する素のオブジェクト。アクターとして動かすのは OpenAlexActor の役目であり、
- * 「アクターであること」はこのクラスの性質ではない（ActorSuffixAndOwnedActorRef_260722_oo01）。
+ * Queries the OpenAlex scholarly metadata API to retrieve information about works, authors, and open-access links.
  *
- * Actor that queries the OpenAlex open scholarly metadata API.
- *
- * <p>OpenAlex is a free, open-access catalog of over 250 million scholarly works,
- * authors, institutions, and topics. No API key is required. The polite pool
- * (higher rate limits) is enabled by supplying a contact email via {@code setEmail}
- * or by configuring the default at construction time.</p>
- *
- * <p>Base URL: {@code https://api.openalex.org}</p>
- *
- * <p>Supported actions:</p>
  * <ul>
- *   <li>{@code setEmail}        — set contact email for polite pool (higher rate limit)</li>
- *   <li>{@code searchWorks}     — search papers by keyword (default top 10, sorted by citation count)</li>
- *   <li>{@code searchWorksTopK} — search papers with explicit count via JSON: {"query":"...","perPage":5}</li>
- *   <li>{@code getWork}         — retrieve one paper by OpenAlex ID (W...) or DOI</li>
- *   <li>{@code searchAuthors}   — search authors by name</li>
+ * <li>{@code setEmail} — sets the contact email used in the polite pool to enable higher rate limits</li>
+ * <li>{@code searchWorks} — searches for papers by keyword, returning the top 10 sorted by citation count</li>
+ * <li>{@code searchWorksTopK} — searches for papers with a specific count and sort order</li>
+ * <li>{@code getWork} — retrieves a single paper by its OpenAlex ID or DOI</li>
+ * <li>{@code getPdfUrl} — returns the URL for an open-access PDF of a paper</li>
+ * <li>{@code searchAuthors} — searches for authors by name</li>
  * </ul>
+ *
+ * <p>One instance may serve several workflows or threads at once.</p>
+ *
+ * <p>Example workflow step:
+ * <pre>{@code
+ *   - actor: openalex
+ *     method: searchWorks
+ *     arguments: {query: "machine learning"}
+ * }</pre>
  */
 public class OpenAlexClient {
 
@@ -43,7 +42,7 @@ public class OpenAlexClient {
     private static final String BASE_URL = "https://api.openalex.org";
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
     private static final int DEFAULT_PER_PAGE = 10;
-    /** Default result ordering (most-cited first). */
+    /** The default ordering for search results, which sorts papers by citation count in descending order. */
     private static final String DEFAULT_SORT = "cited_by_count:desc";
 
     private String email = "devteam@scivicslab.com";
@@ -53,10 +52,13 @@ public class OpenAlexClient {
             .build();
 
     /**
-     * Sets the contact email used in the OpenAlex polite pool header and mailto param.
-     * Providing an email enables higher rate limits (10 req/s → ~100 req/s).
+     * Sets the contact email used in the OpenAlex polite pool header and mailto parameter. Providing an email enables
+     * higher rate limits (10 req/s → ~100 req/s).
      *
-     * @param query contact email address
+     * @param address the contact email address to be used for requests
+     *
+     * @return an action result that is a success if the address is non-blank, with a message containing the new email;
+     * otherwise, a failure result stating that the email is required
      */
     public ActionResult setEmail(String address) {
         if (address == null || address.isBlank()) return new ActionResult(false, "Email is required");
@@ -65,25 +67,34 @@ public class OpenAlexClient {
     }
 
     /**
-     * Searches OpenAlex works by keyword, returns top 10 sorted by citation count.
+     * Returns an action result containing a list of the top 10 papers found by keyword, sorted by citation count.
      *
-     * <p>Result includes title, year, journal, citation count, DOI, abstract snippet,
-     * and open-access URL for each paper.</p>
+     * <p>The result message contains a numbered list of papers, each including its title, publication year, journal,
+     * citation count, DOI, an abstract snippet, and an open-access URL.</p>
      *
-     * @param query the keyword to search for
+     * <p>If the query is null or blank, the result is a failure.</p>
+     *
+     * @param query the keyword or phrase to search for
      */
     public ActionResult searchWorks(String query) {
         return doSearchWorks(query, DEFAULT_PER_PAGE);
     }
 
     /**
-     * Searches OpenAlex works with an explicit result count.
+     * Returns a text list of OpenAlex papers matching the query, with a specified number of results and a chosen sort
+     * order.
      *
-     * <p>{@code sort} accepts friendly names — {@code citations} (most cited first),
-     * {@code relevance} (best title/abstract match first), {@code newest} (most recent first) —
-     * or a raw OpenAlex sort string (e.g. {@code publication_date:desc}).</p>
+     * <p>{@code sort} accepts friendly names — {@code citations} (most cited first), {@code relevance} (best
+     * title/abstract match first), {@code newest} (most recent first) — or a raw OpenAlex sort string (e.g. {@code
+     * publication_date:desc}).</p>
      *
-     * @param query JSON object with {@code query} and optional {@code perPage} and {@code sort}
+     * @param query a JSON object containing the {@code query} string and optional {@code perPage} and {@code sort}
+     * fields
+     *
+     * @param perPage the maximum number of results to return; if null, defaults to 10
+     * @param sort the ordering criteria; if null or blank, defaults to most-cited first
+     * @return an action result that is a success and contains a formatted list of papers if results are found, or a
+     * failure message if the query is blank or the request fails
      */
     public ActionResult searchWorksTopK(String query, Integer perPage, String sort) {
         return doSearchWorks(query,
@@ -91,16 +102,21 @@ public class OpenAlexClient {
                 sort != null && !sort.isBlank() ? sort : DEFAULT_SORT);
     }
     /**
-     * Retrieves a single paper by OpenAlex ID or DOI.
+     * Retrieves a single paper's metadata from OpenAlex using an OpenAlex ID or DOI.
      *
-     * <p>Accepted formats:</p>
+     * <p>The result is a text description containing the title, year, journal, citation count, DOI, abstract snippet,
+     * and open-access URL if available.</p>
+     *
+     * <p>Accepted formats include:</p>
      * <ul>
-     *   <li>OpenAlex ID: {@code W2741809807}</li>
-     *   <li>Plain DOI:   {@code 10.1038/s41586-021-03819-2}</li>
-     *   <li>DOI URL:     {@code https://doi.org/10.1038/s41586-021-03819-2}</li>
+     * <li>OpenAlex ID: {@code W2741809807}</li>
+     * <li>Plain DOI: {@code 10.1038/s41586-021-03819-2}</li>
+     * <li>DOI URL: {@code https://doi.org/10.1038/s41586-021-03819-2}</li>
      * </ul>
      *
-     * @param query OpenAlex ID or DOI
+     * @param id the OpenAlex ID or DOI of the paper
+     * @return an action result that is a success and contains the formatted paper metadata, or is not a success if the
+     * ID is blank or the retrieval fails
      */
     public ActionResult getWork(String id) {
         if (id == null || id.isBlank()) return new ActionResult(false, "Work ID or DOI is required");
@@ -116,13 +132,12 @@ public class OpenAlexClient {
     }
 
     /**
-     * Returns the open-access PDF URL for a paper identified by OpenAlex ID or DOI.
+     * Returns the open-access PDF URL or landing page URL for a paper identified by OpenAlex ID or DOI.
      *
-     * <p>Tries, in order: {@code primary_location.pdf_url},
-     * {@code primary_location.landing_page_url}, then the first entry in
-     * {@code open_access.oa_url}. Returns failure if no open-access URL is found.</p>
+     * <p>The result is the URL of the paper's primary PDF, its landing page, or the first entry in the open access
+     * location list. If no open-access URL is found, the action result is a failure.</p>
      *
-     * @param query OpenAlex ID or DOI (same formats as {@code getWork})
+     * @param id the OpenAlex ID (e.g., {@code W2741809807}) or DOI (e.g., {@code 10.1038/s41586-021-03819-2})
      */
     public ActionResult getPdfUrl(String id) {
         if (id == null || id.isBlank()) return new ActionResult(false, "Work ID or DOI is required");
@@ -159,9 +174,15 @@ public class OpenAlexClient {
     }
 
     /**
-     * Searches OpenAlex authors by name, returns up to 5 results.
+     * Returns an action result containing up to 5 authors matching the query.
      *
-     * @param query author name query string
+     * The message holds a numbered list of authors, each including their display name, last known institution, total
+     * works count, total citations, and OpenAlex ID. If no authors are found, the result is a success with a message
+     * stating no authors were found for the query.
+     *
+     * @param query the author name or name fragment to search for
+     * @return an action result that is a success containing the formatted list of authors, or a failure if the query
+     * is null, blank, or the search fails
      */
     public ActionResult searchAuthors(String query) {
         if (query == null || query.isBlank()) return new ActionResult(false, "Query is required");
@@ -224,9 +245,19 @@ public class OpenAlexClient {
     }
 
     /**
-     * Maps a friendly sort name to an OpenAlex {@code sort} value. Accepts {@code citations},
-     * {@code relevance}, {@code newest}/{@code date}/{@code latest}, or a raw OpenAlex sort string
-     * (containing {@code ':'}) which is passed through unchanged. Unknown values fall back to the default.
+     * Returns a string that is a valid OpenAlex sort parameter.
+     *
+     * <p>If the input contains a colon, it is returned unchanged. Otherwise, the method maps friendly names to
+     * specific OpenAlex sort strings: {@code citations} (or {@code cited}, {@code most_cited}, etc.) becomes {@code
+     * cited_by_count:desc}, {@code relevance} (or {@code match}, {@code best_match}, etc.) becomes {@code
+     * relevance_score:desc}, and {@code newest} (or {@code date}, {@code recent}, etc.) becomes {@code
+     * publication_date:desc}. The value {@code oldest} is mapped to {@code publication_date:asc}.</p>
+     *
+     * <p>If the input is null, blank, or does not match any known friendly name, the default sort {@code
+     * cited_by_count:desc} is returned.</p>
+     *
+     * @param friendly the name of the sort order to use, such as "relevance" or "newest"
+     * @return the corresponding OpenAlex sort string
      */
     private static String resolveSort(String friendly) {
         if (friendly == null || friendly.isBlank()) return DEFAULT_SORT;
@@ -241,7 +272,11 @@ public class OpenAlexClient {
         };
     }
 
-    /** Human-readable label for the result-ordering header line. */
+    /**
+     * Returns a human-readable description of the sorting criteria used in the search results header.
+     *
+     * @param openAlexSort the raw OpenAlex sort string used for the query
+     */
     private static String sortLabel(String openAlexSort) {
         return switch (openAlexSort) {
             case "cited_by_count:desc"   -> "citation count";
@@ -308,8 +343,12 @@ public class OpenAlexClient {
     }
 
     /**
-     * Reconstructs the abstract from OpenAlex's inverted index format.
-     * The inverted index maps each word to its list of character positions.
+     * Reconstructs a plain text string from OpenAlex's inverted index of an abstract.
+     *
+     * @param aii a JSON object representing the inverted index, where keys are words and values are arrays of
+     * character positions.
+     *
+     * @return a string containing the reconstructed abstract with words in their correct positions.
      */
     private static String reconstructAbstract(JSONObject aii) {
         TreeMap<Integer, String> posToWord = new TreeMap<>();

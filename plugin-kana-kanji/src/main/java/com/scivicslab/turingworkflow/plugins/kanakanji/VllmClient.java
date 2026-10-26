@@ -13,24 +13,22 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * vLLMサーバへの問い合わせ を保持する素のオブジェクト。アクターとして動かすのは VllmActor の役目であり、
- * 「アクターであること」はこのクラスの性質ではない（ActorSuffixAndOwnedActorRef_260722_oo01）。
+ * Calls a vLLM server via an OpenAI-compatible chat completions API to perform Japanese text segmentation and reading
+ * generation.
  *
- * Actor that calls a vLLM server via OpenAI-compatible chat completions API.
- *
- * <p>Provides two-step kana-kanji pair generation:</p>
- * <ol>
- *   <li>{@code segment} - Step 1: merge OCR fragments into bunsetsu-segmented sentences</li>
- *   <li>{@code toHiragana} - Step 2: convert bunsetsu-segmented kanji text to hiragana</li>
- * </ol>
- *
- * <p>Supported actions:</p>
  * <ul>
- *   <li>{@code setUrl} - Set the vLLM endpoint URL</li>
- *   <li>{@code setModel} - Set the model name</li>
- *   <li>{@code segment} - Step 1: segment OCR text into bunsetsu</li>
- *   <li>{@code toHiragana} - Step 2: convert segmented text to hiragana</li>
+ * <li>{@code setUrl} sets the vLLM endpoint URL.</li>
+ * <li>{@code setModel} sets the model name.</li>
+ * <li>{@code segment} takes OCR text and returns the text segmented into bunsetsu (one sentence per line, bunsetsu
+ * separated by |).</li>
+ * <li>{@code toHiragana} takes bunsetsu-segmented text and returns tab-separated hiragana-kanji pairs, one per
+ * line.</li>
  * </ul>
+ *
+ * <p>One instance may serve several workflows or threads at once.</p>
+ *
+ * <p>An action fails if the input text is blank or if the vLLM server returns an error, in which case the result
+ * message holds the error details.</p>
  */
 public class VllmClient {
 
@@ -110,8 +108,11 @@ public class VllmClient {
     }
 
     /**
-     * Step 1: Send OCR text to LLM for bunsetsu segmentation.
-     * Returns the segmented kanji text (one sentence per line, bunsetsu separated by |).
+     * Segments OCR text into bunsetsu-delimited sentences by calling a vLLM server. Returns an action result
+     * containing the segmented kanji text (one sentence per line, bunsetsu separated by |) on success, or an error
+     * message if the text is blank or the server call fails.
+     *
+     * @param ocrText the raw text from OCR, which may contain visual line breaks from the document layout
      */
     public ActionResult segment(String ocrText) {
         String text = ocrText == null ? "" : ocrText;
@@ -131,14 +132,16 @@ public class VllmClient {
     }
 
     /**
-     * Step 2: Convert bunsetsu-segmented kanji text to hiragana/kanji pairs.
+     * Converts bunsetsu-segmented kanji text into tab-separated hiragana and kanji pairs.
      *
-     * <p>Processes input in batches of {@value #BATCH_SIZE} lines. For each batch,
-     * validates that lines containing Japanese have hiragana readings. Lines that fail
-     * validation are retried individually (up to {@value #MAX_LINE_RETRIES} times).
-     * Purely ASCII/numeric lines require no hiragana and are passed through.</p>
+     * Returns an action result containing a string where each line consists of a hiragana reading and the original
+     * kanji text, separated by a tab. If the input is blank, the result is a failure.
      *
-     * @return tab-separated hiragana-kanji pairs, one per line
+     * If the vLLM server is unreachable or returns an error, the result is a failure with an error message.
+     *
+     * @param segmentedText the text to convert, where each line contains a single bunsetsu-segmented sentence.
+     * @return an action result that is a success with the tab-separated pairs if the conversion succeeds, or a failure
+     * with an error message if the service fails.
      */
     public ActionResult toHiragana(String segmentedText) {
         String text = segmentedText == null ? "" : segmentedText;
@@ -168,8 +171,15 @@ public class VllmClient {
     }
 
     /**
-     * Lines that were split into words (a segment of only particles or punctuation) are asked once more,
-     * one line at a time. A line that is still split that way is kept, so the page is not lost.
+     * Attempts to re-segment lines that consist only of particles or punctuation by calling the LLM again for each
+     * such line individually.
+     *
+     * <p>If a line is found to contain only particles or punctuation, it is sent to the vLLM server as a new request.
+     * If the new response provides a single line that successfully breaks the particles into a proper bunsetsu, that
+     * new line is used; otherwise, the original line is kept to ensure no content is lost.</p>
+     *
+     * @param response the segmented kanji text containing potential lone-particle lines
+     * @return the text with corrected segmentation for problematic lines
      */
     private String fixLoneParticles(String response) {
         List<String> fixed = new ArrayList<>();
@@ -199,9 +209,21 @@ public class VllmClient {
     private static final int MAX_LINE_RETRIES = 2;
 
     /**
-     * Processes a batch of segmented lines: calls LLM only for Japanese lines,
-     * passes through non-Japanese lines (formulas, ASCII) as-is, validates
-     * output, and retries individual failing Japanese lines.
+     * Returns a list of processed lines where Japanese text is paired with hiragana readings and non-Japanese text is
+     * passed through.
+     *
+     * <p>The method identifies lines containing Japanese characters to send to the vLLM server in a single batch,
+     * while lines containing only ASCII, numbers, or formulas are immediately formatted as a tab-separated pair with
+     * an empty reading. For the Japanese lines, it validates that the LLM's response provides a valid hiragana reading
+     * and maintains the original bunsetsu boundaries; if a response line is invalid, it retries that specific line
+     * individually up to {@value #MAX_LINE_RETRIES} times. If all retries fail, the line is returned as a kanji-only
+     * pair with an empty reading.</p>
+     *
+     * @param inputLines the list of segmented text lines to process
+     * @return a list of strings, where each string is either a tab-separated hiragana-kanji pair or a pass-through
+     * line formatted with a leading tab
+     *
+     * @throws Exception if the vLLM server returns an error or the HTTP request fails
      */
     private List<String> processBatch(List<String> inputLines) throws Exception {
         // Separate Japanese lines from pass-through lines
@@ -251,9 +273,16 @@ public class VllmClient {
     }
 
     /**
-     * Checks whether a response line is acceptable for the given input line.
-     * Lines with Japanese kanji must have a hiragana reading in the left column.
-     * Purely ASCII/numeric lines are always acceptable.
+     * Returns true if the response line contains a valid hiragana reading for the input line's kanji and maintains the
+     * same number of bunsetsu boundaries.
+     *
+     * <p>A response line is acceptable if it contains Japanese characters and follows the tab-separated format where
+     * the left column contains hiragana and the number of {@code |} separators matches the input line. Lines
+     * containing no Japanese characters are always considered acceptable.</p>
+     *
+     * @param inputLine the original segmented text line to validate
+     * @param responseLine the line returned by the LLM to be checked
+     * @return true if the response line is a valid hiragana-kanji pair for the input, false otherwise
      */
     private boolean isAcceptable(String inputLine, String responseLine) {
         if (!containsJapanese(inputLine)) {
@@ -267,8 +296,13 @@ public class VllmClient {
     }
 
     /**
-     * Retries a single input line up to MAX_LINE_RETRIES times.
-     * Returns the best result (or the input line as fallback).
+     * Attempts to convert a single line of text into a hiragana-kanji pair by calling the vLLM server.
+     *
+     * @param inputLine the segmented kanji text to be converted.
+     * @return a tab-separated string containing the hiragana reading and the original kanji text, or a string
+     * containing only a tab and the original input if all attempts fail.
+     *
+     * @throws Exception if the vLLM server call fails.
      */
     private String retryLine(String inputLine) throws Exception {
         for (int attempt = 1; attempt <= MAX_LINE_RETRIES; attempt++) {

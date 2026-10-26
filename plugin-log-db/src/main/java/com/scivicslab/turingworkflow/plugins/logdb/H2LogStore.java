@@ -31,24 +31,40 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * H2 Database implementation of DistributedLogStore.
+ * Stores and retrieves workflow execution logs using an embedded H2 database.
  *
- * <p>Uses H2 embedded database for storing logs from distributed workflow
- * execution and provides efficient querying by node, level, and time.</p>
- *
- * <p>A plain object: every write runs on the calling thread, in a transaction of its own, and
- * is committed when the call returns, so a reader that has its own connection sees it from then
- * on. It starts no thread and keeps no queue. A caller that wants its writes not to block, or
- * wants several threads' calls in one order, wraps the store in an actor
- * ({@code ActorRef<DistributedLogStore>}, as {@link LogStoreActor} does): the actor's mailbox
- * is then the queue, and an {@code ask} issued after some {@code tell}s returns after them.</p>
- *
- * <p>Features:</p>
  * <ul>
- *   <li>Pure Java - no native dependencies</li>
- *   <li>Single file storage (.mv.db)</li>
- *   <li>SQL-based querying</li>
+ * <li><code>startSession</code> creates a new session and returns its unique ID.</li>
+ * <li><code>log</code> records a log entry for a specific node.</li>
+ * <li><code>logAction</code> records an action's result, including its exit code and duration.</li>
+ * <li><code>markNodeSuccess</code> and <code>markNodeFailed</code> record the final status of a node.</li>
+ * <li><code>endSession</code> marks a session as finished and sets its final status.</li>
+ * <li><code>getLogsByNode</code>, <code>getLogsByLevel</code>, and <code>listSessions</code> provide various ways to
+ * query the stored data.</li>
+ * <li><code>getSummary</code> returns a summary of a session's execution.</li>
  * </ul>
+ *
+ * <p>Every write operation is performed synchronously on the calling thread in its own transaction and is committed
+ * when the method returns. A reader using a separate connection will see the changes immediately after the call
+ * returns. This class does not maintain an internal queue or background threads; for asynchronous or batched
+ * execution, use an actor such as {@link LogStoreActor}.</p>
+ *
+ * <p>One instance may serve several workflows or threads at once, as it uses separate connections for reading and
+ * writing.</p>
+ *
+ * <p>To use this in a workflow, an actor is typically created to wrap the store:</p>
+ * <pre>{@code
+ * actor: log_store
+ * method: log
+ * arguments:
+ *   sessionId: ${session_id}
+ *   nodeId: "web-server"
+ *   level: "INFO"
+ *   message: "Starting service"
+ * }</pre>
+ *
+ * <p>If a database error occurs during a write, the transaction is rolled back and the error is logged to the system
+ * logger, but the caller of a non-returning action (like <code>log</code>) will not receive the failure.</p>
  *
  * @author devteam@scivicslab.com
  * @since 1.0
@@ -56,40 +72,42 @@ import java.util.logging.Logger;
 public class H2LogStore implements DistributedLogStore {
 
     private static final Logger LOG = Logger.getLogger(H2LogStore.class.getName());
-    /** ISO 8601 formatter with timezone offset for text log output. */
+    /** ISO 8601 formatter with timezone offset used for timestamping entries in the text log file. */
     private static final DateTimeFormatter ISO_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX");
-    /** System default timezone used for timestamp formatting in text logs. */
+    /** The system default timezone used for formatting timestamps in text logs. */
     private static final ZoneId SYSTEM_ZONE = ZoneId.systemDefault();
 
-    /** Dedicated connection for read operations (delegated to {@link H2LogReader}). */
+    /** The connection used for all read operations, which is delegated to {@link H2LogReader}. */
     private final Connection readConnection;
-    /** Dedicated connection for write operations. */
+    /**
+     * The connection used for all write operations, including starting sessions, logging entries, and marking node
+     * results.
+     */
     private final Connection writeConnection;
-    /** Delegate reader for all query operations. */
+    /** The reader used for all query operations. */
     private final H2LogReader reader;
 
-    /** Optional text log writer for parallel file-based logging. */
+    /** Optional writer for a parallel text-based log file. */
     private PrintWriter textLogWriter;
 
     /**
-     * Creates an H2LogStore with the specified database path.
+     * Initializes an {@code H2LogStore} that stores workflow logs in an H2 database at the specified path.
      *
-     * @param dbPath path to the database file (without extension)
-     * @throws SQLException if database connection fails
+     * @param dbPath the path to the database file (without extension)
+     * @throws SQLException if the database connection fails
      */
     public H2LogStore(Path dbPath) throws SQLException {
         this(dbPath, false);
     }
 
     /**
-     * Creates an H2LogStore with the specified database path, optionally enabling lossless MVStore
-     * compression. Compression trades a little CPU for a much smaller {@code .mv.db} file; it is
-     * well suited to highly repetitive content (e.g. JSON request bodies). Compression applies to
-     * newly written data; pre-existing uncompressed data shrinks only as it is rewritten/compacted.
+     * Initializes an H2LogStore with the specified database path and an option to enable lossless MVStore compression.
      *
-     * @param dbPath   path to the database file (without extension)
-     * @param compress when true, appends {@code COMPRESS=TRUE} to the JDBC URL
+     * @param dbPath path to the database file (without extension)
+     * @param compress if true, enables compression to reduce the size of the {@code .mv.db} file at the cost of higher
+     * CPU usage
+     *
      * @throws SQLException if database connection fails
      */
     public H2LogStore(Path dbPath, boolean compress) throws SQLException {
@@ -102,9 +120,9 @@ public class H2LogStore implements DistributedLogStore {
     }
 
     /**
-     * Creates an in-memory H2LogStore (for testing).
+     * Initializes an in-memory H2 database for storing and querying workflow logs.
      *
-     * @throws SQLException if database connection fails
+     * @throws SQLException if the database connection fails
      */
     public H2LogStore() throws SQLException {
         String url = "jdbc:h2:mem:testdb_" + System.nanoTime() + ";DB_CLOSE_DELAY=-1";
@@ -114,17 +132,20 @@ public class H2LogStore implements DistributedLogStore {
         initSchema();
     }
 
-    /** {@inheritDoc} */
+    /** Returns a JDBC {@code Connection} used for read operations. */
     @Override
     public Connection getConnection() {
         return this.readConnection;
     }
 
     /**
-     * Sets the text log file for additional text-based logging.
+     * Opens a text file for parallel logging of all log and action entries.
      *
-     * @param textLogPath path to the text log file
-     * @throws IOException if the file cannot be opened for writing
+     * If a text log file is already open, it is closed before the new one is opened.
+     *
+     * An {@code IOException} is thrown if the file cannot be opened for writing.
+     *
+     * @param textLogPath the path to the text log file
      */
     public void setTextLogFile(Path textLogPath) throws IOException {
         if (this.textLogWriter != null) {
@@ -134,9 +155,7 @@ public class H2LogStore implements DistributedLogStore {
         LOG.info("Text logging enabled: " + textLogPath);
     }
 
-    /**
-     * Disables text file logging.
-     */
+    /** Stops writing log entries to the text file. */
     public void disableTextLog() {
         if (this.textLogWriter != null) {
             this.textLogWriter.close();
@@ -149,10 +168,10 @@ public class H2LogStore implements DistributedLogStore {
     }
 
     /**
-     * Initializes the log database schema on the given connection.
+     * Creates the required tables and indexes for the log database on the given connection.
      *
-     * @param conn the database connection
-     * @throws SQLException if schema initialization fails
+     * @param conn the database connection to use for schema creation
+     * @throws SQLException if the table creation or index creation fails
      */
     public static void initSchema(Connection conn) throws SQLException {
         try (Statement stmt = conn.createStatement()) {
@@ -215,9 +234,11 @@ public class H2LogStore implements DistributedLogStore {
     }
 
     /**
-     * Runs a write on the calling thread, in a transaction of its own.
+     * Executes a single database task in a transaction of its own on the calling thread.
      *
-     * @throws SQLException if the database refuses it; the transaction is rolled back first
+     * @param task the unit of work to execute on the write connection
+     * @throws SQLException if the database refuses the task; the transaction is rolled back before the exception is
+     * thrown
      */
     private void run(LogTask task) throws SQLException {
         try {
@@ -233,8 +254,11 @@ public class H2LogStore implements DistributedLogStore {
     }
 
     /**
-     * A write nobody waits for an answer to (a log line, a node result): a failure is logged and
-     * does not reach the caller, who has nothing to do about it.
+     * Executes a database write and suppresses any resulting errors.
+     *
+     * <p>If the task fails due to a {@link SQLException}, the error is logged to the system logger, but the caller is
+     * not notified and no exception is thrown. This is used for fire-and-forget operations like logging entries or
+     * marking node results where a failure to record the event should not interrupt the workflow.</p>
      */
     private void write(LogTask task) {
         try {
@@ -347,8 +371,10 @@ public class H2LogStore implements DistributedLogStore {
     }
 
     /**
-     * Does nothing: every write has been committed when its call returned, so there is nothing
-     * left to wait for.
+     * Performs no action.
+     *
+     * <p>Every write operation in this class is executed synchronously on the calling thread and is committed before
+     * the method returns, so there is no pending data to flush.</p>
      */
     @Override
     public void flushWrites() {
@@ -380,9 +406,9 @@ public class H2LogStore implements DistributedLogStore {
     }
 
     /**
-     * Closes the text log writer, if enabled, and both connections.
+     * Closes the text log writer, if enabled, and both the read and write database connections.
      *
-     * @throws Exception if an error occurs while closing connections
+     * @throws Exception if an error occurs while closing the connections or the text log writer.
      */
     @Override
     public void close() throws Exception {
@@ -395,29 +421,31 @@ public class H2LogStore implements DistributedLogStore {
     }
 
     /**
-     * Internal interface representing a unit of work to be executed
-     * on the write connection.
+     * Represents a single database transaction to be executed on the write connection.
+     *
+     * <p><ul><li>{@link InsertLog} inserts a single log entry into the {@code logs} table.</li><li>{@link
+     * UpdateNodeResult} inserts or updates a node's final status in the {@code node_results} table.</li></ul>
      */
     private interface LogTask {
         /**
-         * Executes this task on the given database connection.
+         * Executes the database operation on the provided connection.
          *
-         * @param conn the write connection
+         * @param conn the connection to use for the operation
          * @throws SQLException if a database error occurs
          */
         void execute(Connection conn) throws SQLException;
 
         /**
-         * Task that inserts a single log entry into the {@code logs} table.
+         * Records a single log entry into the {@code logs} table.
          *
-         * @param sessionId  the session ID
-         * @param nodeId     the node identifier
-         * @param label      the workflow label, may be {@code null}
-         * @param actionName the action name, may be {@code null}
-         * @param level      the log level
-         * @param message    the log message
-         * @param exitCode   the exit code, may be {@code null}
-         * @param durationMs the duration in milliseconds, may be {@code null}
+         * @param sessionId the session ID to associate with the log
+         * @param nodeId the identifier of the node generating the log
+         * @param label the workflow label, may be {@code null}
+         * @param actionName the name of the action, may be {@code null}
+         * @param level the severity level of the log
+         * @param message the text content of the log
+         * @param exitCode the process exit code, may be {@code null}
+         * @param durationMs the execution duration in milliseconds, may be {@code null}
          */
         record InsertLog(long sessionId, String nodeId, String label, String actionName,
                          LogLevel level, String message, Integer exitCode, Long durationMs) implements LogTask {
@@ -448,12 +476,12 @@ public class H2LogStore implements DistributedLogStore {
         }
 
         /**
-         * Task that inserts or updates (merges) a node result in the {@code node_results} table.
+         * Records or updates the final outcome of a specific node within a session in the {@code node_results} table.
          *
          * @param sessionId the session ID
-         * @param nodeId    the node identifier
-         * @param status    the result status ("SUCCESS" or "FAILED")
-         * @param reason    the failure reason, may be {@code null} for successful nodes
+         * @param nodeId the node identifier
+         * @param status the result status, either "SUCCESS" or "FAILED"
+         * @param reason the reason for failure, or {@code null} if the node succeeded
          */
         record UpdateNodeResult(long sessionId, String nodeId, String status, String reason) implements LogTask {
             @Override

@@ -32,10 +32,14 @@ import java.util.Map;
 import java.util.logging.Logger;
 
 /**
- * Actor wrapper for {@link WorkflowDescriptionSection}.
+ * Adds a section to a report containing the description extracted from the workflow's YAML file.
  *
- * <p>Exposes the POJO's methods as actions via {@code @Action} annotations.
- * Handles workflow path resolution and YAML parsing.</p>
+ * <ul>
+ * <li>{@code generate} returns an action result containing the workflow description text.</li>
+ * <li>{@code getTitle} returns an action result containing the section title.</li>
+ * </ul>
+ *
+ * <p>One instance may serve one workflow. It relies on the {@code nodeGroup} actor to resolve the workflow path.</p>
  *
  * @author devteam@scivicslab.com
  * @since 2.16.0
@@ -45,10 +49,10 @@ public class WorkflowDescriptionSectionActor extends IIActorRef<WorkflowDescript
     private static final Logger logger = Logger.getLogger(WorkflowDescriptionSectionActor.class.getName());
 
     /**
-     * Constructs the actor with a new POJO instance.
+     * Initializes a new actor that extracts and provides the description of the current workflow for a report.
      *
-     * @param actorName the actor name
-     * @param system the actor system
+     * @param actorName the name to assign to this actor
+     * @param system the actor system in which this actor is registered
      */
     public WorkflowDescriptionSectionActor(String actorName, IIActorSystem system) {
         super(actorName, new WorkflowDescriptionSection(), system);
@@ -56,7 +60,11 @@ public class WorkflowDescriptionSectionActor extends IIActorRef<WorkflowDescript
     }
 
     /**
-     * Initializes the POJO with workflow information from nodeGroup.
+     * Populates the description field of the underlying section object by reading the workflow's YAML file.
+     *
+     * <p>It retrieves the workflow path from the {@code nodeGroup} actor and parses the {@code description} field from
+     * the corresponding file. If the file cannot be found or the description is missing, the object remains
+     * unchanged.</p>
      */
     private void initializeFromWorkflow() {
         String workflowPath = getWorkflowPath();
@@ -105,12 +113,10 @@ public class WorkflowDescriptionSectionActor extends IIActorRef<WorkflowDescript
     }
 
     /**
-     * Generates the workflow description section content.
-     *
-     * <p><strong>Expected args:</strong> unused (may be empty or null).</p>
+     * Returns the description of the workflow as the section content.
      *
      * @param args unused
-     * @return an {@link ActionResult} with the generated section content
+     * @return an ActionResult that is a success with the workflow description text as its result
      */
     @Action("generate")
     public ActionResult generate(String args) {
@@ -119,12 +125,11 @@ public class WorkflowDescriptionSectionActor extends IIActorRef<WorkflowDescript
     }
 
     /**
-     * Returns the section title.
-     *
-     * <p><strong>Expected args:</strong> unused (may be empty or null).</p>
+     * Returns the title of the workflow description section as a string.
      *
      * @param args unused
-     * @return an {@link ActionResult} with the title string (empty if no title)
+     * @return an {@link ActionResult} that is a success and whose message holds the section title, or an empty string
+     * if no title is available
      */
     @Action("getTitle")
     public ActionResult getTitle(String args) {

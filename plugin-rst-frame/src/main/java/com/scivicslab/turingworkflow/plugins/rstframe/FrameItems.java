@@ -14,17 +14,48 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The items of a concept's concrete frame, built on the rules {@link FrameMaterial} gathered for it: one question per
- * concept that stays on the list, showing the sentences the section says of it, each by its rule's name, asking which
- * questions they answer about the concept (the items) and which item each sentence answers. The items are what an
- * explanation of the concept has to answer; the sentences are what this section answers them with.
+ * Generates the questions and answers that form a concept's concrete frame by prompting an LLM with textbook sentences
+ * and parsing its response.
+ *
+ * <ul>
+ * <li>{@link #question(BookOutline.Node, String, List)} returns a prompt that presents a concept and its associated
+ * sentences to an LLM, asking it to identify the questions those sentences answer.</li>
+ * <li>{@link #read(String, List)} returns a list of {@link BookStore.FrameItem} extracted from an LLM's reply, where
+ * each item pairs a question with the rules that answer it.</li>
+ * <li>{@link #askAll(BookStore, String, List, Function, int, Consumer)} asks the LLM for the items of every concept in
+ * a book that lacks them (or is in a specified list), saving the results to the store.</li>
+ * </ul>
+ *
+ * <p>One instance may serve several workflows or threads at once.</p>
+ *
+ * <pre>{@code
+ * // Example of asking for items for a specific list of concepts
+ * FrameItems.askAll(store, "core-java-14-vol1", List.of("identifier"), llm::call, 4, System.out::println);
+ * }</pre>
+ *
+ * <p>If the LLM's reply contains no items that correspond to the provided rules, {@link #read} returns an empty list
+ * and {@link #askAll} reports a failure for that concept.</p>
  */
 public final class FrameItems {
 
     private FrameItems() {
     }
 
-    /** @return the question for one concept */
+    /**
+     * Returns a formatted text prompt that asks a reader to identify the questions answered by a set of sentences
+     * about a specific concept. The text includes the section number and title from {@code node}, the name of the
+     * {@code concept}, and a list of the sentences from {@code rules} formatted as "[rule-name] sentence-text".
+     *
+     * <pre>{@code
+     * String prompt = FrameItems.question(node, "identifier", rules);
+     * }</pre>
+     *
+     * @param node the section of the book containing the sentences
+     * @param concept the name of the concept the sentences describe
+     * @param rules the list of sentences and their associated rule names to be included in the prompt
+     * @return a string containing the section context, the concept name, the list of sentences, and instructions for
+     * the reader
+     */
     public static String question(BookOutline.Node node, String concept, List<BookStore.FrameRule> rules) {
         StringBuilder text = new StringBuilder();
         for (BookStore.FrameRule r : rules) {
@@ -48,7 +79,32 @@ public final class FrameItems {
                 + "Write nothing else.";
     }
 
-    /** @return the items the reply names, in its order, each with the rules that answer it; an item no rule answers is left out */
+    /**
+     * Parses a text reply to extract the questions and the rules that answer them.
+     *
+     * Returns a list of {@link BookStore.FrameItem} objects, where each item contains a question string and a list of
+     * rule names that answer it.
+     *
+     * A question is included only if at least one rule in the reply is associated with it.
+     *
+     * The method does not require the reply to be well-formed; it simply extracts all matching patterns and ignores
+     * those that do not correspond to the provided rules.
+     *
+     * <pre>{@code
+     * List<BookStore.FrameItem> items = FrameItems.read(
+     *     "Q1: What is it?\nQ2: How it works?\nb1 | Q1\nb2 | Q2",
+     *     rules
+     * );
+     * }</pre>
+     *
+     * @param reply the text containing the questions (prefixed with Q followed by a number) and the rule-to-question
+     * mappings (rule name followed by a pipe and the question number).
+     *
+     * @param rules the list of valid {@link BookStore.FrameRule} objects used to validate the rule names found in the
+     * reply.
+     *
+     * @return a list of items, each consisting of a question and the list of rules that answer it.
+     */
     public static List<BookStore.FrameItem> read(String reply, List<BookStore.FrameRule> rules) {
         Map<String, String> questions = new LinkedHashMap<>();
         Matcher q = Pattern.compile("(?m)^\\W*Q(\\d+)\\s*[:.)]\\s*(.+)$").matcher(reply);
@@ -71,11 +127,25 @@ public final class FrameItems {
     }
 
     /**
-     * Asks the items of every concept that stays on its section's list and has no items yet ({@code only} empty), or of
-     * the concepts of the sections named, {@code parallel} at a time, storing each as soon as it is read. A concept that
-     * fails is reported and left out, so a run started again goes on with it.
+     * Populates the frame items for concepts in a book by asking a writer to identify what questions the sentences in
+     * a section answer.
      *
-     * @return how many concepts were asked and how many items they got, in one line
+     * <ul>
+     * <li>If {@code only} is empty, it asks for the items of every concept in the book that has no items yet;
+     * otherwise, it only asks for the concepts listed in {@code only}.</li>
+     * <li>If {@code parallel} is greater than 1, it executes the requests in parallel using that many threads.</li>
+     * </ul>
+     *
+     * <p>A concept that fails to produce a valid reply is logged and skipped, allowing the process to continue with
+     * the remaining concepts.</p>
+     *
+     * @param store the book store to read from and write to
+     * @param book the name of the book
+     * @param only a list of specific concepts to process; if empty, all concepts without existing items are processed
+     * @param writer a function that takes a question string and returns a reply string
+     * @param parallel the maximum number of concurrent requests to make
+     * @param log a consumer for progress and error messages
+     * @return a string stating how many concepts were processed, how many items were collected, and how many failed
      */
     public static String askAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
             Consumer<String> log) throws Exception {

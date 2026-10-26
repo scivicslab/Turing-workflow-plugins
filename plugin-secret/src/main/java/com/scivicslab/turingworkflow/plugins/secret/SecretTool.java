@@ -21,19 +21,25 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * Command-line tool for managing encrypted secrets.
+ * Command-line tool for managing encrypted secrets by generating keys, encrypting plaintext INI files, or decrypting
+ * encrypted files for verification.
  *
- * <h2>Usage</h2>
- * <pre>
+ * <ul><li>{@code generate-key} - produces a new Base64-encoded AES-256 encryption key to the standard output</li>
+ * <li>{@code encrypt <input> <output> <key>} - transforms a plaintext secrets file into an encrypted file at the
+ * specified output path</li>
+ * <li>{@code decrypt <input> <key>} - decrypts an encrypted file and prints its plaintext content to the standard
+ * output</li></ul>
+ *
+ * <pre>{@code
  * # Generate a new encryption key
  * java -cp plugin-secret.jar com.scivicslab.turingworkflow.plugins.secret.SecretTool generate-key
  *
  * # Encrypt a secrets file
- * java -cp plugin-secret.jar com.scivicslab.turingworkflow.plugins.secret.SecretTool encrypt secrets.ini secrets.enc &lt;key&gt;
+ * java -cp plugin-secret.jar com.scivicslab.turingworkflow.plugins.secret.SecretTool encrypt secrets.ini secrets.enc <key>
  *
  * # Decrypt a secrets file (for verification)
- * java -cp plugin-secret.jar com.scivicslab.turingworkflow.plugins.secret.SecretTool decrypt secrets.enc &lt;key&gt;
- * </pre>
+ * java -cp plugin-secret.jar com.scivicslab.turingworkflow.plugins.secret.SecretTool decrypt secrets.enc <key>
+ * }</pre>
  *
  * @author devteam@scivicslab.com
  * @since 1.0.0
@@ -41,16 +47,23 @@ import java.nio.file.Path;
 public class SecretTool {
 
     /**
-     * Entry point for the secret management CLI.
+     * Executes a command-line interface for managing encrypted secrets.
      *
-     * <p>Supported commands:</p>
+     * <p>The method processes the first argument as a command and performs the following:
      * <ul>
-     *   <li>{@code generate-key} - Generate a new AES-256 encryption key</li>
-     *   <li>{@code encrypt <input> <output> <key>} - Encrypt a plaintext secrets file</li>
-     *   <li>{@code decrypt <input> <key>} - Decrypt and display an encrypted secrets file</li>
+     * <li>{@code generate-key}: Prints a new encryption key to standard output.</li>
+     * <li>{@code encrypt <input> <output> <key>}: Reads a plaintext file from {@code input}, encrypts it with {@code
+     * key}, and writes the result to {@code output}.</li>
+     * <li>{@code decrypt <input> <key>}: Reads an encrypted file from {@code input}, decrypts it with {@code key}, and
+     * prints the resulting plaintext to standard output.</li>
      * </ul>
      *
-     * @param args command-line arguments; first argument is the command name
+     * <p>If the command is unknown or arguments are missing, it prints usage instructions to standard error and exits
+     * with status 1. If an error occurs during encryption or decryption, it prints the error message and stack trace
+     * to standard error and exits with status 1.
+     *
+     * @param args the command-line arguments, where the first argument is the command name and subsequent arguments
+     * are the required parameters for that command.
      */
     public static void main(String[] args) {
         if (args.length == 0) {

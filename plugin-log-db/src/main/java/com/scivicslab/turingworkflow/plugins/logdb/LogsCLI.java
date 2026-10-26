@@ -31,16 +31,24 @@ import org.apache.commons.cli.Options;
 import com.scivicslab.pluggablecli.CommandRepository;
 
 /**
- * Definition of the {@code log-search} subcommand: searches workflow execution logs stored
- * in the plugin's H2 database.
+ * Searches workflow execution logs stored in an H2 database via the {@code log-search} subcommand.
  *
- * <p>{@link #registerCommand(CommandRepository)} builds the Commons CLI options and registers
- * the command into the shared {@link CommandRepository}. It is invoked by
- * {@link LogDbCliPlugin#registerCommands(CommandRepository)}. The execution logic reads from
- * the plugin's own {@link H2LogReader}.</p>
+ * <p>The command provides the following capabilities:
+ * <ul>
+ * <li>Lists recent sessions, optionally filtered by workflow name, overlay, inventory, or time.</li>
+ * <li>Shows a summary of a specific session.</li>
+ * <li>Lists all nodes within a specific session.</li>
+ * <li>Displays log entries for a session, filtered by node ID or minimum log level.</li>
+ * </ul>
  *
- * <p>Ported from the legacy actor-IaC {@code LogsCLI}, retargeted onto this plugin's store
- * classes.</p>
+ * <p>When no sessions are found, the command returns an exit code of 0. If a database error occurs or a session is not
+ * found during a summary request, the command returns an exit code of 1.
+ *
+ * <p>Example usage:
+ * <pre>{@code
+ * log-search --db ./logs/my_db --session 123 --level WARN
+ * log-search --db ./logs/my_db --list --workflow deploy-prod
+ * }</pre>
  *
  * @author devteam@scivicslab.com
  * @since 1.5.0
@@ -53,9 +61,9 @@ public class LogsCLI {
     private static final ZoneId SYSTEM_ZONE = ZoneId.systemDefault();
 
     /**
-     * Registers the "log-search" command with the given repository.
+     * Adds the {@code log-search} subcommand to the given repository.
      *
-     * @param repo the command repository
+     * @param repo the command repository where the command is registered
      */
     public static void registerCommand(CommandRepository repo) {
         Options opts = new Options();
@@ -138,9 +146,15 @@ public class LogsCLI {
     }
 
     /**
-     * Executes the log-search command.
+     * Performs the log-search command by querying the H2 database and printing results to standard output.
      *
-     * @param cl the parsed command line
+     * <p>The method processes the provided {@code CommandLine} arguments to either list recent sessions, show a
+     * session summary, list nodes within a session, or display specific log entries. It terminates the process with an
+     * exit code of 0 on success, or a non-zero exit code if no sessions are found, if a database error occurs, or if
+     * an invalid argument is provided.
+     *
+     * @param cl the parsed command line arguments containing filters such as {@code --db}, {@code --session}, {@code
+     * --node}, {@code --level}, and others.
      */
     public void execute(CommandLine cl) {
         File dbPath = new File(cl.getOptionValue("db"));

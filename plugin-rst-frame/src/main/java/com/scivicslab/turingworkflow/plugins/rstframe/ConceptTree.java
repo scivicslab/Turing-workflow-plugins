@@ -11,31 +11,65 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Builds the concept tree of one book from its rule files, by asking a writer about one paragraph at a time
- * ({@code FrameMakingWorkflow_261022_oo01}, step 2).
+ * Builds a concept tree for a book by interviewing a writer about its rule files, one paragraph at a time. The user
+ * gets a structured hierarchy of concepts where each node contains its relation to its parent and the paragraphs that
+ * explain it.
  *
- * <p>Every judgement of meaning is the writer's; this class only orders the questions and records the answers. It
- * walks the rule files from the top and, for each paragraph, shows the nucleus sentence, the heading it is under and
- * the concepts found so far, and asks which concept the paragraph is about: one of the list, or a new one. Once every
- * paragraph is placed, it goes over the concepts against the whole list, which by then is grown: first whether a
- * concept is the same thing as another (the two are then one), then how each relates to another: a kind of it, a part
- * of it, a setting of it, or none. Relations are asked only then, because a concept found early would otherwise be
- * placed against the few concepts found before it. No candidate is chosen by spelling or by where it stands.</p>
+ * <ul>
+ * <li>{@link #nextQuestion()} Returns a question for the writer to answer, progressing through placing paragraphs,
+ * merging identical concepts, establishing a root, and defining relations.</li>
+ * <li>{@link #answer(String)} Processes the writer's reply to the current question, updating the tree or recording a
+ * failure in the notes.</li>
+ * <li>{@link #units()} Returns the list of paragraphs (units) extracted from the rule files.</li>
+ * <li>{@link #concepts()} Returns the list of all concepts found in the tree.</li>
+ * <li>{@link #subjectsFile(String)} Returns a string representing the tree in the {@code (subject ...)} format used by
+ * {@code rst-on-lisp}.</li>
+ * <li>{@link #notes()} Returns a list of messages describing answers that could not be parsed.</li>
+ * </ul>
  *
- * <p>For a textbook, whose table of contents already is the concept tree, the concepts are given at the start and no
- * new one is accepted; the questions then only place each paragraph under a node.</p>
+ * <p>One instance is used for a single book and is not thread-safe; it maintains the state of the interview through
+ * several calls to {@code nextQuestion} and {@code answer}.</p>
  *
- * <p>The tree is written in the form of {@code rst-on-lisp/subjects/}: one {@code (subject "number" "name" ...)} per
- * node, the number giving the parent, each node carrying its relation to its parent and the paragraphs placed under
- * it.</p>
+ * <p>A workflow step might use it like this:</p>
+ * <pre>{@code
+ * actor: concept-tree
+ * method: nextQuestion
+ * ...
+ * actor: concept-tree
+ * method: answer
+ * arguments:
+ *   reply: "NEW: MyNewConcept"
+ * }</pre>
+ *
+ * <p>If the writer's answer cannot be parsed, the class records a note and may retry the question once before moving
+ * on. If {@code allowNew} was false, any name not in the existing list is treated as an invalid answer.</p>
  */
 public final class ConceptTree implements Questioner {
 
-    /** One paragraph to place: the rule file it is in, its rule, its heading, its nucleus and its satellites. */
+    /**
+     * Represents a single paragraph to be placed in the concept tree, containing its source location, the rule it
+     * follows, its heading, and its text.
+     *
+     * @param file the path to the rule file
+     * @param rule the name of the rule
+     * @param heading the heading under which the paragraph falls
+     * @param nucleus the central sentence of the paragraph
+     * @param satellites the list of sentences that add information to the nucleus
+     */
     public record Unit(String file, String rule, String heading, String nucleus, List<String> satellites) {
     }
 
-    /** One concept: its name, its parent and how it relates to the parent ({@code kind-of}, {@code part-of}, {@code setting-of}), and its paragraphs. */
+    /**
+     * Represents a single concept extracted from a book, including its position in the hierarchy and the text that
+     * explains it.
+     *
+     * @param name the name of the concept
+     * @param parent the name of the parent concept, or null if it is the root
+     * @param relation the relationship to the parent, one of {@code kind-of}, {@code part-of}, or {@code setting-of},
+     * or null
+     *
+     * @param paragraphs the list of {@code file / rule} strings for the paragraphs that explain this concept
+     */
     public record Concept(String name, String parent, String relation, List<String> paragraphs) {
     }
 
@@ -50,24 +84,46 @@ public final class ConceptTree implements Questioner {
     private final List<String> notes = new ArrayList<>();
 
     private int at = 0;
-    /** After the paragraphs: the concepts still to be asked about, in order, and which question is next for them. */
+    /**
+     * Represents the current stage of the concept tree construction process.
+     *
+     * <p>The phases are:
+     * <ul><li>{@code PARAGRAPHS}: placing paragraphs into concepts.</li>
+     * <li>{@code SAME}: checking if a concept is the same as another.</li>
+     * <li>{@code ROOT}: designating the main concept of the document.</li>
+     * <li>{@code DESCEND}: placing concepts into a hierarchy.</li>
+     * <li>{@code RELATION}: recording the specific relationship to a parent.</li>
+     * <li>{@code DONE}: the construction is complete.</li></ul>
+     */
     private enum Phase { PARAGRAPHS, SAME, ROOT, DESCEND, RELATION, DONE }
     private Phase phase = Phase.PARAGRAPHS;
     private final List<String> pending = new ArrayList<>();
     private String relating;
-    /** The concept {@link #relating} is being taken down from, and the root of the tree. */
+    /** The concept that is currently being placed under a parent, or the root of the tree. */
     private String chosenParent;
     private String root;
-    /** The nucleus sentences of each concept's paragraphs, shown when the concept is asked about. */
+    /**
+     * Holds the nucleus sentences of the paragraphs associated with each concept, used when a concept is being asked
+     * about.
+     */
     private final Map<String, List<String>> nuclei = new LinkedHashMap<>();
     private boolean retried;
     private String lastQuestion;
 
     /**
-     * @param book      the book's name, the root of the tree
-     * @param files     the book's rule files, path to text, in reading order
-     * @param given     concepts given at the start (a textbook's headings), in order; may be empty
-     * @param allowNew  whether the writer may name a concept not in the list
+     * Initializes a concept tree for a book by organizing its rule files into a hierarchy of concepts through a series
+     * of questions to a writer.
+     *
+     * <p>The tree is built by processing the provided files to identify paragraphs, determining which concepts they
+     * explain, and establishing the relationships between those concepts. If {@code allowNew} is true, the writer may
+     * introduce concepts not present in the {@code given} list; otherwise, the writer must choose from the provided
+     * list or the concepts discovered during the process.</p>
+     *
+     * @param book the name of the book, which serves as the root of the tree
+     * @param files a map of rule file names to their text content, used to identify the paragraphs to be processed
+     * @param given a list of initial concepts, such as a table of contents, to serve as the starting nodes of the tree
+     * @param allowNew whether the writer is permitted to name concepts that are not in the initial list or previously
+     * discovered
      */
     public ConceptTree(String book, Map<String, String> files, List<String> given, boolean allowNew) {
         this.book = book;
@@ -77,7 +133,7 @@ public final class ConceptTree implements Questioner {
         for (Map.Entry<String, String> e : files.entrySet()) units.addAll(units(e.getKey(), RuleFile.parse(e.getValue())));
     }
 
-    /** @return the paragraphs this tree places, in reading order */
+    /** Returns the paragraphs of the book in reading order, as a list of {@link Unit}s. */
     public List<Unit> units() {
         return units;
     }
@@ -182,7 +238,17 @@ public final class ConceptTree implements Questioner {
 
     private static final Pattern SAME = Pattern.compile("(?i)^\\s*SAME\\s+(.+?)\\s*$");
 
-    /** {@code SAME <concept>} folds the concept being asked about into that one; {@code DIFFERENT} leaves it. */
+    /**
+     * Folds the concept being asked about into another concept if the reply is {@code SAME <concept>}, or leaves it as
+     * a distinct concept if the reply is {@code DIFFERENT}.
+     *
+     * <p>A reply of {@code SAME <concept>} merges the current concept into the target concept, combining their
+     * paragraphs and nucleus sentences. A reply of {@code DIFFERENT} leaves the current concept as a separate entity
+     * in the tree.
+     *
+     * <p>If the reply does not match either format, the method retries once; if the second attempt also fails, it
+     * records a note about the unreadable answer and leaves the concept as is.
+     */
     private void answerSame(String line) {
         Matcher m = SAME.matcher(line);
         Concept c = concepts.get(key(relating));
@@ -223,7 +289,12 @@ public final class ConceptTree implements Questioner {
         return sb.toString();
     }
 
-    /** The concept the whole document is about becomes the root; every other concept is then taken down from it. */
+    /**
+     * Sets the concept identified in the reply as the root of the tree, or defaults to the first concept found if the
+     * reply is unreadable.
+     *
+     * @param line the raw text reply from the writer
+     */
     private void answerRoot(String line) {
         Concept c = concepts.get(key(clean(line)));
         if (c == null && !retried) {
@@ -238,7 +309,18 @@ public final class ConceptTree implements Questioner {
         startPhase(Phase.DESCEND);
     }
 
-    /** A narrower concept's name takes the concept one step down; {@code HERE} places it under where it stands. */
+    /**
+     * Places a concept within the hierarchy by either nesting it under a narrower concept or keeping it directly under
+     * its current parent.
+     *
+     * <p>If the reply is {@code HERE}, the concept is placed directly under the current parent and the next question
+     * will ask for its relation. If the reply is the name of a narrower concept already in the tree, the current
+     * concept's parent is updated to that concept, and the next question will ask about that new parent. If the reply
+     * is not a known concept or a valid step down, the concept is placed directly under the current parent and a note
+     * is recorded.</p>
+     *
+     * @param line the reply from the writer, which is either the name of a narrower concept or the string {@code HERE}
+     */
     private void answerDescend(String line) {
         if (line.strip().equalsIgnoreCase("HERE")) {
             phase = Phase.RELATION;
@@ -266,7 +348,17 @@ public final class ConceptTree implements Questioner {
         return out;
     }
 
-    /** {@code KIND-OF}, {@code PART-OF} or {@code SETTING-OF} records the relation to the chosen parent. */
+    /**
+     * Records the relation of a concept to its chosen parent in the tree as {@code kind-of}, {@code part-of}, or
+     * {@code setting-of}.
+     *
+     * <p>If the reply contains one of the three specified relation names, the concept is updated in the tree with that
+     * relation; otherwise, if a first attempt at answering failed, the concept is recorded as a {@code part-of}
+     * relation to the parent.
+     *
+     * @param line the text of the writer's reply, which is searched for the relation name or treated as a failed
+     * attempt if no valid relation is found
+     */
     private void answerRelation(String line) {
         Concept c = concepts.get(key(relating));
         String rel = line.strip().toUpperCase(Locale.ROOT).replaceAll("[^A-Z-]", "");
@@ -285,7 +377,10 @@ public final class ConceptTree implements Questioner {
         phase = Phase.DESCEND;
     }
 
-    /** @return whether {@code name} has {@code ancestor} above it (so making {@code ancestor} its child would loop) */
+    /**
+     * Returns true if {@code ancestor} is a parent, grandparent, or higher ancestor of {@code name} in the concept
+     * tree.
+     */
     private boolean isUnder(String name, String ancestor) {
         String p = concepts.get(key(name)).parent();
         Set<String> seen = new HashSet<>();
@@ -307,12 +402,12 @@ public final class ConceptTree implements Questioner {
         retried = false;
     }
 
-    /** @return the concepts, in the order they were found */
+    /** Returns the concepts found in the book, in the order they were discovered. */
     public List<Concept> concepts() {
         return List.copyOf(concepts.values());
     }
 
-    /** @return what could not be read from the writer's answers */
+    /** Returns a list of strings describing what could not be read from the writer's answers. */
     public List<String> notes() {
         return List.copyOf(notes);
     }
@@ -341,7 +436,10 @@ public final class ConceptTree implements Questioner {
         return sb.toString();
     }
 
-    /** What the document says of a concept: the nucleus sentences of its paragraphs, a few of them. */
+    /**
+     * Returns a string containing up to three nucleus sentences of the paragraphs belonging to the specified concept,
+     * each on a new line and cut to 300 characters.
+     */
     private String saying(String name) {
         StringBuilder sb = new StringBuilder();
         int n = 0;
@@ -352,7 +450,10 @@ public final class ConceptTree implements Questioner {
         return sb.toString();
     }
 
-    /** What the document says of a concept, in one line: its first two nucleus sentences, cut short. */
+    /**
+     * Returns a single line containing the first two nucleus sentences of the concept, each cut to 160 characters and
+     * separated by a slash.
+     */
     private String said(String name) {
         List<String> ns = nuclei.getOrDefault(key(name), List.of());
         StringBuilder sb = new StringBuilder();
@@ -405,8 +506,10 @@ public final class ConceptTree implements Questioner {
     }
 
     /**
-     * The tree as a subjects file: the root is the book; each concept is a numbered node under its parent (or the root),
-     * carrying {@code :relation} and {@code :paragraphs}.
+     * Generates a Lisp-style subjects file representing the concept tree of the book, where each concept is a numbered
+     * node under its parent with its relation and paragraphs.
+     *
+     * @param from the name of the file to use as the starting point for the `:from` attribute in the output
      */
     public String subjectsFile(String from) {
         StringBuilder sb = new StringBuilder();
@@ -436,7 +539,12 @@ public final class ConceptTree implements Questioner {
         }
     }
 
-    /** {@code file / rule} entries grouped as {@code rule rule ...} when there is one file, else kept whole. */
+    /**
+     * Returns a list of rule identifiers for the paragraphs belonging to a concept.
+     *
+     * <p>If all paragraphs for the concept come from a single file, the list contains only the rule names, omitting
+     * the file path; otherwise, it contains the full {@code file / rule} strings for each paragraph.</p>
+     */
     private static List<String> paragraphRules(Concept c) {
         Set<String> files = new HashSet<>();
         for (String p : c.paragraphs()) files.add(p.substring(0, p.indexOf(" / ")));
@@ -453,8 +561,12 @@ public final class ConceptTree implements Questioner {
      * paragraph (or a list or table) and becomes one unit.
      */
     /**
-     * @return the whole text of one paragraph (or list) of a rule file, its sentences in order; for a code block, the
-     *         name of the file beside the rule file that holds the code, prefixed with {@code file:}
+     * Returns the text of a paragraph or list from a rule file. The result is the sequence of sentences in the
+     * paragraph, or if the rule contains a {@code :file} attribute, a string in the form {@code file:path/to/file}.
+     *
+     * @param fileText the text of the rule file
+     * @param rule the name of the rule to extract
+     * @return the text of the paragraph, or null if the rule is not found
      */
     public static String paragraphText(String fileText, String rule) {
         RuleFile f = RuleFile.parse(fileText);
@@ -464,7 +576,13 @@ public final class ConceptTree implements Questioner {
         return String.join(" ", textOf(f, rule, new HashSet<>()));
     }
 
-    /** @return the paragraphs of one rule file, the way the concept tree reads them: its text, path to its paragraphs */
+    /**
+     * Returns a list of {@link Unit} objects representing the paragraphs found in a rule file, ordered as they appear
+     * in the document.
+     *
+     * @param file the path to the file containing the text
+     * @param text the content of the rule file to be parsed
+     */
     public static List<Unit> paragraphs(String file, String text) {
         return units(file, RuleFile.parse(text));
     }
@@ -490,7 +608,12 @@ public final class ConceptTree implements Questioner {
         }
     }
 
-    /** A string of its own (not an attribute's value such as a heading), a {@code :nucleus} or a {@code :kind} makes a paragraph. */
+    /**
+     * Determines if a rule represents a paragraph.
+     *
+     * <p>A rule is a paragraph if it contains a string that is not an attribute's value (such as a heading) or if it
+     * contains the keywords {@code :nucleus} or {@code :kind}.</p>
+     */
     private static boolean isParagraph(RuleFile.Rule r) {
         List<RuleFile.Token> items = r.items();
         for (int i = 0; i < items.size(); i++) {

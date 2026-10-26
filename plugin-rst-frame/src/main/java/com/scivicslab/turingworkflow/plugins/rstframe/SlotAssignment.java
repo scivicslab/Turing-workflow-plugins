@@ -10,42 +10,81 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Assigns each paragraph of a concept to what can be said of the concept's class, by asking a writer one question at
- * a time ({@code FrameMakingWorkflow_261022_oo01}, step 3; {@code ConceptClasses_261022_oo01}).
+ * Assigns paragraphs of a concept or blanks of an explanation frame to the slots of concept classes by asking a writer
+ * a sequence of questions.
  *
- * <p>The concepts and their paragraphs come from step 2's concept tree. Every lookup in the class tree is done here,
- * through {@link ConceptClasses}; the writer is only asked to judge what it is shown. For one concept, in order:</p>
- * <ol>
- *   <li>Where it is: the class of the same name if there is one; else the root classes are shown and the writer says
- *       which one the concept is a kind of, then that class's subclasses, until it stops. A concept that is a kind of
- *       none of them gets a general kind named by the writer, which becomes a new class.</li>
- *   <li>Each paragraph: what can be said of the class (its slots, inherited ones included) is shown and the writer
- *       says which question the paragraph answers, or names a new one, or says it is aside.</li>
- *   <li>A new question: the class and its superclasses are shown and the writer says the broadest one the question
- *       can be asked of. The slot is added there, and every class under it inherits it from then on.</li>
- * </ol>
- * <p>Classes and slots added are proposals; the result lists them with the assignments.</p>
+ * <p>The workflow uses this to build a hierarchy of concept classes and their properties. For each concept, the writer
+ * is asked to:
+ * <ul>
+ * <li>Locate the concept within the existing class hierarchy or define a new general kind.</li>
+ * <li>Assign each paragraph or blank to a specific slot (a question that can be asked of any instance of that class)
+ * or mark it as an aside.</li>
+ * <li>If a paragraph answers a question not yet asked of the class, the writer determines the broadest class to which
+ * that question applies.</li>
+ * </ul>
+ *
+ * <p>The class keeps track of the concepts processed, the classes added or modified, and any notes regarding answers
+ * that could not be parsed. One instance serves one workflow.
+ *
+ * <p>An action result is a success if the writer provides an answer in the expected format; if the answer is
+ * unreadable, the next call to {@code nextQuestion} returns a message asking for a correction.
+ *
+ * <p>The result of the assignment is available through:
+ * <ul>
+ * <li>{@code placed()}: a list of each concept's assigned class and the references to its paragraphs.</li>
+ * <li>{@code added()}: a list of the names of the new classes defined during the process.</li>
+ * <li>{@code grown()}: a list of the names of existing classes that had new slots added.</li>
+ * <li>{@code notes()}: a list of messages describing what could not be read from the writer's answers.</li>
+ * <li>{@code resultFile(String from)}: a string of Lisp code representing the proposed class and slot assignments,
+ * including a header with the source and any notes.</li>
+ * </ul>
  */
 public final class SlotAssignment implements Questioner {
 
     /**
-     * One concept and its paragraphs (or a frame's blanks), each kept with the reference the result writes for it; for a
-     * frame, the sub-frame each blank names ({@code :frame}) and the frame file the concept came from.
+     * Holds the data for a single concept being processed, including its name, the references to its paragraphs or
+     * blanks, the units of text, any associated sub-frames, and the source file.
+     *
+     * @param name the name of the concept
+     * @param refs the list of references (e.g., rule names) for each paragraph or blank
+     * @param units the list of {@link ConceptTree.Unit} objects representing the text segments
+     * @param frames a mapping from rule names to the names of sub-frames they represent
+     * @param source the name of the file from which the concept or its units were taken
      */
     record Work(String name, List<String> refs, List<ConceptTree.Unit> units, Map<String, String> frames, String source) {
     }
 
-    /** What the units are: a book's paragraphs, or an explanation frame's blanks. The questions are worded for it. */
+    /**
+     * Distinguishes whether the input consists of a book's paragraphs or an explanation frame's blanks to determine
+     * how questions are worded.
+     */
     private enum Material { BOOK, FRAME }
 
-    /** Where a concept's paragraphs went: its class, and for each slot (or {@code :aside}) the paragraphs. */
+    /**
+     * Records the assignment of a concept's paragraphs to a specific class and its slots.
+     *
+     * <p>The record contains:
+     * <ul>
+     * <li>{@code concept}: the name of the concept being assigned</li>
+     * <li>{@code cls}: the name of the class it was assigned to</li>
+     * <li>{@code slots}: a mapping from each slot name (or {@code :aside}) to the list of paragraph references that
+     * answer it</li>
+     * </ul>
+     *
+     * @param concept the name of the concept
+     * @param cls the name of the class
+     * @param slots the mapping of slot names to paragraph references
+     */
     record Placed(String concept, String cls, Map<String, List<String>> slots) {
     }
 
     private static final Pattern SUBJECT = Pattern.compile("^\\(subject \"[^\"]*\" \"((?:[^\"\\\\]++|\\\\.)*+)\"(.*)\\)\\s*$");
     private static final Pattern PARAGRAPHS = Pattern.compile(":paragraphs \"((?:[^\"\\\\]++|\\\\.)*+)\"");
     private static final Pattern REF = Pattern.compile("\\S+ / \\S+|\\S+");
-    /** {@code NEW: name: text}, or {@code name: text} as writers often answer: a name and what it stands for. */
+    /**
+     * Matches a line that specifies a name and a description, optionally prefixed with {@code NEW:}, in the form
+     * {@code name: text} or {@code NEW: name: text}.
+     */
     private static final Pattern NAMED = Pattern.compile("(?i)^\\s*(?:NEW\\s*:\\s*)?([^:]+?)\\s*:\\s*(.+?)\\s*$");
     private static final Pattern SAME = Pattern.compile("(?i)^\\s*SAME\\s*:?\\s*(.+?)\\s*$");
     private static final String ASIDE = ":aside";
@@ -62,32 +101,46 @@ public final class SlotAssignment implements Questioner {
     /** The book's rule files, as they were given, so that a reader of the result can find each paragraph. */
     private final List<String> files;
     private final Material material;
-    /** For each frame file whose concept has been placed, the class it became: the type of a slot whose blank names it. */
+    /** Maps each frame file to the class it became, used to link a slot's type to the sub-frame it names. */
     private final Map<String, String> frameClasses = new LinkedHashMap<>();
 
     private int concept = -1;
     private Phase phase = Phase.LOCATE;
-    /** While locating: the class the concept is being taken down from, {@code null} at the roots. */
+    /**
+     * The class the concept is being taken down from during the locating phase; {@code null} if the concept is being
+     * compared against the root classes.
+     */
     private String at;
     private String cls;
     private int paragraph;
     private String newSlot;
     private String newQuestion;
     private boolean retried;
-    /** The last answer named a new question after the concept itself. */
+    /** Indicates whether the last answer provided by the writer named the concept itself within a new question. */
     private boolean namedItself;
-    /** For a frame: the one-line definition of the concept the writer gave, the class's documentation if it becomes one. */
+    /**
+     * Holds the one-line English sentence that describes what a concept is, used when the writer is asked to define a
+     * concept that is not already known.
+     */
     private String definition;
     /** The class the writer said the concept is the same thing as, until that is confirmed. */
     private String sameAs;
-    /** Classes the writer said, when asked to confirm, the concept is not the same thing as. */
+    /**
+     * Holds the names of classes that the writer has explicitly rejected as being the same thing as the current
+     * concept.
+     */
     private final Set<String> notSame = new LinkedHashSet<>();
 
     /**
-     * @param book      the book's name
-     * @param files     the book's rule files, path to text
-     * @param subjects  step 2's concept tree: {@code (subject "n" "name" ... :paragraphs "...")} lines
-     * @param classes   the concept classes to place the concepts in; this work adds to them
+     * Sets up a state for assigning each paragraph of a concept to a specific class by asking a writer a sequence of
+     * questions.
+     *
+     * @param book the book's name
+     * @param files a map of the book's rule files, where the key is the file path and the value is the file content
+     * @param subjects a string containing the concept tree from step 2, with lines in the format {@code (subject "n"
+     * "name" ... :paragraphs "...")}
+     *
+     * @param classes the concept classes to be populated or extended by this work
      */
     public SlotAssignment(String book, Map<String, String> files, String subjects, ConceptClasses classes) {
         this.book = book;
@@ -140,13 +193,16 @@ public final class SlotAssignment implements Questioner {
     }
 
     /**
-     * The same questions asked of an integrated explanation frame, so that its blanks become the slots of concept classes
-     * ({@code ConceptClasses_261022_oo01}). Each sub-frame file ({@code top.message-kind.lisp}) is one concept; in the top
-     * frame, the blanks under one {@code *-part} rule are one concept, and the blanks under no part are the concept the
-     * frame explains. A blank that names a sub-frame ({@code :frame}) becomes a slot typed with the sub-frame's class.
+     * Creates a {@code SlotAssignment} from an integrated explanation frame.
      *
-     * @param top        the top frame's name, {@code explain-agent-harness}
-     * @param frameFiles the top frame and its sub-frames, path to text
+     * <p>The resulting object uses the blanks in the frame as instructions for a writer to determine the classes and
+     * slots for the concepts described in the frame. Each sub-frame file is treated as a single concept; in the top
+     * frame, the blanks under a {@code *-part} rule form one concept, and the blanks under no part form the concept
+     * the frame itself explains. A blank that names a sub-frame becomes a slot typed with that sub-frame's class.</p>
+     *
+     * @param top the name of the top frame, such as {@code explain-agent-harness}
+     * @param frameFiles a map of frame file names to their text content, including the top frame and all sub-frames
+     * @param classes the concept classes to be populated by the assignment process
      */
     public static SlotAssignment fromFrame(String top, Map<String, String> frameFiles, ConceptClasses classes) {
         List<Work> subs = new ArrayList<>();
@@ -360,7 +416,10 @@ public final class SlotAssignment implements Questioner {
         if (classes.subclasses(kind).isEmpty()) place(kind);
     }
 
-    /** Makes the concept a class under {@code superclass} ({@code null} for none) and turns to its paragraphs. */
+    /**
+     * Defines the concept as a class under the specified {@code superclass} and moves to processing its paragraphs. If
+     * {@code superclass} is {@code null}, the concept is defined as a new root class.
+     */
     private void place(String superclass) {
         Work w = work();
         String name = ConceptClasses.lispName(w.name());
@@ -533,27 +592,45 @@ public final class SlotAssignment implements Questioner {
 
     // ---- the result ----
 
-    /** @return each concept's class and where its paragraphs went, in the order of the tree */
+    /**
+     * Returns a list of assignments, where each entry contains a concept's name, the class it was assigned to, and a
+     * mapping from each slot name to the list of paragraphs that answer it.
+     */
     public List<Placed> placed() {
         return List.copyOf(placed);
     }
 
-    /** @return the classes this work defined, in order */
+    /** Returns the names of the new concept classes defined during the assignment process. */
     public List<String> added() {
         return List.copyOf(added);
     }
 
-    /** @return the classes that were there before and got slots added */
+    /**
+     * Returns a list of the names of classes that existed before this work began but had new slots added to them.
+     */
     public List<String> grown() {
         return List.copyOf(grown);
     }
 
-    /** @return what could not be read from the writer's answers */
+    /**
+     * Returns a list of strings that record what could not be read from the writer's answers.
+     *
+     * <p>Each string contains the name of the concept and the specific text that failed to match the expected format
+     * or the reason a class could not be found. These notes are included in the output of {@link #resultFile(String)}
+     * to help a person review the assignments.</p>
+     */
     public List<String> notes() {
         return List.copyOf(notes);
     }
 
-    /** The classes added or grown, as {@code defclass} forms, then one {@code (assign ...)} per concept. */
+    /**
+     * Generates a Lisp-style text file containing the proposed concept classes and the assignment of paragraphs to
+     * their respective slots.
+     *
+     * @param from the name of the source or process that produced the assignments, used in the file header.
+     * @return a string containing the full content of the definition file, including headers, class definitions, and
+     * assignment blocks.
+     */
     public String resultFile(String from) {
         StringBuilder sb = new StringBuilder();
         sb.append(";;; Paragraphs of ").append(book).append(" assigned to what can be said of each concept's class\n")
@@ -579,7 +656,7 @@ public final class SlotAssignment implements Questioner {
 
     // ---- helpers ----
 
-    /** @return whether a new question is the concept's own name, or names the concept */
+    /** Returns true if the provided slot or question names the current concept. */
     private boolean namesTheConcept(String slot, String question) {
         String c = ConceptClasses.lispName(work().name());
         return slot.equals(c) || (" " + ConceptClasses.lispName(question).replace('-', ' ') + " ").contains(" " + c.replace('-', ' ') + " ");

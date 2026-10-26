@@ -8,18 +8,33 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * {@link OcrPages} をアクターとして動かし、その操作をワークフローYAMLへ公開する。
+ * Extracts text and metadata from pages of a document file.
  *
- * <p>状態は持たない。持つのは包んだ {@code OcrPages} のほうであり、これが {@code ActorRef} の
- * 前提である——アクターとは、素のオブジェクトと、それを動かす参照の対である。状態をこちら側に置き
- * {@code null} を包むと、{@code isAlive()} が偽を返し、{@code tell}/{@code ask} が黙って失敗する
- * （{@code ActorSuffixAndOwnedActorRef_260722_oo01} 「実例（2026-08-30）」）。</p>
+ * <ul><li>loadFile: loads a file from the given path.</li><li>nextPage: advances to the next page in the
+ * document.</li><li>getPageText: returns the text content of the current page.</li><li>getPageInfo: returns the
+ * metadata and structural information of the current page.</li></ul>
+ *
+ * <p>The actor holds the state of the current document and its position within the file.</p>
+ *
+ * <p>One instance serves one workflow at a time.</p>
+ *
+ * <p>Example workflow step:</p>
+ * <pre>{@code
+ * actor: kanakanji_ocr
+ * method: loadFile
+ * arguments:
+ *   path: /path/to/book.md
+ * }</pre>
+ *
+ * <p>If the file cannot be found or read, the actions return a failed action result.</p>
  */
 public class OcrActor extends IIActorRef<OcrPages> {
 
     /**
-     * @param name   このアクターの登録名
-     * @param system 所属するアクターシステム
+     * Initializes a new actor that performs OCR on pages of a document.
+     *
+     * @param name the name used to call this actor in a workflow
+     * @param system the actor system this actor belongs to
      */
     public OcrActor(String name, IIActorSystem system) {
         super(name, new OcrPages(), system);
@@ -30,9 +45,9 @@ public class OcrActor extends IIActorRef<OcrPages> {
     }
 
     /**
-     * Which file the pages are read from.
+     * Holds the file path from which the pages are read.
      *
-     * @param path the file's path
+     * @param path the path to the file
      */
     public record FileArgs(@NotNull String path) {}
 
@@ -42,8 +57,10 @@ public class OcrActor extends IIActorRef<OcrPages> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Advances the internal page pointer to the next page in the loaded file.
+     *
+     * @param args the argument from the workflow
+     * @return an action result containing the outcome of the operation
      */
     @Action("nextPage")
     public ActionResult nextPage(String args) {
@@ -51,8 +68,10 @@ public class OcrActor extends IIActorRef<OcrPages> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Returns the result of the current page's text extraction.
+     *
+     * @param args the argument from the workflow
+     * @return the action result from the underlying {@code OcrPages} object
      */
     @Action("getPageText")
     public ActionResult getPageText(String args) {
@@ -60,8 +79,11 @@ public class OcrActor extends IIActorRef<OcrPages> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Returns an action result containing the information for the current page.
+     *
+     * @param args the workflow arguments
+     * @return an action result that is a success and holds the page information in its message if the operation
+     * succeeded, or is not a success if it failed
      */
     @Action("getPageInfo")
     public ActionResult getPageInfo(String args) {

@@ -8,28 +8,59 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Makes a tree of concept classes smaller ({@code ConceptClasses_261022_oo01}): a subclass stays a class only while it
- * says something its superclass does not; one that says nothing more becomes a value (an instance) of its superclass.
- * Run between runs of step 3, which grow the tree; the two alternate.
+ * Reduces the hierarchy of concept classes by moving shared slots up to superclasses and converting subclasses that
+ * add no new information into instances of their superclass. This is run between runs of step 3 to keep the tree from
+ * growing indefinitely.
  *
- * <p>The candidates are found by the program; the writer is asked only whether a difference is worth keeping. In order:</p>
- * <ol>
- *   <li>A slot two or more subclasses of one class each define under the same name goes up to that class (no question).</li>
- *   <li>For each slot a class with no subclasses defines itself, the writer is shown its superclass and the other
- *       kinds of it, and asked whether the question can be asked of every kind of the superclass. If so, it goes up.</li>
- *   <li>A class with no subclasses and no slot of its own becomes a value of its superclass, repeatedly, so that a
- *       class whose kinds all became values can become one in turn (no question). The paragraphs assigned to it are
- *       assigned to the superclass, and the concept's name is kept as the value's name.</li>
- * </ol>
- * <p>The result is one file that stands alone: every class, the values, and the assignments, with what was done.</p>
+ * <ul>
+ * <li>{@code nextQuestion} returns a text question asking whether a specific slot of a class can be moved to its
+ * superclass.</li>
+ * <li>{@code answer} processes a reply to the current question, accepting "YES" to move the slot up or "NO" to keep it
+ * where it is.</li>
+ * <li>{@code done} returns a list of descriptions of the changes made, such as which slots were moved or which classes
+ * became values.</li>
+ * <li>{@code notes} returns a list of descriptions for replies that could not be parsed.</li>
+ * <li>{@code placed} returns the list of assignments, each pointing to the class where the concept currently
+ * resides.</li>
+ * <li>{@code resultFile} returns a standalone string containing the new class hierarchy, the instances, and the
+ * assignments.</li>
+ * </ul>
+ *
+ * <p>One instance may serve several workflows or threads at once.</p>
+ *
+ * <pre>{@code
+ * // Example of calling the questioner in a workflow
+ * actor: consolidation
+ * method: nextQuestion
+ * ...
+ * actor: consolidation
+ * method: answer
+ * arguments: YES
+ * }</pre>
+ *
+ * <p>If a reply to a question is not "YES" or "NO", the answer is ignored and a note is recorded.</p>
  */
 public final class ConceptConsolidation implements Questioner {
 
-    /** One {@code (assign ...)} form: a concept, its class, and for each slot ({@code :aside} too) the paragraphs. */
+    /**
+     * Represents a single {@code (assign ...)} form: a concept, the class it belongs to, and the paragraphs assigned
+     * to each of its slots (including {@code :aside}).
+     *
+     * @param concept the name of the concept
+     * @param cls the name of the class the concept is assigned to
+     * @param slots a mapping from slot names to the lists of paragraph strings assigned to them
+     */
     public record Assignment(String concept, String cls, Map<String, List<String>> slots) {
     }
 
-    /** One question to ask: whether a slot of a class can go up to the class's superclass. */
+    /**
+     * Represents a single question to ask the writer: whether a specific slot of a class can be moved up to that
+     * class's superclass.
+     *
+     * @param cls the class that currently owns the slot
+     * @param superclass the potential new owner of the slot
+     * @param slot the specific slot being considered for movement
+     */
     private record Candidate(String cls, String superclass, ConceptClasses.OwnSlot slot) {
     }
 
@@ -49,8 +80,13 @@ public final class ConceptConsolidation implements Questioner {
     private boolean finished;
 
     /**
-     * @param classes the classes to make smaller: the class files, with the result of step 3 read on top of them
-     * @param result  that result's text, for its assignments ({@code ""} when there is none)
+     * Initializes the consolidation process by preparing the class hierarchy for reduction.
+     *
+     * @param classes the class hierarchy to be made smaller, containing the current class files and the results of the
+     * previous step 3 run
+     *
+     * @param result the text from the previous step 3 run, used to restore assignments (an empty string if no
+     * assignments exist)
      */
     public ConceptConsolidation(ConceptClasses classes, String result) {
         this.classes = classes;
@@ -114,7 +150,7 @@ public final class ConceptConsolidation implements Questioner {
 
     // ---- what the program does without asking ----
 
-    /** A slot name two or more subclasses of one class define goes up to that class. */
+    /** Moves slots that are defined by two or more subclasses of the same class up to that parent class. */
     private void pullUpSharedSlots() {
         for (String parent : classes.names()) {
             Map<String, List<String>> bySlot = new LinkedHashMap<>();
@@ -144,7 +180,10 @@ public final class ConceptConsolidation implements Questioner {
         done.add("moved " + slot.name() + " up from " + cls + " to " + superclass + ": " + why);
     }
 
-    /** Every class with no subclasses, one superclass and no slot of its own becomes a value, until none is left. */
+    /**
+     * Converts classes that have no subclasses, no superclasses other than one, and no slots of their own into values
+     * of that superclass, repeating the process until no more such classes remain.
+     */
     private void toValues() {
         boolean changed = true;
         while (changed) {
@@ -170,22 +209,38 @@ public final class ConceptConsolidation implements Questioner {
 
     // ---- the result ----
 
-    /** @return what was done, one line each */
+    /**
+     * Returns a list of descriptions of the changes made to the concept tree, such as moving a slot up to a superclass
+     * or turning a class into a value.
+     */
     public List<String> done() {
         return List.copyOf(done);
     }
 
-    /** @return what could not be read from the writer's answers */
+    /**
+     * Returns a list of descriptions for answers that were not recognized as YES or NO.
+     *
+     * @return a list of strings describing the unrecognized replies and the corresponding class or slot.
+     */
     public List<String> notes() {
         return List.copyOf(notes);
     }
 
-    /** @return the assignments, each pointing at the class it is in now */
+    /** Returns a list of the assignments, each pointing to the class the concept is in now. */
     public List<Assignment> placed() {
         return List.copyOf(assignments);
     }
 
-    /** The tree made smaller, as one file that stands alone: every class, superclasses first, the values, and the assignments. */
+    /**
+     * Returns a string containing the consolidated concept hierarchy, including all classes, their superclasses, the
+     * newly created instances, and the original assignments.
+     *
+     * <p>The string is formatted as a standalone Lisp-style file that includes a header, a log of all changes made
+     * during consolidation, and the current state of the concept tree.</p>
+     *
+     * @param from the name of the source used to label the header of the resulting file
+     * @return a string representing the complete, standalone proposal for the simplified concept hierarchy
+     */
     public String resultFile(String from) {
         StringBuilder sb = new StringBuilder();
         sb.append(";;; The concept classes of ").append(from).append(", made smaller (ConceptClasses_261022_oo01): a subclass that\n")
@@ -214,7 +269,12 @@ public final class ConceptConsolidation implements Questioner {
         return sb.toString();
     }
 
-    /** @return the {@code (assign ...)} forms of a result of step 3, one concept each */
+    /**
+     * Returns a list of assignments extracted from the text, where each assignment links a concept to a class and its
+     * various slots.
+     *
+     * @param text the text containing {@code (assign ...)} forms to be parsed
+     */
     public static List<Assignment> assignments(String text) {
         List<Assignment> out = new ArrayList<>();
         Assignment cur = null;

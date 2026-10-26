@@ -6,33 +6,40 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Runs the steps that read a book's structure into the H2 database ({@code FrameOntology_261021_oo01}). No LLM is used.
+ * Populates an H2 database with the structural and conceptual data extracted from a book's markdown files.
  *
- * <pre>java ... BookImport toc &lt;db-file&gt; &lt;book-name&gt; &lt;book-dir&gt;
- * java ... BookImport toc-llm &lt;db-file&gt; &lt;book-name&gt; &lt;book-dir&gt; &lt;chat-url&gt; &lt;model&gt;
- * java ... BookImport sections &lt;db-file&gt; &lt;book-name&gt;
- * java ... BookImport rules &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
- * java ... BookImport concepts &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
- * java ... BookImport judge &lt;db-file&gt; &lt;book-name&gt;
- * java ... BookImport relations &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
- * java ... BookImport review &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
- * java ... BookImport similar &lt;db-file&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; &lt;embed-url&gt; &lt;embed-model&gt; [section-number...]
- * java ... BookImport relations-of-concepts &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
- * java ... BookImport properties &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
- * java ... BookImport causes &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
- * java ... BookImport groups &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
- * java ... BookImport patterns &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
- * java ... BookImport items &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
- * java ... BookImport identify|merge|generalize &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [id...]
- * java ... BookImport collect &lt;db-file&gt; &lt;book-name&gt; &lt;chat-url&gt; &lt;model&gt; &lt;parallel&gt; [section-number...]
- * java ... BookImport prune &lt;db-file&gt; &lt;book-name&gt; &lt;min-rules&gt;</pre>
- * {@code toc}: reads the table of contents from the headings of every markdown file under the book's directory, in path
- * order, and replaces the book's rows of {@code toc_node}. {@code sections}: cuts the book's text into the nodes
- * {@code toc} stored, and replaces the book's rows of {@code section_text}. {@code rules}: makes each section without a
- * rule file (or each section named) into an rst-on-lisp rule file, asking the model at the chat endpoint. {@code concepts}:
- * lists the concepts each section without a list (or each section named) explains, one question per section.
- * {@code judge}: judges which listed concepts to keep, by each section's rst-on-lisp structure ({@link ConceptImportance}).
- * {@code relations}: asks how the kept concepts of each section relate: is-a, part-of, feature ({@link SectionRelations}).
+ * <ul>
+ * <li>{@code toc} reads the table of contents from the headings of every markdown file in the book's directory and
+ * replaces the rows of {@code toc_node}.</li>
+ * <li>{@code toc-llm} reads the table of contents using a local LLM and replaces the rows of {@code toc_node}.</li>
+ * <li>{@code sections} cuts the book's text into the nodes stored by {@code toc} and replaces the rows of {@code
+ * section_text}.</li>
+ * <li>{@code rules} generates rst-on-lisp rule files for each section using a local LLM.</li>
+ * <li>{@code concepts} identifies the concepts explained in each section using a local LLM.</li>
+ * <li>{@code judge} selects which identified concepts to keep based on the section's rst-on-lisp structure.</li>
+ * <li>{@code relations} identifies how the kept concepts relate to one another (e.g., is-a, part-of) using a local
+ * LLM.</li>
+ * <li>{@code similar} finds concepts in other sections that are similar to the target concepts using embeddings and a
+ * local LLM.</li>
+ * <li>{@code relations-of-concepts} extracts the relationships between concepts using a local LLM.</li>
+ * <li>{@code properties} extracts the properties (what a concept is, has, or does) of each concept using a local
+ * LLM.</li>
+ * <li>{@code causes} extracts the causal and motivational relationships between concepts using a local LLM.</li>
+ * <li>{@code groups} extracts the way concepts are grouped into units of explanation using a local LLM.</li>
+ * <li>{@code patterns} identifies the patterns of explanation used in the text using a local LLM.</li>
+ * <li>{@code items} extracts the specific components of a concept (e.g., elements of a set, parts of a structure)
+ * using a local LLM.</li>
+ * <li>{@code identify}, {@code merge}, or {@code generalize} processes the identified concepts into generalized frames
+ * using a local LLM.</li>
+ * <li>{@code collect} gathers the materials required for the generalized frames using a local LLM.</li>
+ * <li>{@code prune} removes concepts from the database that do not meet a minimum rule count.</li>
+ * </ul>
+ *
+ * <pre>{@code
+ * BookImport toc <db-file> <book-name> <book-dir>
+ * BookImport rules <db-file> <book-name> <chat-url> <model> <parallel> [section-number...]
+ * BookImport similar <db-file> <chat-url> <model> <parallel> <embed-url> <embed-model> [section-number...]
+ * }</pre>
  */
 public final class BookImport {
 

@@ -6,35 +6,54 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Turns one sub-section of a book into one sample: a rule file of the sub-section's sentences with
- * their relations, under the name of the sub-section's structure
- * ({@code FramesAndSamplesFromBooks_261021_oo01}).
+ * Transforms a book sub-section into a sample consisting of a rule file of the sub-section's sentences and their
+ * relations, organized under the sub-section's structural name.
  *
- * <p>A workflow drives it with three steps: take {@link #nextQuestion()}; when there is one, ask the
- * writer and hand the reply to {@link #answer(String)}; when there is none, write
- * {@link #sampleFile()} and {@link #codeFiles()}. Every paragraph is asked about twice: its OCR
- * misreadings, then its sentences' relations. A relation answer that cannot be read is asked once
- * more. Code, formulas and lists need no question. Last, the writer is asked in one sentence what
- * the sub-section does for its reader; that is the sample's {@code use} line.</p>
+ * <ul>
+ * <li>{@link #nextQuestion()} returns the next question for the writer, or {@code null} when the run is finished.</li>
+ * <li>{@link #answer(String)} takes the writer's reply to the current question.</li>
+ * <li>{@link #sampleFile()} returns the completed sample's rule file.</li>
+ * <li>{@link #codeFiles()} returns a map of the code and formula blocks by the file names their rules specify.</li>
+ * <li>{@link #outcome()} returns whether the run produced a new sample, found an existing one, or skipped the
+ * sub-section.</li>
+ * <li>{@link #outcomeName()} returns the name of the sample found or created, or {@code null} if the run was
+ * skipped.</li>
+ * <li>{@link #outcomeNote()} returns the reason why the run was skipped.</li>
+ * <li>{@link #alsoSeen()} returns the book's file path and the sub-section's heading.</li>
+ * </ul>
  *
- * <p>The sample file begins with three comment lines that are all a catalogue of samples and frames
- * needs: {@code use} (when a frame made from it is for), {@code source} (the book's file and
- * heading), and {@code shape} (each block's relations, in order, read off the rules).</p>
+ * <p>A workflow drives this actor with a sequence of steps: call {@link #nextQuestion()}; if a question is returned,
+ * call {@link #answer(String)} with the reply; when {@link #nextQuestion()} returns {@code null}, call {@link
+ * #sampleFile()} and {@link #codeFiles()} to save the results.</p>
  *
- * <p>Two things are recorded as comments before a paragraph's rule rather than hidden: a correction
- * not taken because it changed too much, and relations the writer did not give, in which case the
- * first sentence is the nucleus and the others elaborate it.</p>
+ * <p>The sample file contains three header lines: {@code use} (the sub-section's purpose), {@code source} (the book's
+ * file and heading), and {@code shape} (the sequence of block relations). Relations that the writer does not provide
+ * are recorded as comments before the paragraph's rule, noting that the first sentence is treated as the nucleus.</p>
+ *
+ * <pre>{@code
+ * actor: book-to-rules
+ * method: nextQuestion
+ * // ...
+ * }</pre>
  */
 public final class BookToRules implements Questioner {
 
     private enum Phase { OCR, RELATIONS, RELATIONS_AGAIN, USE, JUDGE, JUDGE_AGAIN }
 
-    /** What a run leaves: a new sample, one more source for a sample already there, or nothing. */
+    /**
+     * The result of a run, representing whether a new sample was created, an existing sample was found to be the same,
+     * or the sub-section was skipped.
+     *
+     * <ul><li>{@code NEW} means a new sample with a new structure name was created.</li><li>{@code SAME} means the
+     * sub-section matches the structure of an existing sample, and the existing sample's name is
+     * returned.</li><li>{@code SKIP} means the sub-section is a one-off or not reusable and no sample is
+     * left.</li></ul>
+     */
     public enum Outcome { NEW, SAME, SKIP }
 
-    /** Stands for the sample's name in rules and file names until the name is known. */
+    /** The placeholder used in rule and file names for the sample's name until it is determined. */
     private static final String NAME = "\u0000name\u0000";
-    /** How many samples nearest in shape the writer is shown when judging. */
+    /** The number of samples with a similar structure shown to the writer during the judgement phase. */
     private static final int CANDIDATES = 5;
     private static final java.util.regex.Pattern JUDGEMENT =
             java.util.regex.Pattern.compile("(?im)^\\s*(same|new)\\s*:\\s*([a-z0-9]+(?:-[a-z0-9]+)*)\\s*$|^\\s*(skip)\\b");
@@ -65,21 +84,37 @@ public final class BookToRules implements Questioner {
     private boolean finished;
 
     /**
-     * @param file    one file of a book's markdown
-     * @param source  that file's path
+     * Initializes a process to turn a sub-section of a book into a sample by reading its markdown file and extracting
+     * its structure and sentence relations.
+     *
+     * @param file one file of a book's markdown
+     * @param source that file's path
      * @param heading the title of the sub-section to read, as the file writes it
-     * @param name    the name of the sub-section's structure, a verb phrase such as
-     *                {@code explain-program-by-whole-example}; the sample and the frame made from it share it
-     * @throws IllegalArgumentException when the file has no such heading, or the name is not a plain name
+     * @param name the name of the sub-section's structure, a verb phrase such as {@code
+     * explain-program-by-whole-example}; the sample and the frame made from it share it
+     *
+     * @throws IllegalArgumentException if the file has no such heading, or the name is not a plain name (lower-case
+     * words joined by '-')
      */
     public BookToRules(String file, String source, String heading, String name) {
         this(file, source, heading, name, List.of());
     }
 
     /**
-     * @param name    the sample's name, or {@code null} to have the writer name a new structure
-     * @param catalog the samples already there, against which the sub-section's structure is judged;
-     *                empty and with a name given, the sub-section becomes a new sample without a judgement
+     * Initializes a process to turn a book sub-section into a sample by reading its text and asking a writer to verify
+     * its structure and use.
+     *
+     * @param file one file of a book's markdown
+     * @param source that file's path
+     * @param heading the title of the sub-section to read, as the file writes it
+     * @param name the name of the sub-section's structure, a verb phrase such as {@code
+     * explain-program-by-whole-example}; the sample and the frame made from it share it
+     *
+     * @param catalog the samples already there, against which the sub-section's structure is judged; empty and with a
+     * name given, the sub-section becomes a new sample without a judgement
+     *
+     * @throws IllegalArgumentException if the file has no such heading, or the name is not a plain name (lower-case
+     * words joined by '-')
      */
     public BookToRules(String file, String source, String heading, String name, List<SampleCatalog.Entry> catalog) {
         if (name != null && !isName(name)) {
@@ -96,27 +131,43 @@ public final class BookToRules implements Questioner {
         return s.matches("[a-z0-9]+(?:-[a-z0-9]+)*");
     }
 
-    /** @return what the run leaves; {@code null} until {@link #nextQuestion()} has returned {@code null} */
+    /**
+     * Returns the result of the run, which is either a new sample, a source for an existing sample, or nothing.
+     *
+     * <p>Returns {@code null} until {@link #nextQuestion()} has returned {@code null}.
+     */
     public Outcome outcome() {
         return outcome;
     }
 
-    /** @return the new sample's name, or the name of the sample the sub-section was found the same as; {@code null} for {@link Outcome#SKIP} */
+    /**
+     * Returns the name of the new sample, or the name of the existing sample if the sub-section was found to have the
+     * same structure; returns {@code null} if the run resulted in {@link Outcome#SKIP}.
+     */
     public String outcomeName() {
         return outcome == Outcome.SKIP ? null : name;
     }
 
-    /** @return why nothing is left, for {@link Outcome#SKIP} */
+    /**
+     * Returns a string explaining why the run resulted in {@link Outcome#SKIP}, or an empty string if the outcome was
+     * not {@link Outcome#SKIP}.
+     */
     public String outcomeNote() {
         return outcomeNote;
     }
 
-    /** @return the line to add to the sample found the same: the book's file and the sub-section's heading */
+    /** Returns a string that is the book's file path and the sub-section's heading, separated by a slash. */
     public String alsoSeen() {
         return source + " / " + heading;
     }
 
-    /** @return the next question for the writer, or {@code null} when the run is done */
+    /**
+     * Returns the next question for the writer, or {@code null} when the run is finished.
+     *
+     * <p>The question is a text string that asks the writer to correct OCR misreadings, identify sentence relations,
+     * state the sub-section's purpose, or judge the sub-section's structure against existing samples. A return of
+     * {@code null} signals that all blocks have been processed and the final judgement has been made.
+     */
     public String nextQuestion() {
         if (question != null) return question;
         while (!finished) {
@@ -172,7 +223,23 @@ public final class BookToRules implements Questioner {
         return null;
     }
 
-    /** Takes the writer's reply to the question {@link #nextQuestion()} gave. */
+    /**
+     * Processes the writer's reply to the question provided by {@link #nextQuestion()}.
+     *
+     * <p>The result of the call depends on the current phase of the run:
+     * <ul>
+     * <li>If the phase is {@code OCR}, the reply is used to correct any OCR misreadings of the paragraph; if the
+     * correction is too large a change, the original paragraph text is used and a note is added to the rules.</li>
+     * <li>If the phase is {@code RELATIONS} or {@code RELATIONS_AGAIN}, the reply is parsed into a list of relations;
+     * if parsing fails, the first sentence is treated as the nucleus and a note is added to the rules.</li>
+     * <li>If the phase is {@code USE}, the first non-blank line of the reply is taken as the sub-section's
+     * purpose.</li>
+     * <li>If the phase is {@code JUDGE} or {@code JUDGE_AGAIN}, the reply is parsed to determine if the sub-section's
+     * structure is the same as an existing sample, a new structure, or should be skipped.</li>
+     * </ul>
+     *
+     * <p>Throws an {@link IllegalStateException} if no question is currently open.
+     */
     public void answer(String reply) {
         if (question == null) throw new IllegalStateException("no question is open");
         String r = reply == null ? "" : reply.strip();
@@ -225,7 +292,17 @@ public final class BookToRules implements Questioner {
         }
     }
 
-    /** @return {@code null} when the reply was a judgement this run can act on, otherwise why not */
+    /**
+     * Returns a string describing why the writer's judgement could not be processed, or {@code null} if the judgement
+     * was successfully applied to the outcome.
+     *
+     * <p>If the reply does not match the expected format of {@code same: <name>}, {@code new: <name>}, or {@code
+     * skip}, it returns a message explaining the format error. If the reply is {@code skip}, it returns {@code null}
+     * and sets the outcome to {@link Outcome#SKIP}. If the reply is {@code same: <name>}, it returns {@code null} and
+     * sets the outcome to {@link Outcome#SAME} if the name exists in the catalog, otherwise it returns a message
+     * stating the name is not a sample. If the reply is {@code new: <name>}, it returns {@code null} and sets the
+     * outcome to {@link Outcome#NEW}.</p>
+     */
     private String judge(String reply) {
         java.util.regex.Matcher m = JUDGEMENT.matcher(reply);
         if (!m.find()) return "no line of the form 'same: <name>', 'new: <name>' or 'skip'";
@@ -275,7 +352,12 @@ public final class BookToRules implements Questioner {
         return sb.toString();
     }
 
-    /** @return the sample's rule file; complete once {@link #nextQuestion()} has returned {@code null} */
+    /**
+     * Returns a string containing the sample's rule file, including a header with the use, source, and shape, and the
+     * rules for each block.
+     *
+     * <p>The result is complete only once {@link #nextQuestion()} has returned {@code null}.</p>
+     */
     public String sampleFile() {
         String header = ";;; use: " + (use == null ? "(not given)" : use) + "\n"
                 + ";;; source: " + source + " / " + heading + "\n"
@@ -286,7 +368,10 @@ public final class BookToRules implements Questioner {
         return header + rules.addSection(file, "s1", heading, source, children, body.toString()).replace(NAME, nameOrDraft());
     }
 
-    /** @return the code and formula blocks, by the file name their rules give, to be written beside the sample */
+    /**
+     * Returns a map of the code and formula blocks found in the sub-section, where the keys are the file names
+     * assigned to their rules.
+     */
     public Map<String, String> codeFiles() {
         Map<String, String> out = new LinkedHashMap<>();
         codeFiles.forEach((k, v) -> out.put(k.replace(NAME, nameOrDraft()), v));

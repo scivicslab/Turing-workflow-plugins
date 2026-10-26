@@ -6,28 +6,45 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The catalogue of samples, read from the comment lines each sample begins with
- * ({@code FramesAndSamplesFromBooks_261021_oo01}): {@code ;;; use:}, {@code ;;; source:},
- * {@code ;;; shape:} and any number of {@code ;;; also-seen:}. Nothing else is kept about a sample,
- * so the catalogue is made afresh from the files each time it is needed.
+ * Creates a sorted list of samples by parsing the header comment lines of Lisp files. It extracts the purpose, the
+ * sequence of block relations, and the count of source references from lines starting with {@code ;;; use:}, {@code
+ * ;;; shape:}, {@code ;;; source:}, and {@code ;;; also-seen:}.
+ *
+ * <ul>
+ * <li>{@code entries(Map<String, String> samples)} returns a list of {@link Entry} objects, one for each map entry,
+ * ordered by the sample name.</li>
+ * <li>{@code shapeOf(String line)} returns a list of strings representing the blocks in a shape line, split by the
+ * {@code →} character.</li>
+ * <li>{@code nearest(List<Entry> entries, List<String> shape, int k)} returns at most {@code k} entries whose shape is
+ * closest to the given {@code shape}, ordered by proximity.</li>
+ * <li>{@code withAlsoSeen(String sample, String seen)} returns the sample text with a new {@code ;;; also-seen:} line
+ * inserted immediately after the existing header lines.</li>
+ * </ul>
+ *
+ * <p>The catalog is built from scratch each time it is requested; it holds no state between calls.</p>
  */
 public final class SampleCatalog {
 
     private SampleCatalog() {}
 
     /**
-     * One sample, as its head lines describe it.
+     * Represents a single sample extracted from the head lines of a sample file.
      *
-     * @param name    the sample's name, its file name without {@code .lisp}
-     * @param use     what the structure does for its reader
-     * @param shape   each block's relations, in order
-     * @param sources how many sub-sections were found with this structure: the source and every also-seen
+     * @param name the sample's name, its file name without {@code .lisp}
+     * @param use what the structure does for its reader
+     * @param shape each block's relations, in order
+     * @param sources the number of sub-sections found with this structure, including the source and every also-seen
+     * line
      */
     public record Entry(String name, String use, List<String> shape, int sources) {}
 
     /**
-     * @param samples each sample's file text, by name
-     * @return the samples, ordered by name
+     * Returns a list of samples parsed from their header lines, ordered by name.
+     *
+     * @param samples a map where each key is a sample name and each value is the text of the sample's file, starting
+     * with header lines beginning with {@code ;;; }
+     *
+     * @return a list of {@link Entry} objects, one for each sample in the map, sorted by name
      */
     public static List<Entry> entries(Map<String, String> samples) {
         List<Entry> out = new ArrayList<>();
@@ -47,7 +64,12 @@ public final class SampleCatalog {
         return List.copyOf(out);
     }
 
-    /** @return a shape line's blocks */
+    /**
+     * Splits a shape line into its constituent blocks.
+     *
+     * @param line the line containing blocks separated by the {@code →} character
+     * @return a list of the blocks found in the line
+     */
     public static List<String> shapeOf(String line) {
         List<String> out = new ArrayList<>();
         for (String part : line.split("→")) {
@@ -58,8 +80,14 @@ public final class SampleCatalog {
     }
 
     /**
-     * @return at most {@code k} samples whose shape is nearest to {@code shape}, nearest first: by
-     *         how many blocks must be inserted, removed or changed to turn one into the other
+     * Returns at most {@code k} entries from {@code entries} whose shape is most similar to {@code shape}, ordered
+     * from most to least similar. Similarity is measured by the minimum number of insertions, removals, or changes
+     * required to transform one shape into the other.
+     *
+     * @param entries the list of samples to search through
+     * @param shape the target sequence of block relations to match
+     * @param k the maximum number of results to return
+     * @return a list of up to {@code k} entries, ordered by proximity to {@code shape} and then by name
      */
     public static List<Entry> nearest(List<Entry> entries, List<String> shape, int k) {
         List<Entry> sorted = new ArrayList<>(entries);
@@ -67,7 +95,14 @@ public final class SampleCatalog {
         return List.copyOf(sorted.subList(0, Math.min(k, sorted.size())));
     }
 
-    /** @return the sample's text with one {@code ;;; also-seen:} line after its head lines */
+    /**
+     * Returns a string that is the text of the sample with a new {@code ;;; also-seen:} line inserted immediately
+     * after the existing head lines.
+     *
+     * @param sample the text of the sample, including its head lines starting with {@code ;;; }
+     * @param seen the text to be inserted after the {@code ;;; also-seen: } prefix
+     * @return the modified sample text
+     */
     public static String withAlsoSeen(String sample, String seen) {
         String[] lines = sample.split("\n", -1);
         int at = 0;

@@ -8,18 +8,24 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * {@link FineWebSearchClient} をアクターとして動かし、その操作をワークフローYAMLへ公開する。
+ * Searches the FineWeb index and configures the target server URL.
  *
- * <p>状態は持たない。持つのは包んだ {@code FineWebSearchClient} のほうであり、これが {@code ActorRef} の
- * 前提である——アクターとは、素のオブジェクトと、それを動かす参照の対である。状態をこちら側に置き
- * {@code null} を包むと、{@code isAlive()} が偽を返し、{@code tell}/{@code ask} が黙って失敗する
- * （{@code ActorSuffixAndOwnedActorRef_260722_oo01} 「実例（2026-08-30）」）。</p>
+ * <ul><li>{@code setUrl}: Sets the address of the FineWeb search server.</li><li>{@code search}: Searches the index
+ * for a query and returns the results.</li><li>{@code searchTopK}: Searches the index for a query and returns up to a
+ * specified number of results.</li><li>{@code health}: Checks the connectivity and status of the FineWeb search
+ * service.</li></ul>
+ *
+ * <p>One instance may serve several workflows at once.</p>
+ *
+ * <p>If the underlying client is not initialized or becomes invalid, actions will fail with a non-success result.</p>
  */
 public class FineWebSearchActor extends IIActorRef<FineWebSearchClient> {
 
     /**
-     * @param name   このアクターの登録名
-     * @param system 所属するアクターシステム
+     * Creates a new actor named name in the specified system to perform searches against the FineWeb index.
+     *
+     * @param name the name used to reference this actor in a workflow
+     * @param system the actor system this actor belongs to
      */
     public FineWebSearchActor(String name, IIActorSystem system) {
         super(name, new FineWebSearchClient(), system);
@@ -34,24 +40,24 @@ public class FineWebSearchActor extends IIActorRef<FineWebSearchClient> {
      * @return 包んだオブジェクトが返した結果
      */
     /**
-     * Where the FineWeb search server listens.
+     * Holds the address of the FineWeb search server.
      *
      * @param url the server's address
      */
     public record UrlArgs(@NotNull String url) {}
 
     /**
-     * What to search the FineWeb index for.
+     * The search query to be sent to the FineWeb index.
      *
-     * @param query the search query
+     * @param query the text to search for
      */
     public record QueryArgs(@NotNull String query) {}
 
     /**
-     * What to search for, and how many results to return.
+     * Arguments for a search that specifies a limit on the number of results.
      *
-     * @param query the search query
-     * @param topK  how many results to return; ten when absent
+     * @param query the text to search for
+     * @param topK the maximum number of results to return; if null, ten results are returned
      */
     public record TopKArgs(@NotNull String query, Integer topK) {}
 
@@ -61,8 +67,11 @@ public class FineWebSearchActor extends IIActorRef<FineWebSearchClient> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Returns an action result containing the search results for the specified query.
+     *
+     * @param args the text to search for in the FineWeb index
+     * @return a success result with the search results as a message, or a failure result if the search could not be
+     * completed
      */
     @Action(value = "search", argsType = QueryArgs.class)
     public ActionResult search(QueryArgs args) {
@@ -70,8 +79,11 @@ public class FineWebSearchActor extends IIActorRef<FineWebSearchClient> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Returns an action result containing up to the specified number of search results for the query.
+     *
+     * @param args the query to search for and the maximum number of results to return, which is ten if topK is null
+     * @return a success result containing the results as a message, or a failure result if the search could not be
+     * completed
      */
     @Action(value = "searchTopK", argsType = TopKArgs.class)
     public ActionResult searchTopK(TopKArgs args) {
@@ -79,8 +91,11 @@ public class FineWebSearchActor extends IIActorRef<FineWebSearchClient> {
     }
 
     /**
-     * @param args ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Returns an action result indicating whether the FineWeb search server is reachable.
+     *
+     * @param args the argument from the workflow, which is ignored
+     * @return a success result with a message describing the status if the server is reachable, or a failure result
+     * otherwise
      */
     @Action("health")
     public ActionResult health(String args) {

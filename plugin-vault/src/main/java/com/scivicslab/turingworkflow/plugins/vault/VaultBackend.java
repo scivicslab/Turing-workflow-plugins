@@ -18,17 +18,20 @@
 package com.scivicslab.turingworkflow.plugins.vault;
 
 /**
- * Strategy for reading a field from a Vault KV v2 secret.
- * Two implementations exist: {@link HttpVaultBackend} and {@link KubectlVaultBackend}.
+ * Defines the strategy for reading a field from a HashiCorp Vault KV v2 secret.
+ *
+ * <ul><li>get returns the value of a specific field from a secret at the given path.</li></ul>
+ *
+ * <p>One instance may serve several workflows or threads at once.</p>
  */
 public interface VaultBackend {
 
     /**
-     * Reads a named field from a Vault KV v2 secret.
+     * Returns the value of a named field from a Vault KV v2 secret.
      *
-     * @param path      KV path in CLI notation (e.g., "keycloak-local-llm/test-users")
-     * @param fieldName name of the field inside the secret's data map
-     * @return field value as String
+     * @param path the KV path in CLI notation (e.g., "mount/key")
+     * @param fieldName the name of the field inside the secret's data map
+     * @return the value of the field as a string
      * @throws VaultException if the secret cannot be read or the field is absent
      */
     String get(String path, String fieldName) throws VaultException;

@@ -16,10 +16,16 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The properties of a group's main concept ({@code FrameDataWorkflow_261024_oo01}, step 3): one question per group shows
- * the sentences of its blocks, each by its rule name and its relation to its nucleus, and asks which of them state what
- * the main concept is (a definition), what it has (a part, a feature, an attribute), or what it does (how it behaves).
- * Why it does so is a cause or a motive, step 2's, not a property.
+ * Generates and parses questions about the properties of a main concept within a section of a book, used to extract
+ * what a concept is, what it has, and what it does.
+ *
+ * <ul><li>{@code sentences} returns a list of sentences from the specified blocks, each labeled with its relation to
+ * the nucleus.</li><li>{@code question} returns a formatted string that asks an LLM to identify the properties of a
+ * concept based on a list of sentences.</li><li>{@code read} returns a list of {@link Property} objects parsed from an
+ * LLM's reply.</li><li>{@code askAll} asks for the properties of all or specific sections in a book, running up to
+ * {@code parallel} requests at a time, and returns a summary of the results.</li></ul>
+ *
+ * <p>One instance may serve several workflows or threads at once.</p>
  */
 public final class ConceptProperties {
 
@@ -27,16 +33,40 @@ public final class ConceptProperties {
     public static final String HAS = "has";
     public static final String DOES = "does";
 
-    /** One sentence of a group: its rule name, its relation to its nucleus ({@code nucleus}, {@code item}, or the relation), its text. */
+    /**
+     * Represents a single sentence from a textbook's rule file, containing its identity and its relationship to the
+     * nucleus.
+     *
+     * @param rule the name of the rule (e.g., {@code b4/1})
+     * @param relation the relationship to the nucleus ({@code nucleus}, {@code item}, or the specific relation name)
+     * @param text the actual text of the sentence
+     */
     public record Sentence(String rule, String relation, String text) {}
 
-    /** One property of a group's main concept: the group's ordinal, the concept, is/has/does, the property, the sentence's rule. */
+    /**
+     * One property of a group's main concept: the group's ordinal, the concept, the kind of property (is, has, or
+     * does), the property description, and the rule name.
+     *
+     * @param group the ordinal of the group
+     * @param concept the main concept of the group
+     * @param kind one of {@link #IS}, {@link #HAS}, or {@link #DOES}
+     * @param property the description of the property
+     * @param rule the name of the rule for the sentence stating the property
+     */
     public record Property(int group, String concept, String kind, String property, String rule) {}
 
     private ConceptProperties() {
     }
 
-    /** @return the sentences of the blocks named, in file order, each labelled by the relation that joins it to its rule's nucleus */
+    /**
+     * Extracts the sentences of the specified blocks from the given rules, ordered by their appearance in the file,
+     * with each sentence labeled by its relation to its nucleus.
+     *
+     * @param rules the text of the rule file
+     * @param blocks the names of the blocks to extract
+     * @return a list of {@link Sentence} objects, each containing the rule name, the relation to the nucleus, and the
+     * sentence text
+     */
     public static List<Sentence> sentences(String rules, List<String> blocks) {
         RuleFile f = RuleFile.parse(rules);
         List<Sentence> out = new ArrayList<>();
@@ -67,7 +97,27 @@ public final class ConceptProperties {
         }
     }
 
-    /** @return the question for one group */
+    /**
+     * Returns a formatted prompt that asks an LLM to identify the properties of a main concept within a specific group
+     * of sentences.
+     *
+     * The prompt includes the section number and title, the concept being explained, and a list of the sentences from
+     * the group. Each sentence is labeled with its rule name and its relation to the nucleus (e.g., nucleus, item, or
+     * a specific relation name). The prompt instructs the LLM to categorize sentences as {@code is} (definition),
+     * {@code has} (part/feature/attribute), or {@code does} (behavior), while explicitly telling it to ignore causes,
+     * motives, examples, or instructions.
+     *
+     * If the total length of the sentences exceeds {@code SectionConcepts.MAX_TEXT}, the prompt truncates the list
+     * with an ellipsis.
+     *
+     * <pre>{@code
+     * String prompt = ConceptProperties.question(node, group, sentences);
+     * }</pre>
+     *
+     * @param node the node in the book outline containing the section number and title
+     * @param g the group of sentences whose main concept is being queried
+     * @param sentences the list of sentences belonging to the group, each with its rule and relation
+     */
     public static String question(BookOutline.Node node, SectionGroups.Group g, List<Sentence> sentences) {
         StringBuilder sb = new StringBuilder();
         int length = 0;
@@ -101,7 +151,18 @@ public final class ConceptProperties {
                 + "Write nothing at all when no sentence states a property. Write nothing else.";
     }
 
-    /** @return the properties the reply gives, in reply order; a line naming no sentence of the group is skipped */
+    /**
+     * Parses an LLM's reply into a list of properties of a group's main concept.
+     *
+     * <p>Returns a list of {@code Property} objects extracted from the reply, where each property links a specific
+     * sentence (by its rule name) to a kind (is, has, or does) and a description. A line in the reply is ignored if it
+     * does not name one of the provided {@code sentences} or if it does not follow the expected format.
+     *
+     * @param reply the text from the LLM containing the properties
+     * @param g the group whose main concept is being described
+     * @param sentences the list of sentences available in the group to validate the reply against
+     * @return a list of properties found in the reply, in the order they appeared
+     */
     public static List<Property> read(String reply, SectionGroups.Group g, List<Sentence> sentences) {
         Set<String> names = new java.util.HashSet<>();
         for (Sentence s : sentences) names.add(s.rule());
@@ -115,11 +176,30 @@ public final class ConceptProperties {
     }
 
     /**
-     * Asks the properties of every group of every section that has groups and whose properties have not been asked
-     * ({@code only} empty), or of the sections named, one question per group, {@code parallel} at a time; a section's
-     * properties are stored once all its groups are read.
+     * Asks a local LLM to identify the properties of the main concepts in the specified book's sections, returning a
+     * summary of how many sections were processed and the count of properties found for each kind (is, has, does).
      *
-     * @return how many sections were asked and how many properties of each kind they gave, in one line
+     * <p>If {@code only} is empty, it asks for properties in every section of {@code book} that does not already have
+     * properties recorded in {@code store}; otherwise, it only asks for the sections listed in {@code only}. It uses
+     * {@code writer} to send the generated questions to the LLM and {@code log} to record progress and failures. The
+     * method processes up to {@code parallel} sections simultaneously.
+     *
+     * <p>Returns a single line containing the number of sections successfully asked and a map of the counts of each
+     * property kind found, followed by the number of sections that failed.
+     *
+     * <pre>{@code
+     * askAll(store, "core-java-14-vol1", List.of("1.2.5"), llm::ask, 4, System.out::println);
+     * }</pre>
+     *
+     * @param store the database containing the book's outline, rules, and property records
+     * @param book the identifier of the book to process
+     * @param only a list of section numbers to process; if empty, all sections without existing properties are
+     * processed
+     *
+     * @param writer a function that takes a question string and returns the LLM's response string
+     * @param parallel the maximum number of sections to process at one time
+     * @param log a consumer for progress and error messages
+     * @throws Exception if an error occurs during the workflow execution
      */
     public static String askAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
             Consumer<String> log) throws Exception {

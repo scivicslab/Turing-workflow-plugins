@@ -17,15 +17,23 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The material of each section's concrete frame ({@code FrameOntology_261021_oo01}): the concepts worth collecting
- * rules for, and for each the rules of the section's rule file that say its properties (what it is, what it has) and
- * its behaviors (what it does, what can be done with it).
+ * Identifies the concepts in a section worth collecting rules for and the specific rules that describe their
+ * properties and behaviors.
  *
- * <p>The list is a hypothesis to be tried ({@link #candidates}): the concepts in the section's title, and those that are
- * a parent or a kind in a relation standing after step 7's review; a feature or a part is folded into its owner, whose
- * rules gather what the section says of it. {@link #collectAll} asks the model, one question per section, which
- * sentences say a property or a behavior of each; {@link #pruneAll} then takes off the list a concept that got fewer
- * rules than asked for, since the section says little about it.</p>
+ * <ul>
+ * <li>{@link #candidates(List, List)} returns a map of concepts to their constituent parts, features, or operations,
+ * where each concept is either a primary subject or an owner of related sub-concepts.</li>
+ * <li>{@link #question(BookOutline.Node, List, Map)} returns a formatted text prompt for a local LLM that lists the
+ * section's sentences and the target concepts.</li>
+ * <li>{@link #read(String, List, List)} returns a map of concepts to their extracted {@link BookStore.FrameRule}s
+ * based on a model's text response.</li>
+ * <li>{@link #collectAll(BookStore, String, List, Function, int, Consumer)} collects rules for sections that currently
+ * lack them, using a writer to ask a model and a store to save the results.</li>
+ * <li>{@link #pruneAll(BookStore, String, int)} removes concepts from the store that have fewer than the specified
+ * minimum number of rules.</li>
+ * </ul>
+ *
+ * <p>One instance may serve several workflows or threads at once.</p>
  */
 public final class FrameMaterial {
 
@@ -33,11 +41,19 @@ public final class FrameMaterial {
     }
 
     /**
-     * @return the concepts of one section to collect rules for, without their hierarchy, in the order step 4 listed
-     *         them, each with the concepts folded into it: those step 5 kept that are in the title, a parent of a
-     *         relation standing after step 7, a kind of another (is-a), or related to another in some other way. A feature, a part or an operation of a concept is folded
-     *         into it, and what the section says of it is collected as its owner's, unless it is listed on its own
-     *         account; folded into an owner that is not listed, it is listed itself.
+     * Identifies the concepts in a section that are worth collecting rules for, grouping them by their primary
+     * concept.
+     *
+     * <p>The map keys are the primary concepts, and the values are lists of their subordinate features, parts, or
+     * operations. A concept is included if it is in the section title, is a parent of a relation found after step 7,
+     * or is a kind of another concept. Subordinate items are folded into their owners: a feature, part, or operation
+     * is listed under its parent concept unless that subordinate item is itself a primary concept in the section. If a
+     * subordinate item is not listed as a primary concept, it is listed on its own account.</p>
+     *
+     * @param judged the list of concepts in the section that have been judged for importance
+     * @param relations the list of relations found in the section's rule file
+     * @return a map where each key is a primary concept and the value is a list of its subordinate features, parts, or
+     * operations
      */
     public static Map<String, List<String>> candidates(List<BookStore.JudgedConcept> judged, List<BookStore.Relation> relations) {
         Set<String> own = new LinkedHashSet<>();
@@ -71,7 +87,20 @@ public final class FrameMaterial {
         return out;
     }
 
-    /** @return the question for one section */
+    /**
+     * Returns a text prompt that instructs a model to identify the properties and behaviors of specific concepts
+     * within a textbook section.
+     *
+     * The prompt includes the section's title and number, the numbered text of the section (with code blocks
+     * formatted), and a list of target concepts to be analyzed. It instructs the model to categorize sentences as
+     * either property (what the concept is or has) or behavior (what the concept does or can be done with) and to
+     * format the response as "concept | kind | sentence numbers".
+     *
+     * @param node the section's position and title in the book's outline
+     * @param units the list of text blocks (sentences or code) that make up the section
+     * @param concepts the map of target concepts to their associated features, parts, or operations
+     * @return a formatted string containing the section text, the list of concepts, and the instructions for the model
+     */
     public static String question(BookOutline.Node node, List<ConceptImportance.Unit> units, Map<String, List<String>> concepts) {
         StringBuilder text = new StringBuilder();
         for (int i = 0; i < units.size(); i++) {
@@ -102,8 +131,15 @@ public final class FrameMaterial {
     }
 
     /**
-     * @return for each concept listed, the rules of the units the reply names, as properties and behaviors, without
-     *         repeats; a concept the reply names nothing for has none
+     * Parses a text reply from a model into a mapping of concepts to their extracted rules.
+     *
+     * @param reply the text containing lines of the form "concept | property | sentence numbers" or "concept |
+     * behavior | sentence numbers"
+     *
+     * @param concepts the list of concept names to look for in the reply
+     * @param units the list of units used to resolve sentence numbers into rules
+     * @return a map where each key is a concept from {@code concepts} and the value is a list of its properties and
+     * behaviors found in the reply; a concept that is not mentioned in the reply maps to an empty list
      */
     public static Map<String, List<BookStore.FrameRule>> read(String reply, List<String> concepts, List<ConceptImportance.Unit> units) {
         Map<String, String> byLower = new LinkedHashMap<>();
@@ -130,10 +166,17 @@ public final class FrameMaterial {
     }
 
     /**
-     * Collects the rules of every section that has candidates and no material yet ({@code only} empty), or of the
-     * sections named, {@code parallel} at a time; each section's list is stored with its rules, not reviewed yet.
+     * Asks a writer to extract properties and behaviors for the concepts in every section of a book that currently
+     * lacks material or is specified in {@code only}, and saves the results to the {@code store}.
      *
-     * @return how many sections were asked and how many rules were collected, in one line
+     * @param store the database to read from and write to
+     * @param book the name of the book to process
+     * @param only a list of section numbers to process; if empty, all sections lacking material are processed
+     * @param writer a function that takes a question string and returns the reply string
+     * @param parallel the maximum number of sections to process at a time
+     * @param log a consumer for progress and error messages
+     * @return a string stating how many sections were asked, how many rules were collected, and how many failed
+     * @throws Exception if an error occurs during the processing of a section
      */
     public static String collectAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
             Consumer<String> log) throws Exception {
@@ -186,10 +229,16 @@ public final class FrameMaterial {
     }
 
     /**
-     * Reviews every section's list: a concept that got fewer than {@code min} rules is taken off, since the section says
-     * little about it; the others stay. No model is asked.
+     * Removes concepts from the stored frame data of a book if they have fewer than min rules.
      *
-     * @return how many concepts stay and how many were taken off, in one line
+     * <p>Returns a string stating how many sections of the book were processed, how many concepts remain, and how many
+     * were removed. A min of 0 has no effect.
+     *
+     * @param store the H2 database containing the book's frame data
+     * @param book the name of the book to process
+     * @param min the minimum number of rules a concept must have to stay
+     * @return a string in the form "N section(s) of <book>: K concept(s) stay, M taken off (fewer than min rule(s))"
+     * @throws Exception if a database error occurs</p>
      */
     public static String pruneAll(BookStore store, String book, int min) throws Exception {
         int kept = 0, off = 0, sections = 0;

@@ -8,14 +8,21 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The concept tree of a textbook, by computation alone ({@code FrameMakingWorkflow_261022_oo01}, step 2): a textbook's
- * table of contents already is its concept tree, so each paragraph goes to the node whose number its heading carries.
+ * Constructs a YAML representation of a textbook's concept tree by mapping paragraphs from rule files to the hierarchy
+ * defined by the book's table of contents.
  *
- * <p>The rule files are read in path order. A heading that begins with a number ({@code 4.1.1. Classes}) puts the
- * paragraphs under it into the node of that number; a heading that names a chapter ({@code Chapter 4 ▪ ...}) into the
- * chapter's node; a heading with neither ({@code In this chapter}, a run-on marked {@code (continued)}, a listing)
- * leaves them in the node of the last numbered heading before it. The result is in the form {@code concept-tree.yaml}
- * writes, with each paragraph as {@code file / rule} followed by {@code ;}, since a book's file names hold spaces.</p>
+ * <p>The main operation is:
+ * <ul>
+ * <li>{@code build} returns a string in the format of a {@code concept-tree.yaml} file, where each subject node
+ * contains a list of its paragraphs as {@code file / rule} pairs separated by semicolons.</li>
+ * </ul>
+ *
+ * <p>The construction follows the order of the rule file paths. A paragraph is placed under a node if its heading
+ * begins with a number (e.g., {@code 4.1.1. Classes}), names a chapter (e.g., {@code Chapter 4}), or if it is a run-on
+ * following a numbered heading. Paragraphs appearing before any numbered heading are noted in the file header but not
+ * assigned to a node.
+ *
+ * <p>One instance may serve several workflows or threads at once.
  */
 public final class TextbookConceptTree {
 
@@ -27,10 +34,14 @@ public final class TextbookConceptTree {
     }
 
     /**
-     * @param book      the book's name
-     * @param subjects  the book's subject tree: {@code (subject "4.1.1" "Classes" ...)} lines
-     * @param ruleFiles the book's rule files, path to text
-     * @return the concept tree, every node of the subject tree with the paragraphs placed under it
+     * Returns a string representing the textbook's concept tree, where every node from the subject tree has its
+     * corresponding paragraphs placed under it.
+     *
+     * @param book the name of the book
+     * @param subjects the book's subject tree as lines of {@code (subject "number" "title" ...)}
+     * @param ruleFiles a map of rule file paths to their text content
+     * @return a string in the format of a subject tree where each subject node includes its paragraphs as a
+     * semicolon-separated list of {@code file / rule} entries
      */
     public static String build(String book, String subjects, Map<String, String> ruleFiles) {
         Map<String, String> titles = new LinkedHashMap<>();
@@ -73,7 +84,16 @@ public final class TextbookConceptTree {
         return sb.toString();
     }
 
-    /** @return the node a heading names by its number, or {@code null} when it names none that is in the tree */
+    /**
+     * Returns the number of the node that a heading names, or {@code null} if the heading does not name a numbered
+     * section or a chapter in the subject tree.
+     *
+     * A heading that is a run-on marked {@code (continued)} returns {@code null}.
+     *
+     * @param heading the text of the heading to parse
+     * @param titles the map of subject numbers to titles used to verify the heading exists in the tree
+     * @return the number of the node (e.g., "4.1.1" or "4") or {@code null} if no match is found
+     */
     static String numberOf(String heading, Map<String, String> titles) {
         String h = heading.strip();
         Matcher m = NUMBERED.matcher(h);

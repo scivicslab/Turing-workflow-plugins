@@ -30,22 +30,23 @@ import org.apache.commons.cli.Options;
 import com.scivicslab.pluggablecli.CommandRepository;
 
 /**
- * CLI subcommand to merge scattered log databases into a single database.
+ * Combines multiple H2 log databases into a single target database via a command-line interface.
  *
- * <p>The copying itself lives in {@link LogMerger}, which a long-running program can call without
- * a terminal. What remains here is the terminal: parsing the options, choosing the sources, and
- * printing what happened.</p>
+ * <p>The command-line tool takes a target database path and one or more source databases—either specified directly or
+ * found by scanning a directory—and merges their sessions, logs, and node results into the target. It skips sessions
+ * that already exist in the target to prevent duplicates.</p>
+ *
+ * <ul><li>Registers the {@code log-merge} command with a command repository.</li><li>Executes the merge process,
+ * printing a summary of sessions and entries merged or errors encountered.</li></ul>
+ *
+ * <p>A dry run shows the counts of sessions and logs in each source without modifying any files.</p>
  *
  * @author devteam@scivicslab.com
  * @since 3.0.0
  */
 public class MergeLogsCLI {
 
-    /**
-     * Registers the "log-merge" command with the given repository.
-     *
-     * @param repo the command repository
-     */
+    /** Adds the {@code log-merge} command to the given repository. */
     public static void registerCommand(CommandRepository repo) {
         Options opts = new Options();
         opts.addOption(Option.builder()
@@ -84,9 +85,11 @@ public class MergeLogsCLI {
     }
 
     /**
-     * Executes the log-merge command.
+     * Performs the log-merge command by parsing the provided command line arguments and printing the results or errors
+     * to the terminal.
      *
-     * @param cl the parsed command line
+     * @param cl the parsed command line arguments containing options like --target, --scan, --name-prefix, and
+     * --dry-run
      */
     public void execute(CommandLine cl) {
         Path targetDb = Path.of(cl.getOptionValue("target"));
@@ -150,10 +153,12 @@ public class MergeLogsCLI {
     }
 
     /**
-     * Splits the {@code --name-prefix} value into individual prefixes.
+     * Splits a comma-separated string into a list of individual prefixes.
      *
-     * @param value the raw option value, comma separated, or {@code null} when the option is absent
-     * @return the prefixes, or an empty list meaning "keep every scanned file"
+     * @param value the raw option value, which is a comma-separated string of prefixes, or {@code null} if the option
+     * is absent
+     *
+     * @return a list of non-empty, trimmed prefixes, or an empty list if the input is null or blank
      */
     static List<String> parseNamePrefixes(String value) {
         if (value == null || value.isBlank()) {
@@ -170,16 +175,17 @@ public class MergeLogsCLI {
     }
 
     /**
-     * Chooses the databases to read: the ones named on the command line, then the ones found under
-     * {@code --scan}.
+     * Returns a list of paths to the H2 database files that will be merged.
      *
-     * <p>The name prefixes apply to the scan only. A database named on the command line was chosen
-     * by whoever typed it.</p>
+     * <p>The list includes the files specified directly as positional arguments, followed by any files found by
+     * scanning the directory at {@code scanPath} that match the provided {@code namePrefixes}. A file named via a
+     * positional argument is included regardless of its name, while the name prefixes only restrict files discovered
+     * during the scan. The resulting list contains no duplicates and maintains the order of discovery.</p>
      *
-     * @param named        the positional arguments, as paths with no {@code .mv.db} extension
-     * @param scanPath     the directory to walk, or null
-     * @param namePrefixes the prefixes a scanned file's name must start with; empty accepts all
-     * @return the sources, in the order they were chosen, without duplicates
+     * @param named the positional arguments, each a path without the {@code .mv.db} extension
+     * @param scanPath the directory to scan, or null to skip scanning
+     * @param namePrefixes the prefixes a scanned file's name must start with; an empty list accepts all scanned files
+     * @return a list of paths to the identified database files
      */
     private List<Path> collectSourceDatabases(String[] named, String scanPath,
                                               List<String> namePrefixes) {
@@ -213,7 +219,16 @@ public class MergeLogsCLI {
         return sources;
     }
 
-    /** Prints one line per source with what it holds, and a total. */
+    /**
+     * Prints a summary of the source databases to standard output.
+     *
+     * <p>The method prints one line per source containing the filename and the number of sessions, logs, and node
+     * results it holds, followed by a final line showing the total counts across all sources. If a source cannot be
+     * read, an error message is printed to standard error for that specific file and its counts are not included in
+     * the totals.</p>
+     *
+     * @param sources the list of paths to the source databases to be summarized
+     */
     private void printCounts(List<Path> sources) {
         int sessions = 0;
         int logs = 0;

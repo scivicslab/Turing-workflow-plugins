@@ -6,20 +6,33 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Turns one whole markdown file of a book into one rst-on-lisp rule file, written beside it
- * ({@code FrameMakingWorkflow_261022_oo01}, step 1). The sentences are the book's own; a writer is asked only what
- * {@link BookRules} asks: each paragraph's OCR misreadings, then how its sentences relate to its nucleus.
+ * Creates a single rst-on-lisp rule file from a markdown book file by asking a writer to correct OCR misreadings and
+ * identify how each paragraph's sentences relate to a nucleus.
  *
- * <p>Each heading of the file starts a section; blocks before the first heading go into a section under the file's
- * title. Code and formulas need no question and are kept as files beside the rule file ({@link #codeFiles()}); a list
- * is kept as a bullet rule. A relation answer that cannot be read is asked once more; after that the first sentence is
- * taken as the nucleus and a comment says so.</p>
+ * <ul><li>{@link #nextQuestion()} returns a question about OCR corrections or sentence relations, or {@code null} when
+ * the file is finished.</li><li>{@link #answer(String)} accepts a reply to the current question, updating the internal
+ * state of the rule file construction.</li><li>{@link #ruleFile()} returns the completed rule file as a
+ * string.</li><li>{@link #codeFiles()} returns a map of filenames to the text of code and formula blocks to be saved
+ * alongside the rule file.</li><li>{@link #paragraphs()} returns the total number of paragraphs in the
+ * file.</li><li>{@link #asked()} returns the number of questions presented to the writer so far.</li></ul>
+ *
+ * <p>One instance processes one file and may be used by a single workflow. If a relation answer cannot be parsed, the
+ * actor asks once more; if the second attempt fails, the first sentence is taken as the nucleus and a comment is added
+ * to the rule file.</p>
  */
 public final class BookFileToRules implements Questioner {
 
     private enum Phase { OCR, RELATIONS, RELATIONS_AGAIN }
 
-    /** One section of the file: its rule name, its heading, its blocks by rule name, and their rules. */
+    /**
+     * Represents a single section of the book, containing its identifier, heading, the list of block names within it,
+     * and the accumulated rule text.
+     *
+     * @param name the section identifier (e.g., {@code s1})
+     * @param heading the text of the section heading
+     * @param children the list of block names (e.g., {@code b1}, {@code b2}) belonging to this section
+     * @param body the buffer containing the generated Lisp rules for this section
+     */
     private record Section(String name, String heading, List<String> children, StringBuilder body) {
     }
 
@@ -41,8 +54,11 @@ public final class BookFileToRules implements Questioner {
     private int asked;
 
     /**
-     * @param file       the markdown file's text
-     * @param source     the file's path, written into each section's {@code :source}
+     * Initializes the state for converting a markdown book file into an rst-on-lisp rule file by reading the file's
+     * blocks and determining the document title.
+     *
+     * @param file the markdown file's text
+     * @param source the file's path, written into each section's {@code :source}
      * @param documentId the rule file's document id
      */
     public BookFileToRules(String file, String source, String documentId) {
@@ -59,12 +75,12 @@ public final class BookFileToRules implements Questioner {
         this.title = first != null ? first : documentId;
     }
 
-    /** @return how many paragraphs the file has: each is asked about twice */
+    /** Returns the number of paragraphs in the file, where each paragraph is subject to two questions. */
     public int paragraphs() {
         return (int) blocks.stream().filter(b -> b.kind() == BookText.Kind.PARAGRAPH).count();
     }
 
-    /** @return how many questions have been asked so far */
+    /** Returns the number of questions that have been posed to the writer so far. */
     public int asked() {
         return asked;
     }
@@ -146,7 +162,12 @@ public final class BookFileToRules implements Questioner {
         }
     }
 
-    /** @return the rule file; complete once {@link #nextQuestion()} has returned {@code null} */
+    /**
+     * Returns the rst-on-lisp rule file containing the book's title, sections, and the parsed relations for every
+     * paragraph.
+     *
+     * <p>The file is complete only once {@link #nextQuestion()} returns {@code null}.</p>
+     */
     public String ruleFile() {
         String file = ";;; " + title + ". The sentences are the book's own, with OCR misreadings corrected; only the structure\n"
                 + ";;; is added: which sentence is the nucleus of a paragraph, and by which relation each other sentence joins it.\n"
@@ -161,7 +182,10 @@ public final class BookFileToRules implements Questioner {
         return file;
     }
 
-    /** @return the code and formula blocks, by the file name their rules give, to be written beside the rule file */
+    /**
+     * Returns a map of filenames to the text of code and formula blocks, where each key is the name assigned to the
+     * block in the rule file.
+     */
     public Map<String, String> codeFiles() {
         return Map.copyOf(codeFiles);
     }

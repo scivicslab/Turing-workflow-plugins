@@ -28,16 +28,34 @@ import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 import java.util.logging.Logger;
 
 /**
- * Actor wrapper for {@link JsonStateSection}.
+ * Adds a section to a report containing the state of a target actor formatted as YAML.
  *
- * <p>Exposes the POJO's methods as actions via {@code @Action} annotations.
- * Retrieves JsonState from a target actor and formats it as YAML.</p>
- *
- * <p>The actor name encodes the target actor using ":" separator:</p>
  * <ul>
- *   <li>"state:nodeGroup" - outputs nodeGroup's JsonState</li>
- *   <li>"state:nodeGroup:cluster.nodes" - outputs only the "cluster.nodes" path</li>
+ * <li>{@code generate} returns an action result containing the YAML representation of the target actor's state.</li>
+ * <li>{@code getTitle} returns an action result containing the section title, or an empty string if no title is
+ * set.</li>
+ * <li>{@code setTargetActor} sets the name of the actor whose state is to be reported.</li>
+ * <li>{@code setJsonPath} sets a JSON path to filter the state; if the path is empty or null, the entire state is
+ * reported.</li>
  * </ul>
+ *
+ * <p>The actor name can encode the target actor and an optional path using colons, such as {@code
+ * "state:nodeGroup:cluster.nodes"}.</p>
+ *
+ * <p>An instance may serve several workflows at once.</p>
+ *
+ * <pre>{@code
+ * actor: json-state-section
+ * method: setTargetActor
+ * arguments:
+ *   actor: node-web1
+ * actor: json-state-section
+ * method: setJsonPath
+ * arguments:
+ *   path: cluster.nodes
+ * actor: json-state-section
+ * method: generate
+ * }</pre>
  *
  * @author devteam@scivicslab.com
  * @since 2.16.0
@@ -50,19 +68,19 @@ public class JsonStateSectionActor extends IIActorRef<JsonStateSection> {
     private String jsonPath;
 
     /**
-     * Constructs the actor with a new POJO instance.
+     * Initializes the actor to report the state of a target actor as a YAML section.
      *
-     * @param actorName the actor name (may encode target actor)
-     * @param system the actor system
+     * @param actorName the actor name, which may encode the target actor and an optional JSON path using colons (e.g.,
+     * "state:targetActor:path.to.key")
+     *
+     * @param system the actor system used to locate the target actor
      */
     public JsonStateSectionActor(String actorName, IIActorSystem system) {
         super(actorName, new JsonStateSection(), system);
         parseActorName(actorName);
     }
 
-    /**
-     * Parses the actor name to extract target actor and optional path.
-     */
+    /** Extracts the target actor name and an optional JSON path from a colon-separated string. */
     private void parseActorName(String actorName) {
         if (actorName == null) {
             return;
@@ -84,7 +102,11 @@ public class JsonStateSectionActor extends IIActorRef<JsonStateSection> {
     }
 
     /**
-     * Refreshes the YAML content from the target actor's JsonState.
+     * Updates the YAML content of the section by fetching the current state of the target actor.
+     *
+     * <p>If the target actor name is not set or the actor system is unavailable, the method does nothing. If the
+     * target actor cannot be found in the system or if the target actor has no state to provide, the method returns
+     * without updating the content and logs a warning.</p>
      */
     private void refreshContent() {
         if (targetActorName == null || actorSystem == null) {
@@ -124,16 +146,16 @@ public class JsonStateSectionActor extends IIActorRef<JsonStateSection> {
      * @return an {@link ActionResult} with the generated section content
      */
     /**
-     * Whose state this section shows.
+     * Specifies the name of the actor whose state is to be captured.
      *
-     * @param actor the actor's name
+     * @param actor the name of the target actor
      */
     public record TargetActorArgs(@NotNull String actor) {}
 
     /**
-     * Which part of that state the section shows.
+     * Specifies a JSON path to filter the state of a target actor.
      *
-     * @param path a JSON path; the whole state is shown when this is absent
+     * @param path a JSON path to a specific part of the state, or null to show the entire state
      */
     public record JsonPathArgs(String path) {}
 
@@ -146,12 +168,12 @@ public class JsonStateSectionActor extends IIActorRef<JsonStateSection> {
     }
 
     /**
-     * Returns the section title.
+     * Returns a string that is the title of the section.
      *
-     * <p><strong>Expected args:</strong> unused (may be empty or null).</p>
+     * <p>The result is the title string, or an empty string if no title is set. The argument is unused.</p>
      *
      * @param args unused
-     * @return an {@link ActionResult} with the title string (empty if no title)
+     * @return an {@link ActionResult} that is a success and whose message holds the title string (empty if no title)
      */
     @Action("getTitle")
     public ActionResult getTitle(String args) {
@@ -160,10 +182,11 @@ public class JsonStateSectionActor extends IIActorRef<JsonStateSection> {
     }
 
     /**
-     * Sets the target actor name dynamically.
+     * Updates the name of the actor whose state is to be reported.
      *
-     * @param args the target actor name
-     * @return action result
+     * Returns an action result that is a success with a message stating the new target actor name.
+     *
+     * @param args the name of the actor to target
      */
     @Action(value = "setTargetActor", argsType = TargetActorArgs.class)
     public ActionResult setTargetActor(TargetActorArgs args) {
@@ -175,10 +198,12 @@ public class JsonStateSectionActor extends IIActorRef<JsonStateSection> {
     }
 
     /**
-     * Sets the JSON path filter dynamically.
+     * Sets the JSON path filter used to extract a specific part of the target actor's state.
      *
-     * @param args the JSON path
-     * @return action result
+     * @param args a {@code JsonPathArgs} containing the path string; if the path is null or empty, the filter is
+     * cleared to show the entire state.
+     *
+     * @return an {@link ActionResult} indicating success and the text of the set path.
      */
     @Action(value = "setJsonPath", argsType = JsonPathArgs.class)
     public ActionResult setJsonPath(JsonPathArgs args) {

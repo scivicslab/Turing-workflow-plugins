@@ -11,9 +11,20 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * The workflow actions of {@link Texts}. The texts go in as arguments and the result comes back as the message, for
- * the workflow to keep. Holding nothing, one actor serves every workflow of a program, which registers it at start-up
- * (a workflow run alone creates it with {@code loader.createChild}):
+ * Performs text processing and comparison tasks, returning results as action messages for use in workflows. One actor
+ * instance serves every workflow of a program.
+ *
+ * <ul>
+ * <li><code>joinLines</code>: Takes a JSON list {@code {list}} and returns its lines as a single string.</li>
+ * <li><code>sameAsLast</code>: Compares a new verdict against a previous one using {@code {verdict, last}} and returns
+ * a success if they match.</li>
+ * <li><code>compare</code>: Compares two texts using {@code {before, after}} and returns {@code ACCEPT} or {@code
+ * REVISE: ...}.</li>
+ * <li><code>takeFrontMatter</code>: Extracts the front matter from a text using {@code {text}} and returns a JSON
+ * string containing {@code {head, body}}.</li>
+ * <li><code>joinFrontMatter</code>: Recombines a head and a body using {@code {head, body}} and returns the whole
+ * document.</li>
+ * </ul>
  *
  * <pre>{@code
  * - actor: texts
@@ -30,14 +41,34 @@ public class TextsIIAR extends IIActorRef<Texts> {
         super(actorName, new Texts(), system);
     }
 
-    /** Args: {@code {list}}, a JSON list ({@code 'jexl:state.select("done").toString()'}); the message is its lines, なし for none. */
+    /**
+     * Returns a single string consisting of the lines in the provided list.
+     *
+     * @param args a JSON object containing a {@code list} key, which is a JSON list of strings.
+     * @return a success result with the joined lines as the message, or a failure result if the input is invalid or
+     * the operation is interrupted.
+     */
     @Action("joinLines")
     public ActionResult joinLines(String args) {
         JSONObject a = new JSONObject(args);
         return perform("could not join the lines", t -> t.joinLines(opt(a, "list")));
     }
 
-    /** Args: {@code {verdict, last}}; succeeds iff the verdict says the same as the last one. */
+    /**
+     * Returns an action result that is a success if the verdict matches the last one, and a failure otherwise.
+     *
+     * The result is a success with the message "the same verdict as last time" if the verdict in the arguments matches
+     * the last verdict stored by the actor, and a failure with the message "a different verdict" if they do not match.
+     *
+     * If the comparison is interrupted, it returns a failure with the message "interrupted". If the comparison fails
+     * due to an execution error, it returns a failure with a message containing the reason for the error.
+     *
+     * @param args a JSON object containing the keys {@code verdict} and {@code last}, representing the current verdict
+     * and the previous verdict to compare against.
+     *
+     * @return an action result that is a success if the two verdicts are equal, and a failure if they are different or
+     * if an error occurred.
+     */
     @Action("sameAsLast")
     public ActionResult sameAsLast(String args) {
         JSONObject a = new JSONObject(args);
@@ -52,21 +83,39 @@ public class TextsIIAR extends IIActorRef<Texts> {
         }
     }
 
-    /** Args: {@code {before, after}}; the message is {@code ACCEPT} or {@code REVISE: ...}. */
+    /**
+     * Compares two texts and returns a verdict.
+     *
+     * @param args a JSON object containing the keys `before` and `after` representing the two texts to compare.
+     * @return an action result that succeeds with a message of `ACCEPT` if the texts are considered equivalent, or
+     * fails with a message of `REVISE: <reason>` if they are not.
+     */
     @Action("compare")
     public ActionResult compare(String args) {
         JSONObject a = new JSONObject(args);
         return perform("could not compare the texts", t -> t.compare(opt(a, "before"), opt(a, "after")));
     }
 
-    /** Args: {@code {text}}; the message is {@code {head, body}}. */
+    /**
+     * Extracts the front matter from a text, returning a JSON object containing the {@code head} and the {@code body}.
+     *
+     * @param args a JSON object containing the key {@code text} which holds the document string to be processed.
+     * @return an action result that is a success with a message containing a JSON object with the {@code head} and
+     * {@code body} keys, or a failure if the text could not be processed.
+     */
     @Action("takeFrontMatter")
     public ActionResult takeFrontMatter(String args) {
         JSONObject a = new JSONObject(args);
         return perform("could not take the front matter", t -> t.takeFrontMatter(opt(a, "text")));
     }
 
-    /** Args: {@code {head, body}}; the message is the whole document. */
+    /**
+     * Combines a document's head and body into a single text.
+     *
+     * @param args a JSON object containing the keys {@code head} and {@code body}
+     * @return an action result that is a success with the combined document as its message, or a failure if the front
+     * matter could not be put back
+     */
     @Action("joinFrontMatter")
     public ActionResult joinFrontMatter(String args) {
         JSONObject a = new JSONObject(args);

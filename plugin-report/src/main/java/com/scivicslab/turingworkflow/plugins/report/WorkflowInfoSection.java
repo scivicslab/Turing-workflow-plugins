@@ -18,10 +18,10 @@
 package com.scivicslab.turingworkflow.plugins.report;
 
 /**
- * Report section for workflow metadata.
+ * Generates a report section containing workflow metadata, including the file path, name, and description.
  *
- * <p>Displays workflow file path, name, and optional description.
- * Returns null title to output content directly without a title line.</p>
+ * <p>It produces a formatted text block where each field is indented under a {@code [Workflow Info]} header. If a
+ * description is present, it is placed under a separate {@code [Description]} header with each line indented.
  *
  * @author devteam@scivicslab.com
  * @since 2.15.0
@@ -33,11 +33,11 @@ public class WorkflowInfoSection implements ReportSection {
     private final String description;
 
     /**
-     * Creates a workflow info section.
+     * Initializes a section that displays workflow metadata.
      *
-     * @param workflowPath the workflow file path
-     * @param name the workflow name
-     * @param description the workflow description (may be null)
+     * @param workflowPath the path to the workflow file
+     * @param name the name of the workflow
+     * @param description the description of the workflow, which may be null
      */
     public WorkflowInfoSection(String workflowPath, String name, String description) {
         this.workflowPath = workflowPath;
@@ -45,23 +45,20 @@ public class WorkflowInfoSection implements ReportSection {
         this.description = description;
     }
 
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Always returns {@code null} because this section embeds its own title
-     * within the content output.</p>
-     */
+    /** Returns {@code null} to ensure the section content is printed directly without a separate title line. */
     @Override
     public String getTitle() {
         return null;  // No title - content is output directly
     }
 
     /**
-     * {@inheritDoc}
+     * Returns a string containing the workflow's file path, name, and description formatted under a {@code [Workflow
+     * Info]} header.
      *
-     * <p>Returns formatted workflow metadata including file path, name, and
-     * description (if present). Each field is indented under a {@code [Workflow Info]}
-     * header.</p>
+     * <p>The string includes the file path, the name if it is not empty, and the description if it is present. If a
+     * description exists, it is placed under a {@code [Description]} header with each line indented.
+     *
+     * @return a formatted string of workflow metadata
      */
     @Override
     public String getContent() {

@@ -14,19 +14,16 @@ import java.time.Duration;
 import java.util.logging.Logger;
 
 /**
- * URLの取得 を保持する素のオブジェクト。アクターとして動かすのは FetchActor の役目であり、
- * 「アクターであること」はこのクラスの性質ではない（ActorSuffixAndOwnedActorRef_260722_oo01）。
+ * Converts web pages into Markdown-style plain text or returns non-HTML content as-is, providing up to 5000 characters
+ * of readable text from a URL.
  *
- * Turing Workflow actor that fetches a URL and returns its readable content.
- *
- * <p>Logic ported from {@code quarkus-mcp-gateway}'s {@code FetchTool}. HTML pages are converted
- * to a Markdown-ish plain text with the main content extracted; non-HTML content is returned
- * as-is. The result is truncated to a maximum length.</p>
- *
- * <p>Actions:</p>
  * <ul>
- *   <li>{@code fetch} - fetch the URL and return extracted text (default max 5000 characters)</li>
+ * <li>{@code fetch} - returns a successful action result containing the extracted text if the URL is reachable and the
+ * request succeeds; otherwise, returns a failure result with a message describing the HTTP error, connection problem,
+ * or invalid URL.</li>
  * </ul>
+ *
+ * <p>One instance may serve several workflows or threads at once.</p>
  *
  * @author devteam@scivicslab.com
  * @since 1.0.0
@@ -42,10 +39,17 @@ public class PageFetcher {
             .build();
 
     /**
-     * Fetches a URL and returns its readable content as text.
+     * Returns an action result containing the readable text content of the specified URL.
      *
-     * @param args the URL to fetch (plain string or {@code ["url"]})
-     * @return an {@link ActionResult} with the extracted text, or failure on error
+     * The result is a success containing the extracted text up to 5000 characters if the URL is reachable and the
+     * request succeeds; for HTML pages, the text is Markdown-formatted, while for non-HTML content, the raw body is
+     * returned. If the URL is blank, the request fails, or the server returns an error code, the result is a failure
+     * with a message describing the error.
+     *
+     * @param url the URL to fetch as a plain string
+     * @return an action result that is a success containing the text (up to 5000 characters) if the fetch succeeded,
+     * or a failure with an error message if the URL is invalid, the connection fails, or the server returns an error
+     * code
      */
     public ActionResult fetch(String url) {
         if (url == null || url.isBlank()) {

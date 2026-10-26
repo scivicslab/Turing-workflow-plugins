@@ -28,24 +28,29 @@ import java.time.Duration;
 import java.util.Map;
 
 /**
- * Client for HashiCorp Vault API communication.
- * Supports reading secrets from Vault KV v2 engine.
+ * Communicates with the HashiCorp Vault HTTP API to retrieve secrets from KV v2 engines.
+ *
+ * <ul><li>{@code readField(kvPath, fieldName)} returns the value of a specific field from a secret at the given
+ * path.</li><li>{@code readSecret(path)} returns the value of the {@code value} field from a secret at the given full
+ * API path.</li></ul>
+ *
+ * <p>One instance may serve several threads at once.</p>
  *
  * @author devteam@scivicslab.com
  * @since 1.0.0
  */
 public class VaultClient {
 
-    /** The Vault connection configuration (address and token). */
+    /** The Vault connection configuration, consisting of the server address and the access token. */
     private final VaultConfig config;
 
-    /** Reusable HTTP client with a 10-second connection timeout. */
+    /** The HTTP client used to send requests to the Vault API, with a 10-second connection timeout. */
     private final HttpClient httpClient;
 
     /**
-     * Creates a new VaultClient with the given configuration.
+     * Initializes a new VaultClient that communicates with a HashiCorp Vault server using the provided configuration.
      *
-     * @param config Vault configuration
+     * @param config the address and token used for Vault API requests
      */
     public VaultClient(VaultConfig config) {
         this.config = config;
@@ -55,17 +60,12 @@ public class VaultClient {
     }
 
     /**
-     * Reads a named field from a Vault KV v2 secret.
+     * Returns a string that is the value of the specified field within a Vault KV v2 secret.
      *
-     * The path uses CLI-style notation ({@code mount/key}); {@code data/} is
-     * inserted automatically between the mount and the key.
-     * For example, {@code "keycloak-local-llm/test-users"} becomes the API path
-     * {@code /v1/keycloak-local-llm/data/test-users}.
-     *
-     * @param kvPath    KV path in CLI notation (e.g., "keycloak-local-llm/test-users")
-     * @param fieldName name of the field inside the secret's data map
-     * @return field value as String
-     * @throws VaultException if Vault communication fails, secret not found, or field missing
+     * @param kvPath the KV path in CLI-style notation (e.g., "keycloak-local-llm/test-users")
+     * @param fieldName the name of the field to retrieve from the secret's data
+     * @return the value of the field as a string
+     * @throws VaultException if the secret is not found, the field is missing, or communication with Vault fails
      */
     public String readField(String kvPath, String fieldName) throws VaultException {
         int slash = kvPath.indexOf('/');
@@ -77,11 +77,10 @@ public class VaultClient {
     }
 
     /**
-     * Reads a secret from Vault using the full API path (legacy; reads the {@code value} field).
+     * Returns the value of the {@code value} field from a Vault secret at the specified API path.
      *
-     * @param path full KV v2 API path (e.g., "secret/data/ssh/iacuser/private_key")
-     * @return value of the {@code value} field
-     * @throws VaultException if Vault communication fails or secret not found
+     * @param path the full KV v2 API path (e.g., "secret/data/ssh/iacuser/private_key")
+     * @throws VaultException if Vault communication fails or the secret is not found
      */
     public String readSecret(String path) throws VaultException {
         return extractField(fetch(path), "value");
@@ -117,12 +116,12 @@ public class VaultClient {
     }
 
     /**
-     * Extracts a named field from the {@code data.data} map of a Vault KV v2 response.
+     * Extracts the value of a specific field from a Vault KV v2 JSON response.
      *
-     * @param jsonResponse JSON response body from Vault
-     * @param fieldName    name of the field to extract
-     * @return field value as String
-     * @throws VaultException if the response is malformed or the field is absent
+     * @param jsonResponse the JSON response body received from the Vault API
+     * @param fieldName the name of the field to retrieve from the nested data map
+     * @return the value of the field as a string
+     * @throws VaultException if the response is not a valid Vault KV v2 structure or if the field is not present
      */
     @SuppressWarnings("unchecked")
     private String extractField(String jsonResponse, String fieldName) throws VaultException {
@@ -157,7 +156,9 @@ public class VaultClient {
         }
     }
 
-    /** Exception thrown when Vault HTTP operations fail. */
+    /**
+     * Indicates a failure in communicating with HashiCorp Vault or a failure to find the requested secret or field.
+     */
     public static class VaultException extends Exception {
         public VaultException(String message) { super(message); }
         public VaultException(String message, Throwable cause) { super(message, cause); }

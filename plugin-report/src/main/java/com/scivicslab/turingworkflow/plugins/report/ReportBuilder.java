@@ -39,20 +39,27 @@ import java.util.Set;
 import java.util.logging.Logger;
 
 /**
- * Section-based workflow report builder.
+ * Generates a text report of a workflow execution by combining metadata, actor states, and dynamic sections from child
+ * actors.
  *
- * <p>Assembles report sections from two sources:</p>
- * <ol>
- *   <li><strong>Legacy sections</strong> - Added via {@code addWorkflowInfo} and {@code addJsonStateSection}</li>
- *   <li><strong>Child actor sections</strong> - {@link SectionBuilder} actors created as children</li>
- * </ol>
- *
- * <h2>Actions:</h2>
  * <ul>
- *   <li>{@code addWorkflowInfo} - Add workflow metadata section (legacy)</li>
- *   <li>{@code addJsonStateSection} - Add actor's JsonState as YAML (legacy)</li>
- *   <li>{@code report} - Build and output the report to outputMultiplexer</li>
+ * <li>{@code addWorkflowInfo} adds a section containing the workflow name and description extracted from its YAML
+ * file.</li>
+ * <li>{@code addJsonStateSection} adds a section containing the YAML-formatted state of a specified actor.</li>
+ * <li>{@code report} builds the full report and sends it to the {@code outputMultiplexer} actor.</li>
  * </ul>
+ *
+ * <p>One instance serves one workflow at a time, as it collects sections and child actor results into a single
+ * report.</p>
+ *
+ * <pre>{@code
+ * actor: report-builder
+ * method: report
+ * }</pre>
+ *
+ * <p>If an action fails, it returns an action result where {@code isSuccess()} is false and the message contains the
+ * error description. The {@code addJsonStateSection} action fails if the specified actor cannot be found or has no
+ * state.</p>
  *
  * @author devteam@scivicslab.com
  * @since 2.15.0
@@ -66,17 +73,13 @@ public class ReportBuilder implements CallableByActionName, ActorSystemAware, II
     private IIActorSystem system;
     private IIActorRef<?> selfRef;
 
-    /**
-     * Default constructor for use with loader.createChild.
-     */
+    /** Initializes a new report builder that can be registered as a child actor via {@code loader.createChild}. */
     public ReportBuilder() {
     }
 
     /**
-     * {@inheritDoc}
-     *
-     * <p>Stores the actor system reference for accessing other actors
-     * (e.g., nodeGroup, outputMultiplexer) at report build time.</p>
+     * Sets the actor system used to locate other actors, such as {@code nodeGroup} for workflow paths or {@code
+     * outputMultiplexer} for sending the final report, during the report building process.
      */
     @Override
     public void setActorSystem(IIActorSystem system) {
@@ -85,10 +88,11 @@ public class ReportBuilder implements CallableByActionName, ActorSystemAware, II
     }
 
     /**
-     * {@inheritDoc}
+     * Sets a reference to this actor's own {@link IIActorRef}.
      *
-     * <p>Stores a reference to this actor's own {@link IIActorRef} so that
-     * child actor sections can be discovered at report build time.</p>
+     * <p>This allows the builder to discover and call child actor sections during the report build process.</p>
+     *
+     * @param actorRef the reference to this actor.
      */
     @Override
     public void setIIActorRef(IIActorRef<?> actorRef) {
@@ -101,18 +105,24 @@ public class ReportBuilder implements CallableByActionName, ActorSystemAware, II
     // ========================================================================
 
     /**
-     * {@inheritDoc}
+     * Executes a specific report-building action.
      *
-     * <p>Dispatches to one of the following actions:</p>
+     * <p>Returns an action result indicating whether the requested action succeeded, with the result message
+     * containing either the generated report text or an error description.</p>
+     *
+     * <p>The following actions are available:</p>
      * <ul>
-     *   <li>{@code addWorkflowInfo} - adds workflow metadata section</li>
-     *   <li>{@code addJsonStateSection} - adds an actor's JsonState as YAML</li>
-     *   <li>{@code report} - builds and outputs the complete report</li>
+     * <li>{@code addWorkflowInfo} - adds a section containing the workflow's name and description</li>
+     * <li>{@code addJsonStateSection} - adds a section containing a specified actor's state as YAML</li>
+     * <li>{@code report} - builds the complete report and sends it to the output multiplexer</li>
      * </ul>
      *
-     * @param actionName the action to invoke
-     * @param args       JSON-formatted arguments (action-specific)
-     * @return the action result indicating success or failure
+     * <p>If the action name is not recognized, returns a failed action result with an error message.</p>
+     *
+     * @param actionName the name of the action to execute
+     * @param args a JSON-formatted string of arguments specific to the action
+     * @return an action result that is a success if the action completed, or a failure if the action name is unknown
+     * or the execution failed
      */
     @Override
     public ActionResult callByActionName(String actionName, String args) {
@@ -131,7 +141,13 @@ public class ReportBuilder implements CallableByActionName, ActorSystemAware, II
     // ========================================================================
 
     /**
-     * Adds workflow info section.
+     * Adds a section containing the workflow's name and description to the report.
+     *
+     * Returns an action result that is a success if the workflow path could be retrieved from the {@code nodeGroup}
+     * actor and the corresponding YAML file was read, with a message indicating the section was added. If the workflow
+     * path cannot be determined, the result is a failure with a message stating the path could not be retrieved.
+     *
+     * @param args the unused arguments for this action
      */
     private ActionResult addWorkflowInfo(String args) {
         String workflowPath = getWorkflowPathFromNodeGroup();
@@ -169,7 +185,13 @@ public class ReportBuilder implements CallableByActionName, ActorSystemAware, II
     }
 
     /**
-     * Adds JsonState section for specified actor.
+     * Adds an actor's current state as a YAML-formatted section to the report.
+     *
+     * @param args a JSON string containing the key {@code actor} (the name of the target actor) and an optional {@code
+     * path} (the file path for the YAML output).
+     *
+     * @return a success result if the actor was found and its state was successfully added; a failure result if the
+     * arguments are malformed, the actor system is unavailable, the actor does not exist, or the actor has no state.
      */
     private ActionResult addJsonStateSection(String args) {
         String actorName;
@@ -205,7 +227,10 @@ public class ReportBuilder implements CallableByActionName, ActorSystemAware, II
     }
 
     /**
-     * Builds and outputs the report.
+     * Sends a complete execution report to the {@code outputMultiplexer} actor.
+     *
+     * @param args the arguments, which are not used
+     * @return an action result that is a success and contains the full report text as its message
      */
     private ActionResult report(String args) {
         String reportContent = build();
@@ -220,7 +245,7 @@ public class ReportBuilder implements CallableByActionName, ActorSystemAware, II
     /**
      * Adds a section to the report.
      *
-     * @param section the section to add
+     * @param section the section to add; if null or if the section's content is empty, the section is skipped
      */
     public void addSection(ReportSection section) {
         if (section != null) {
@@ -229,15 +254,11 @@ public class ReportBuilder implements CallableByActionName, ActorSystemAware, II
     }
 
     /**
-     * Builds the report string.
+     * Returns a formatted string containing the complete workflow execution report.
      *
-     * <p>Collects sections from two sources in order:</p>
-     * <ol>
-     *   <li>Legacy sections added via {@code addWorkflowInfo} and {@code addJsonStateSection}</li>
-     *   <li>Child actor sections implementing {@link SectionBuilder} (in creation order)</li>
-     * </ol>
-     *
-     * @return the formatted report string
+     * <p>The report includes a header, followed by sections added via {@code addWorkflowInfo} or {@code
+     * addJsonStateSection}, and finally sections generated by any child actors that implement the {@link
+     * SectionBuilder} interface. Sections with null or empty content are omitted from the result.</p>
      */
     public String build() {
         StringBuilder sb = new StringBuilder();

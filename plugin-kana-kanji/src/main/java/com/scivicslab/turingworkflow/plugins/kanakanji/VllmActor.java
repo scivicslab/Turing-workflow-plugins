@@ -8,18 +8,24 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * {@link VllmClient} をアクターとして動かし、その操作をワークフローYAMLへ公開する。
+ * Operates a vLLM server through its API to perform text segmentation or hiragana conversion.
  *
- * <p>状態は持たない。持つのは包んだ {@code VllmClient} のほうであり、これが {@code ActorRef} の
- * 前提である——アクターとは、素のオブジェクトと、それを動かす参照の対である。状態をこちら側に置き
- * {@code null} を包むと、{@code isAlive()} が偽を返し、{@code tell}/{@code ask} が黙って失敗する
- * （{@code ActorSuffixAndOwnedActorRef_260722_oo01} 「実例（2026-08-30）」）。</p>
+ * <ul><li>setUrl: Sets the server address using the provided {@code UrlArgs}.</li><li>setModel: Sets the model
+ * identifier using the provided {@code ModelArgs}.</li><li>segment: Segments the provided text using {@code
+ * TextArgs}.</li><li>toHiragana: Converts the provided text to hiragana using {@code TextArgs}.</li></ul>
+ *
+ * <p>The actor holds a {@code VllmClient} which maintains the connection state and configuration. If the client is not
+ * alive, actions fail without a message.</p>
+ *
+ * <p>One instance serves one workflow at a time.</p>
  */
 public class VllmActor extends IIActorRef<VllmClient> {
 
     /**
-     * @param name   このアクターの登録名
-     * @param system 所属するアクターシステム
+     * Initializes a new actor named {@code name} within the specified {@code system} to control a vLLM server.
+     *
+     * @param name the name used to identify this actor in workflows
+     * @param system the actor system this actor belongs to
      */
     public VllmActor(String name, IIActorSystem system) {
         super(name, new VllmClient(), system);
@@ -34,21 +40,21 @@ public class VllmActor extends IIActorRef<VllmClient> {
      * @return 包んだオブジェクトが返した結果
      */
     /**
-     * Where the vLLM server listens.
+     * The address of the vLLM server.
      *
      * @param url the server's address
      */
     public record UrlArgs(@NotNull String url) {}
 
     /**
-     * Which model answers.
+     * The identifier of the model to be used for processing.
      *
      * @param model the model's identifier
      */
     public record ModelArgs(@NotNull String model) {}
 
     /**
-     * The text the model works on.
+     * Holds the text to be processed by the model, such as text for segmentation or for conversion to hiragana.
      *
      * @param text the text to segment or to read aloud in hiragana
      */
@@ -60,8 +66,9 @@ public class VllmActor extends IIActorRef<VllmClient> {
     }
 
     /**
-     * @param modelName ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Sets the model identifier used for subsequent requests.
+     *
+     * @param args the model identifier to be used by the vLLM server
      */
     @Action(value = "setModel", argsType = ModelArgs.class)
     public ActionResult setModel(ModelArgs args) {
@@ -69,8 +76,12 @@ public class VllmActor extends IIActorRef<VllmClient> {
     }
 
     /**
-     * @param ocrText ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Segments the provided text into its smallest units of explanation.
+     *
+     * @param args the text to be segmented
+     *
+     * @return an action result that is a success and whose message holds the segmented text, or a failure if the
+     * segmentation could not be completed
      */
     @Action(value = "segment", argsType = TextArgs.class)
     public ActionResult segment(TextArgs args) {
@@ -78,8 +89,11 @@ public class VllmActor extends IIActorRef<VllmClient> {
     }
 
     /**
-     * @param segmentedText ワークフローからの引数
-     * @return 包んだオブジェクトが返した結果
+     * Converts the provided text into hiragana.
+     *
+     * @param args an object containing the text to be converted
+     * @return an action result that is a success and contains the hiragana text in its message, or is not a success if
+     * the conversion failed
      */
     @Action(value = "toHiragana", argsType = TextArgs.class)
     public ActionResult toHiragana(TextArgs args) {

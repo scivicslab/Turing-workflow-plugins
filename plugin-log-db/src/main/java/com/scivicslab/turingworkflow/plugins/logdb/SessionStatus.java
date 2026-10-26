@@ -20,19 +20,24 @@ package com.scivicslab.turingworkflow.plugins.logdb;
 /**
  * Represents the lifecycle status of a workflow execution session.
  *
- * <p>A session transitions from {@link #RUNNING} to one of the terminal states:
- * {@link #COMPLETED}, {@link #FAILED}, or {@link #CANCELLED}.</p>
+ * <p>A session transitions from {@link #RUNNING} to one of the terminal states: {@link #COMPLETED}, {@link #FAILED},
+ * or {@link #CANCELLED}.</p>
  *
  * @author devteam@scivicslab.com
  * @since 1.0
  */
 public enum SessionStatus {
-    /** The session is currently executing. */
+    /**
+     * RUNNING The session is currently executing.
+     * COMPLETED The session finished with a success status.
+     * FAILED The session terminated because one or more actions or nodes failed.
+     * CANCELLED The session was stopped before it could reach a terminal state.
+     */
     RUNNING,
-    /** The session completed successfully. */
+    /** The session finished all steps without error. */
     COMPLETED,
     /** The session terminated due to one or more failures. */
     FAILED,
-    /** The session was cancelled before completion. */
+    /** The session was cancelled. */
     CANCELLED
 }

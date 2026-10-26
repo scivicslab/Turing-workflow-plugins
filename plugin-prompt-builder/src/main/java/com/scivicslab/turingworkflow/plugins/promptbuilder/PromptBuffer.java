@@ -4,17 +4,14 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Holds the pieces of a prompt while a workflow assembles it: the constraints that must be stated,
- * the background, and the message itself.
+ * Holds the components of a prompt—constraints, background, and the message body—to allow a workflow to assemble them
+ * incrementally.
  *
- * <p>A plain object with no dependency on the actor framework — it is turned into an actor by
- * being wrapped ({@link PromptBuilderActor}), which is where the workflow-facing code lives. The
- * class carries no {@code Actor} in its name for the same reason: being run as an actor is a role
- * it acquires when something wraps it, not a property of the class
- * ({@code ActorSuffixAndOwnedActorRef_260722_oo01}).</p>
+ * <p>{@link PromptBuilderActor} uses this to build the text passed to an LLM.
  *
- * <p>{@link #build()} produces:</p>
- * <pre>
+ * <p>{@link #build()} produces a single string formatted with sections for constraints and context, followed by the
+ * message body:
+ * <pre>{@code
  * [Constraints]
  * - warning1
  *
@@ -23,9 +20,10 @@ import java.util.List;
  *
  * [Message]
  * message body
- * </pre>
+ * }</pre>
+ * Sections with no entries are omitted.
  *
- * <p>Sections with no entries are omitted.</p>
+ * <p>One instance is typically used by a single actor to build a single prompt.
  */
 public class PromptBuffer {
 
@@ -35,7 +33,10 @@ public class PromptBuffer {
     private int warningCursor = 0;
     private int contextCursor = 0;
 
-    /** Empties every section and rewinds both cursors. */
+    /**
+     * Resets the buffer by removing all constraints, background entries, and the message, and rewinding all cursors to
+     * the start.
+     */
     public void clear() {
         warnings.clear();
         contexts.clear();
@@ -45,8 +46,10 @@ public class PromptBuffer {
     }
 
     /**
-     * @param text one constraint
-     * @return {@code false} if the text is absent or blank, in which case nothing is added
+     * Adds a single constraint to the [Constraints] section.
+     *
+     * @param text the constraint text to add
+     * @return {@code true} if the text was added, {@code false} if the text was null or blank
      */
     public boolean addWarning(String text) {
         if (text == null || text.isBlank()) return false;
@@ -55,7 +58,9 @@ public class PromptBuffer {
     }
 
     /**
-     * @param text one piece of background
+     * Adds one piece of background to the buffer.
+     *
+     * @param text the background text to add
      * @return {@code false} if the text is absent or blank, in which case nothing is added
      */
     public boolean addContext(String text) {
@@ -65,8 +70,10 @@ public class PromptBuffer {
     }
 
     /**
-     * @param text the message body, replacing any previous one
-     * @return {@code false} if the text is absent or blank, in which case nothing is set
+     * Sets the message body, replacing any previous message.
+     *
+     * @param text the message body to be used in the [Message] section
+     * @return {@code false} if text is null or blank, in which case the message is not updated
      */
     public boolean setMessage(String text) {
         if (text == null || text.isBlank()) return false;
@@ -74,56 +81,90 @@ public class PromptBuffer {
         return true;
     }
 
-    /** @return the message body, or {@code null} if none has been set */
+    /**
+     * Returns the message body that was set via {@link #setMessage(String)}.
+     *
+     * @return the message body, or {@code null} if no message has been set
+     */
     public String getMessage() {
         return message;
     }
 
-    /** @return how many constraints have been added */
+    /** Returns the number of constraints currently in the buffer. */
     public int warningCount() {
         return warnings.size();
     }
 
-    /** @return how many pieces of background have been added */
+    /** Returns the number of background entries that have been added. */
     public int contextCount() {
         return contexts.size();
     }
 
     /**
-     * @param index position in the constraint list
-     * @return that constraint, or {@code null} if the index is outside the list
+     * Returns the constraint at the specified position in the list.
+     *
+     * @param index the zero-based position in the constraint list
+     * @return the constraint at that position, or {@code null} if the index is negative or greater than or equal to
+     * the number of constraints
      */
     public String warningAt(int index) {
         return (index < 0 || index >= warnings.size()) ? null : warnings.get(index);
     }
 
     /**
-     * @param index position in the background list
-     * @return that entry, or {@code null} if the index is outside the list
+     * Returns the background entry at the specified index.
+     *
+     * @param index the position in the background list to retrieve
+     * @return the entry at that position, or {@code null} if the index is outside the list boundaries
      */
     public String contextAt(int index) {
         return (index < 0 || index >= contexts.size()) ? null : contexts.get(index);
     }
 
-    /** @return the constraint at the cursor, advancing it; {@code null} once past the end */
+    /**
+     * Returns the next constraint from the list.
+     *
+     * @return the next constraint, or {@code null} if no more constraints remain
+     */
     public String nextWarning() {
         return warningCursor >= warnings.size() ? null : warnings.get(warningCursor++);
     }
 
-    /** @return the background entry at the cursor, advancing it; {@code null} once past the end */
+    /**
+     * Returns the background entry at the current cursor and advances the cursor to the next entry.
+     *
+     * @return the background entry at the cursor, or {@code null} once the end of the list is reached
+     */
     public String nextContext() {
         return contextCursor >= contexts.size() ? null : contexts.get(contextCursor++);
     }
 
-    /** Rewinds both cursors to the start. */
+    /**
+     * Resets the positions used to iterate through the constraints and background sections to the beginning of their
+     * respective lists.
+     */
     public void resetCursor() {
         warningCursor = 0;
         contextCursor = 0;
     }
 
     /**
-     * @return the assembled prompt, or {@code null} if no message has been set — a prompt with
-     *         constraints and no message is not something to send
+     * Returns a string that is the assembled prompt containing the constraints, context, and message.
+     *
+     * <p>The result is formatted as:
+     * <pre>{@code
+     * [Constraints]
+     * - warning1
+     *
+     * [Context]
+     * - context1
+     *
+     * [Message]
+     * message body
+     * }</pre>
+     * Sections with no entries are omitted.
+     *
+     * <p>Returns {@code null} if no message has been set.
      */
     public String build() {
         if (message == null) return null;
@@ -144,19 +185,16 @@ public class PromptBuffer {
     }
 
     /**
-     * The messages of a request, as a JSON array text: a {@code system} message holding the
-     * constraints and the background (left out when there are none), then the given history
-     * messages, then the message body as a {@code user} message.
+     * Returns a JSON array text representing a sequence of chat messages, combining a system message containing the
+     * constraints and background, the provided conversation history, and a user message containing the task body.
      *
-     * <p>The buffer keeps only what one assembly needs; the history that outlives an assembly
-     * belongs to whoever owns the conversation, and is handed in here already selected
-     * ({@code RequestMessagesControl_261018_oo01}). The history is spliced in as it is, so it must
-     * already be a JSON array of {@code {"role","content"}} messages.</p>
+     * @param historyJson a JSON array text of messages with {@code {"role","content"}} structures, or {@code null},
+     * blank, or {@code []} for no history
      *
-     * @param historyJson the selected history messages as a JSON array text; {@code null}, blank
-     *                    or {@code []} for none
-     * @return the array, or {@code null} if no message has been set
-     * @throws IllegalArgumentException if {@code historyJson} is not an array text
+     * @return a JSON array text containing the system, history, and user messages, or {@code null} if no message body
+     * has been set
+     *
+     * @throws IllegalArgumentException if historyJson is not a JSON array text
      */
     public String buildMessages(String historyJson) {
         if (message == null) return null;
@@ -174,7 +212,10 @@ public class PromptBuffer {
         return out.toString();
     }
 
-    /** @return the constraints and background as the text of a system message, or {@code null} if both are empty */
+    /**
+     * Returns a string containing the constraints and background formatted as a system message, or {@code null} if
+     * both sections are empty.
+     */
     private String systemText() {
         if (warnings.isEmpty() && contexts.isEmpty()) return null;
         StringBuilder sb = new StringBuilder();

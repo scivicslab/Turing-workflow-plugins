@@ -11,9 +11,25 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * One question to a chat-completions endpoint (the GPU broker), one answer back. A reply that carries no text (an
- * error, a model name the broker does not know) is a failure, not an empty answer. A failed request is tried again a
- * few times before it fails. Every request is marked as background work, so the broker serves interactive callers first.
+ * Sends a single question to a chat-completions endpoint (the GPU broker) and returns the text of the reply.
+ *
+ * <p>The following actions are available:
+ * <ul>
+ * <li>{@code apply(String question)}: Returns the text of the model's response to the given question.</li>
+ * </ul>
+ *
+ * <p>Every request is marked as background work so that the broker serves interactive callers first. If a request
+ * fails, it is retried up to four times with increasing delays between attempts.
+ *
+ * <p>A request fails if the broker returns a non-200 status code or if the response body contains no text (for
+ * example, an error or an unknown model name). In such cases, the action result is not a success and an exception is
+ * thrown.
+ *
+ * <p>One instance may serve several workflows or threads at once.
+ *
+ * <pre>{@code
+ * chat_endpoint.apply("What is the main concept of this section?")
+ * }</pre>
  */
 public final class ChatEndpoint implements Function<String, String> {
 
@@ -24,7 +40,14 @@ public final class ChatEndpoint implements Function<String, String> {
     private final String model;
     private final int maxTokens;
 
-    /** @param url e.g. {@code http://192.168.5.21:30805/v1/chat/completions} */
+    /**
+     * Initializes a connection to a chat-completions endpoint at the given URL to send a single question and receive a
+     * single text response.
+     *
+     * @param url the endpoint address, e.g. {@code http://192.168.5.21:30805/v1/chat/completions}
+     * @param model the name of the model to use
+     * @param maxTokens the maximum number of tokens to generate
+     */
     public ChatEndpoint(String url, String model, int maxTokens) {
         this.url = url;
         this.model = model;
@@ -58,7 +81,13 @@ public final class ChatEndpoint implements Function<String, String> {
         throw last;
     }
 
-    /** @return the reply's text, or {@code null} when the body carries none */
+    /**
+     * Extracts the text content from a JSON response body.
+     *
+     * @param body the JSON string from the chat-completions endpoint
+     * @return the text of the first choice's message, or {@code null} if the body contains no choices, no message, no
+     * content, or is not a valid JSON object
+     */
     static String text(String body) {
         try {
             JSONObject o = new JSONObject(body);

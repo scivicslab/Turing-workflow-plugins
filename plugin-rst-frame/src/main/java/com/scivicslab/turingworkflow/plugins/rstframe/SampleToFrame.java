@@ -8,14 +8,29 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Makes a frame from a sample, asking a writer one question per block
- * ({@code FramesAndSamplesFromBooks_261021_oo01}).
+ * Generates a frame from a sample by asking a writer one question per block.
  *
- * <p>Every sentence of the sample becomes a blank whose {@code :instruction} says what the sentence
- * does in its paragraph, in words that do not depend on the book's subject, and whose
- * {@code :sample} keeps the sentence. A code block becomes a code blank; a list becomes one blank.
- * The paragraphs' relations stay as they are, so the frame has the sample's structure. Lists of
- * same-shaped paragraphs are not yet turned into sub-frames.</p>
+ * <p>The frame preserves the sample's structure, where every sentence becomes a blank with a {@code :instruction}
+ * describing the sentence's function and a {@code :sample} containing the original text. Code blocks become code
+ * blanks and lists become list blanks.
+ * <ul><li>{@link #nextQuestion()} returns a string that is a question for the writer, or {@code null} if every block
+ * has been processed.</li><li>{@link #answer(String)} takes the writer's reply to the current question and stores the
+ * resulting instructions.</li><li>{@link #frameFile()} returns the text of the sample's rule file, updated with the
+ * collected instructions and renamed to a frame.</li><li>{@link #name()} returns the name of the sample.</li></ul>
+ *
+ * <p>One instance serves one sample and is used to drive a single sequence of questions and answers.
+ *
+ * <p>An error is thrown if {@link #answer(String)} is called when no question is currently open.
+ *
+ * <pre>{@code
+ * SampleToFrame s = new SampleToFrame(sampleFile, "my-frame", codeFiles);
+ * while (s.nextQuestion() != null) {
+ *   String q = s.nextQuestion();
+ *   // ... get reply ...
+ *   s.answer(reply);
+ * }
+ * String frameText = s.frameFile();
+ * }</pre>
  */
 public final class SampleToFrame implements Questioner {
 
@@ -33,9 +48,13 @@ public final class SampleToFrame implements Questioner {
     private Block asking;
 
     /**
-     * @param sample    the sample's rule file
-     * @param name      the sample's name; the frame shares it
+     * Initializes a frame from a sample's rule file, a name, and a map of code files, preparing a sequence of
+     * questions for a writer.
+     *
+     * @param sample the sample's rule file
+     * @param name the sample's name; the frame shares it
      * @param codeFiles the sample's code files, by the file name its rules give
+     * @throws IllegalArgumentException if the sample has no section
      */
     public SampleToFrame(String sample, String name, Map<String, String> codeFiles) {
         this.sample = sample;
@@ -77,7 +96,20 @@ public final class SampleToFrame implements Questioner {
         }
     }
 
-    /** @return the next question for the writer, or {@code null} when every block has been asked about */
+    /**
+     * Returns a text instruction that asks a writer to describe a specific block (a paragraph, a list, or a code
+     * block) from the sample, or {@code null} if all blocks have been processed.
+     *
+     * <p>The instruction is tailored to the block's type:
+     * <ul><li>For a paragraph, it asks for a one-line instruction for each sentence, specifying what the sentence does
+     * in the context of the paragraph.</li><li>For a list, it asks for a one-line instruction describing what the list
+     * does in the section.</li><li>For a code block, it asks for a one-line instruction describing what the code block
+     * does in the section.</li></ul>
+     *
+     * <p>A second call returns the same instruction until {@link #answer(String)} is called.
+     *
+     * @return the instruction text for the next block, or {@code null} if no more blocks remain to be asked about.
+     */
     public String nextQuestion() {
         if (question != null) return question;
         if (next >= blocks.size()) return null;
@@ -107,13 +139,28 @@ public final class SampleToFrame implements Questioner {
         return question;
     }
 
-    /** @return the sentences of the block before the one being asked about, or {@code ""} */
+    /**
+     * Returns the text of the block immediately preceding the one currently being asked about, or an empty string if
+     * no such block exists or if the preceding block is not a paragraph.
+     */
     private String leadingText() {
         int i = next - 2;
         return i >= 0 && blocks.get(i).kind().equals("paragraph") ? String.join(" ", blocks.get(i).texts()) + "\n" : "";
     }
 
-    /** Takes the writer's reply to the question {@link #nextQuestion()} gave. */
+    /**
+     * Records the writer's reply to the question produced by {@link #nextQuestion()}.
+     *
+     * <p>If the reply is null, the instructions for the current block are set to default values that describe the role
+     * of the sentences or elements relative to the block's nucleus or structure. If the reply is not null, it is
+     * parsed to extract instructions for each sentence in a paragraph or a single instruction for a code block or
+     * list, which are then stored.
+     *
+     * <p>An action result is a success if the reply is processed without error; if the reply is null when no question
+     * is open, an {@link IllegalStateException} is thrown.
+     *
+     * @param reply the text provided by the writer, or {@code null} to use default instructions for the current block
+     */
     public void answer(String reply) {
         if (question == null) throw new IllegalStateException("no question is open");
         String r = reply == null ? "" : reply.strip();
@@ -139,12 +186,17 @@ public final class SampleToFrame implements Questioner {
         question = null;
     }
 
-    /** @return the sample's name, which the frame shares */
+    /** Returns the name of the sample, which is also the name of the frame produced by this object. */
     public String name() {
         return name;
     }
 
-    /** @return the frame's rule file; complete once {@link #nextQuestion()} has returned {@code null} */
+    /**
+     * Returns a string containing the rule file that defines the frame, with the instructions and samples updated from
+     * the writer's replies.
+     *
+     * <p>The returned string is complete once {@link #nextQuestion()} has returned {@code null}.
+     */
     public String frameFile() {
         RuleFile rf = RuleFile.parse(sample);
         for (Block b : blocks) {

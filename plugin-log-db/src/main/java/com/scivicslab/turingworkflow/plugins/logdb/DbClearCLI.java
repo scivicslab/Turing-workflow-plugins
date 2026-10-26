@@ -29,7 +29,24 @@ import org.apache.commons.cli.Options;
 import com.scivicslab.pluggablecli.CommandRepository;
 
 /**
- * CLI tool for clearing (deleting) the H2 log database files.
+ * Deletes the H2 log database files from the file system.
+ *
+ * <p>The command takes a database path and an optional HTTP port to check for a running log server, and returns a
+ * success message or an error if the files cannot be deleted.
+ *
+ * <ul>
+ * <li>`--db <path>`: The path to the H2 database (without the .mv.db extension).</li>
+ * <li>`--http-port <port>`: The port to check for a running log server to prevent deleting active databases (default:
+ * 29091).</li>
+ * <li>`-f, --force`: If present, skips the check for a running log server.</li>
+ * </ul>
+ *
+ * <p>If the log server is detected running on the specified port and {@code --force} is not provided, the command
+ * fails with an error message. If the files exist but cannot be deleted, the command exits with a failure.
+ *
+ * <pre>{@code
+ * db-clear --db ./workflow-logs/mylog --force
+ * }</pre>
  *
  * @author devteam@scivicslab.com
  * @since 3.0.0
@@ -37,9 +54,13 @@ import com.scivicslab.pluggablecli.CommandRepository;
 public class DbClearCLI {
 
     /**
-     * Registers the "db-clear" command with the given repository.
+     * Adds the {@code db-clear} command to the given command repository.
      *
-     * @param repo the command repository
+     * <p>The command allows deleting the H2 log database files by specifying the database path. It requires the {@code
+     * --db} option to provide the path without the {@code .mv.db} extension. If the log server is detected running on
+     * the specified {@code --http-port} (default 29091), the command fails unless the {@code --force} flag is used.
+     *
+     * @param repo the repository where the command is registered
      */
     public static void registerCommand(CommandRepository repo) {
         Options opts = new Options();
@@ -64,9 +85,16 @@ public class DbClearCLI {
     }
 
     /**
-     * Executes the db-clear command.
+     * Deletes the H2 log database files at the specified path.
      *
-     * @param cl the parsed command line
+     * If the {@code force} option is not present, the method first checks if a log server is responding on the
+     * specified HTTP port; if a server is detected, the method prints an error message and terminates the program. It
+     * then attempts to delete the {@code .mv.db} and {@code .trace.db} files associated with the provided database
+     * path. If a file exists but cannot be deleted, the method prints a failure message and terminates the program. If
+     * no files are found, it informs the user that no database files exist at that location.
+     *
+     * @param cl the parsed command line containing the {@code db} path, an optional {@code http-port}, and an optional
+     * {@code force} flag.
      */
     public void execute(CommandLine cl) {
         File dbPath = new File(cl.getOptionValue("db"));
