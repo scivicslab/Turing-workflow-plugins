@@ -89,4 +89,66 @@ class NodeGroupActorTest {
             assertThat(nodeGroup.getNamesOfChildren()).doesNotContain("node-alpha");
         }
     }
+
+    @Nested
+    @DisplayName("apply")
+    class Apply {
+
+        @BeforeEach
+        void createNodes() {
+            nodeGroup.callByActionName("createNodeActors", "{\"group\":\"web\"}");
+        }
+
+        @Test
+        @DisplayName("passes a map of arguments to each child as a JSON object")
+        void mapArgumentsReachNamedFieldAction() {
+            ActionResult result = nodeGroup.callByActionName("apply",
+                "{\"actor\":\"node-*\",\"method\":\"executeCommand\",\"arguments\":{\"command\":\"echo applied\"}}");
+
+            assertThat(result.isSuccess()).as(result.getResult()).isTrue();
+            assertThat(result.getResult()).isEqualTo("Applied to 2 actors");
+        }
+
+        @Test
+        @DisplayName("passes a list of arguments to each child as a JSON array")
+        void listArgumentsStayArray() {
+            // executeCommand declares named fields, so an array is refused by each child.
+            ActionResult result = nodeGroup.callByActionName("apply",
+                "{\"actor\":\"node-*\",\"method\":\"executeCommand\",\"arguments\":[\"echo applied\"]}");
+
+            assertThat(result.isSuccess()).isFalse();
+            assertThat(result.getResult()).startsWith("Applied to 0/2 actors");
+        }
+    }
+
+    @Nested
+    @DisplayName("executeCommandOnAllNodes")
+    class ExecuteCommandOnAllNodes {
+
+        @BeforeEach
+        void createNodes() {
+            nodeGroup.callByActionName("createNodeActors", "{\"group\":\"web\"}");
+        }
+
+        @Test
+        @DisplayName("runs the command on every node")
+        void runsCommandOnEveryNode() {
+            ActionResult result = nodeGroup.callByActionName("executeCommandOnAllNodes",
+                "{\"command\":\"echo on-every-node\"}");
+
+            assertThat(result.isSuccess()).as(result.getResult()).isTrue();
+            assertThat(result.getResult())
+                .contains("node-alpha: on-every-node")
+                .contains("node-beta: on-every-node");
+        }
+
+        @Test
+        @DisplayName("reports failure when the command fails on a node")
+        void failingCommandFails() {
+            ActionResult result = nodeGroup.callByActionName("executeCommandOnAllNodes",
+                "{\"command\":\"exit 3\"}");
+
+            assertThat(result.isSuccess()).as(result.getResult()).isFalse();
+        }
+    }
 }

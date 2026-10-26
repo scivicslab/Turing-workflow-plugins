@@ -75,12 +75,17 @@ import com.scivicslab.turingworkflow.plugins.ssh.NodeActor;
  *   actions:
  *     - actor: nodeGroup
  *       method: createNodeActors
- *       arguments: ["web-servers"]
+ *       arguments:
+ *         group: web-servers
  * - states: [1, end]
  *   actions:
  *     - actor: nodeGroup
  *       method: apply
- *       arguments: ['{"actor": "node-*", "method": "runWorkflow", "arguments": ["deploy.yaml"]}']
+ *       arguments:
+ *         actor: "node-*"
+ *         method: runWorkflow
+ *         arguments:
+ *           workflowFile: deploy.yaml
  * }</pre>
  *
  * <p>If an action fails, the result is not a success and the message contains the error details. If {@code apply} is
@@ -171,9 +176,11 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      *
      * @param actor a name pattern the child actors are matched against; {@code *} stands for any run of characters
      * @param method the name of the action to call on every matched child actor
-     * @param arguments the list of arguments to pass to the action; empty if no arguments are provided
+     * @param arguments the arguments to pass to the action: a map reaches each child as a JSON object (for an action
+     * with named arguments, such as {@code executeCommand}), a list as a JSON array, a single value as a one-element
+     * array, and none as the empty array
      */
-    public record ApplyArgs(@NotNull String actor, @NotNull String method, List<Object> arguments) {}
+    public record ApplyArgs(@NotNull String actor, @NotNull String method, Object arguments) {}
 
     @Action("execCode")
     public ActionResult execCode(String args) {
@@ -342,7 +349,11 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      * <pre>{@code
      * - actor: nodeGroup
      *   method: apply
-     *   arguments: ['{"actor": "node-*", "method": "runWorkflow", "arguments": ["deploy.yaml"]}']
+     *   arguments:
+     *     actor: "node-*"
+     *     method: runWorkflow
+     *     arguments:
+     *       workflowFile: deploy.yaml
      * }</pre>
      *
      * @param args a record containing the actor pattern, the method name, and the arguments to pass to the matched
@@ -359,15 +370,23 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     /**
      * Executes a shell command on every child node actor.
      *
+     * <p>The result is a success only if the command succeeded on every node; if it failed on any node, the result
+     * is a failure. Either way the message holds each node's output.</p>
+     *
      * @param args a {@link CommandArgs} containing the command string to run
      * @return an ActionResult that is a success containing a list of the results from each node, or a failure if the
-     * operation was interrupted or an execution error occurred
+     * command failed on any node, or the operation was interrupted or an execution error occurred
      */
     @Action(value = "executeCommandOnAllNodes", argsType = CommandArgs.class)
     public ActionResult executeCommandOnAllNodesAction(CommandArgs args) {
         try {
             String command = args.command();
-            List<String> results = executeCommandOnAllNodes(command);
+            List<NodeCommandResult> results = executeCommandOnAllNodes(command);
+            long failed = results.stream().filter(r -> !r.result().isSuccess()).count();
+            if (failed > 0) {
+                return new ActionResult(false,
+                    String.format("Command failed on %d/%d nodes: %s", failed, results.size(), results));
+            }
             return new ActionResult(true,
                 String.format("Executed command on %d nodes: %s", results.size(), results));
         } catch (InterruptedException | ExecutionException e) {
@@ -615,7 +634,11 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      * <pre>{@code
      * - actor: nodeGroup
      *   method: apply
-     *   arguments: ['{"actor": "node-*", "method": "runWorkflow", "arguments": ["deploy.yaml"]}']
+     *   arguments:
+     *     actor: "node-*"
+     *     method: runWorkflow
+     *     arguments:
+     *       workflowFile: deploy.yaml
      * }</pre>
      *
      * @param actorPattern a name pattern to match against child actors, where {@code *} acts as a wildcard
@@ -624,9 +647,9 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      * @return an action result that is a success if all matched actors succeeded, or a failure with a message listing
      * the failures for each actor (e.g., "Applied to 5/6 actors. Failures: node-web1: Error: connection refused")
      */
-    private ActionResult apply(String actorPattern, String method, List<Object> arguments) {
+    private ActionResult apply(String actorPattern, String method, Object arguments) {
         try {
-            String args = new JSONArray(arguments == null ? List.of() : arguments).toString();
+            String args = argumentsToJson(arguments);
 
             // Find matching child actors
             List<IIActorRef<?>> matchedActors = findMatchingChildActors(actorPattern);
@@ -695,6 +718,37 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
+     * Shapes the arguments of {@code apply} into the JSON string each child actor receives, as the engine's
+     * {@code Interpreter} shapes a step's own action call: a map becomes a JSON object (which an action declaring
+     * named arguments requires), a list a JSON array, {@code null} the empty array, and any single value a
+     * one-element array.
+     *
+     * @param arguments the arguments as read from the {@code apply} call
+     * @return the JSON string passed to each child's action
+     */
+    static String argumentsToJson(Object arguments) {
+        if (arguments == null) {
+            return "[]";
+        }
+        if (arguments instanceof Map<?, ?> map) {
+            JSONObject jsonObject = new JSONObject();
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                jsonObject.put(entry.getKey().toString(), entry.getValue());
+            }
+            return jsonObject.toString();
+        }
+        JSONArray jsonArray = new JSONArray();
+        if (arguments instanceof List<?> list) {
+            for (Object item : list) {
+                jsonArray.put(item);
+            }
+        } else {
+            jsonArray.put(arguments);
+        }
+        return jsonArray.toString();
+    }
+
+    /**
      * Returns a list of child actors whose names match the provided wildcard pattern.
      *
      * <p>The pattern is matched against the names of the actors created by {@code createNodeActors}. A single asterisk
@@ -746,16 +800,16 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     /**
      * Executes a shell command on every child node actor in the group.
      *
-     * Returns a list of strings where each entry is formatted as "node-hostname: result", containing the output or
-     * error message from each node's execution.
+     * Returns one entry per node, holding the node's name and the result of its {@code executeCommand} action;
+     * an entry prints as "node-hostname: output".
      *
      * @param command the shell command to run on each node
      */
-    private List<String> executeCommandOnAllNodes(String command)
+    private List<NodeCommandResult> executeCommandOnAllNodes(String command)
             throws ExecutionException, InterruptedException {
 
         IIActorSystem system = (IIActorSystem) this.system();
-        List<String> results = new ArrayList<>();
+        List<NodeCommandResult> results = new ArrayList<>();
 
         // Get all child node names
         List<String> childNames = new ArrayList<>(this.getNamesOfChildren());
@@ -771,15 +825,27 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
             }
             NodeActor nodeActor = (NodeActor) actorRef;
 
-            // Execute the command
-            JSONArray commandArgs = new JSONArray();
-            commandArgs.put(command);
-            ActionResult result = nodeActor.callByActionName("executeCommand", commandArgs.toString());
+            // executeCommand declares the named argument "command", so it receives a JSON object.
+            String commandArgs = new JSONObject().put("command", command).toString();
+            ActionResult result = nodeActor.callByActionName("executeCommand", commandArgs);
 
-            results.add(String.format("%s: %s", childName, result.getResult()));
+            results.add(new NodeCommandResult(childName, result));
         }
 
         return results;
+    }
+
+    /**
+     * The outcome of running a command on one node.
+     *
+     * @param nodeName the name of the node actor
+     * @param result the result of the node's {@code executeCommand} action
+     */
+    private record NodeCommandResult(String nodeName, ActionResult result) {
+        @Override
+        public String toString() {
+            return nodeName + ": " + result.getResult();
+        }
     }
 
     /**
