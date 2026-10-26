@@ -27,7 +27,7 @@ A workflow names the fields the action declares:
     - actor: llm
       method: setOpenAiUrl
       arguments:
-        url: "http://192.168.5.15:8000"
+        url: "http://192.168.5.15:8000/v1/chat/completions"
         model: "Qwen/Qwen3-32B"
 - states: ["1", "end"]
   actions:
@@ -46,7 +46,7 @@ A workflow names the fields the action declares:
 | `plugin-fineweb-search` | Queries a FineWeb BM25 search server |
 | `plugin-inventory` | Reads an Ansible inventory and manages node groups |
 | `plugin-kana-kanji` | Turns OCR output into kana-kanji pairs via vLLM |
-| `plugin-llm` | Calls an LLM, either over MCP or an OpenAI-compatible endpoint |
+| `plugin-llm` | Calls an LLM through an OpenAI-compatible endpoint or the quarkus-chat-ui REST API |
 | `plugin-log-db` | Stores a workflow run's log in an H2 database |
 | `plugin-log-output` | Writes log output to the console, a file, or several at once |
 | `plugin-ocr` | Sends a PDF to Marker (English and mathematics) or YomiToku (Japanese) |
@@ -60,16 +60,16 @@ A workflow names the fields the action declares:
 
 ## Example: `plugin-llm`
 
-Actors that call an LLM, either over the [MCP](https://modelcontextprotocol.io/) Streamable HTTP transport or an OpenAI-compatible endpoint.
+Actors that call an LLM, either through an OpenAI-compatible chat completions endpoint (such as vLLM) or through the REST API of a quarkus-chat-ui instance.
 
 | Action | Arguments | What it does |
 |---|---|---|
-| `setDirectUrl` | `url` | Sets the MCP server's base URL |
-| `setOpenAiUrl` | `url`, `model` | Sets the OpenAI-compatible endpoint, and which model answers |
+| `setDirectUrl` | `url` | Sets the base URL of the quarkus-chat-ui instance |
+| `setOpenAiUrl` | `url`, `model` | Sets the OpenAI-compatible endpoint (the full URL that is posted to, e.g. `http://host:8000/v1/chat/completions`), and which model answers |
 | `setSystemPrompt` | `prompt` | Sets the system prompt sent with every call |
 | `setEnableThinking` | `enabled` | Whether the model's reasoning output is kept |
 | `callOpenAi` | `prompt` | Sends a prompt to the OpenAI-compatible endpoint |
-| `submitDirect` | `prompt` | Sends a prompt over MCP |
+| `submitDirect` | `prompt` | Sends a prompt to the quarkus-chat-ui REST API and waits for the reply |
 
 Every field above is required except `model`, which falls back to the endpoint's own default. The generated JSON Schema for each action is in the module's jar under `action-schemas/`.
 

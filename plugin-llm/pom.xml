@@ -12,8 +12,8 @@
 
     <artifactId>plugin-llm</artifactId>
     <version>4.8.0-SNAPSHOT</version>
-    <name>Turing Workflow Plugin: LLM (MCP Client)</name>
-    <description>Actor that calls LLM services via MCP protocol</description>
+    <name>Turing Workflow Plugin: LLM</name>
+    <description>Actor that calls an LLM through an OpenAI-compatible chat completions endpoint or the quarkus-chat-ui REST API</description>
 
     <dependencies>
         <dependency>

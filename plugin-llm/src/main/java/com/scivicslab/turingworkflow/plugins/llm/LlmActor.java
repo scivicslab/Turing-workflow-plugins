@@ -8,10 +8,11 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
- * Communicates with an LLM via two modes: MCP-based tool calling or Direct REST text processing.
+ * Communicates with an LLM through one of two endpoints: an OpenAI-compatible chat completions endpoint (such as
+ * vLLM), or the REST API of a quarkus-chat-ui instance (Direct REST mode).
  *
  * <ul><li ><code>setDirectUrl</code> sets the base URL for Direct REST mode.</li><li ><code>setOpenAiUrl</code> sets
- * the base URL and model ID for OpenAI-compatible requests.</li><li ><code>setSystemPrompt</code> sets the system
+ * the URL posted to (e.g. {@code http://host:8000/v1/chat/completions}) and model ID for OpenAI-compatible requests.</li><li ><code>setSystemPrompt</code> sets the system
  * instructions for the model.</li><li ><code>setEnableThinking</code> enables or disables the model's reasoning
  * step.</li><li ><code>callOpenAi</code> sends a prompt to the OpenAI-compatible endpoint.</li><li
  * ><code>submitDirect</code> sends a prompt to the Direct REST endpoint.</li></ul>
@@ -46,9 +47,9 @@ public class LlmActor extends IIActorRef<LlmClient> {
     public record UrlArgs(@NotNull String url) {}
 
     /**
-     * Holds the base URL of an OpenAI-compatible endpoint and an optional model ID.
+     * Holds the URL of an OpenAI-compatible chat completions endpoint and an optional model ID.
      *
-     * @param url the base URL of the endpoint
+     * @param url the URL requests are posted to, as given, e.g. {@code http://host:8000/v1/chat/completions}
      * @param model the model ID to request; if null, the current model is kept
      */
     public record OpenAiUrlArgs(@NotNull String url, String model) {}
@@ -73,9 +74,9 @@ public class LlmActor extends IIActorRef<LlmClient> {
     }
 
     /**
-     * Sets the base URL of the OpenAI-compatible endpoint and the model ID to be used.
+     * Sets the URL of the OpenAI-compatible chat completions endpoint and the model ID to be used.
      *
-     * @param args a record containing the base URL and the model ID to request; omitting the model ID keeps the
+     * @param args a record containing the endpoint URL and the model ID to request; omitting the model ID keeps the
      * current one
      *
      * @return an action result representing the outcome of the operation

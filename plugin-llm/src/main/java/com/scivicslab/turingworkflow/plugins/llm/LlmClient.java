@@ -119,7 +119,7 @@ public class LlmClient {
      *
      * A {@code null} or blank model has no effect on the current model.
      *
-     * @param url the base URL of the OpenAI-compatible endpoint
+     * @param url the URL requests are posted to, as given, e.g. {@code http://host:8000/v1/chat/completions}
      * @param model the model ID to request, or {@code null} to keep the current one
      * @return an {@link ActionResult} containing a message describing what was set
      */
@@ -279,7 +279,7 @@ public class LlmClient {
      *
      * A timeout of 5 minutes is enforced for the entire polling process.
      *
-     * Does not support tool calling; use {@link #callOpenAi(String)} for MCP-based agent loops.
+     * Sends the prompt text only; no tool definitions are passed to the model.
      *
      * @param promptText the prompt text to send, provided as a plain string or a JSON array containing one string
      * @return an ActionResult where a success contains the LLM response text in the message, and a failure contains
@@ -411,17 +411,37 @@ public class LlmClient {
         return sb.toString();
     }
 
-    private static String unwrapJsonArray(String s) {
+    /**
+     * Returns the text an argument carries: the one string of a JSON array such as {@code ["text"]}, the content of
+     * a JSON string literal such as {@code "text"}, or otherwise the argument itself, trimmed.
+     *
+     * <p>The argument is unwrapped only when the whole of it is that JSON value with a quoted string inside. Text
+     * that merely starts with {@code [} or {@code "}, such as prompt-builder output beginning with
+     * {@code [Constraints]}, is kept as written.</p>
+     *
+     * @param s the argument as received
+     * @return the text it carries
+     */
+    static String unwrapJsonArray(String s) {
         String t = s.trim();
-        if (t.startsWith("[")) {
+        boolean array = t.startsWith("[") && t.substring(1).stripLeading().startsWith("\"");
+        boolean literal = t.startsWith("\"");
+        if (array || literal) {
             try {
-                org.json.JSONArray arr = new org.json.JSONArray(t);
-                if (arr.length() == 1 && arr.get(0) instanceof String) {
-                    return ((String) arr.get(0)).trim();
+                org.json.JSONTokener tokener = new org.json.JSONTokener(t);
+                Object value = tokener.nextValue();
+                boolean wholeText = tokener.nextClean() == 0;
+                if (wholeText && array && value instanceof org.json.JSONArray arr
+                        && arr.length() == 1 && arr.get(0) instanceof String text) {
+                    return text.trim();
                 }
-            } catch (Exception ignored) {}
+                if (wholeText && literal && value instanceof String text) {
+                    return text;
+                }
+            } catch (Exception ignored) {
+                // not a JSON value: the text is kept as written
+            }
         }
-        if (t.startsWith("\"") && t.endsWith("\"")) return t.substring(1, t.length() - 1);
         return t;
     }
 
