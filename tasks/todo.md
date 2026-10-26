@@ -61,3 +61,93 @@ cissp 1.4、ゲームAI技術入門 1.1.19、jdk25-javadoc 2.9.99（番号の各
 - 結果: 1,656 個のうち 1,646 個を書き直した（1回目で通過 998、2〜3回目で通過 357、3回差し戻され最後の版を使った forced 291、元のまま 10）。
   閉じていない `<li` が残った4プラグインは検査を足して流し直した。抜き取りで、段落の `<p>` 抜け、ブロックタグの後ろに本文が続くもの、
   静的なユーティリティにも「several workflows at once」を書くものが見つかった（未修正）
+
+## 2026-10-26: doc_SCIVICS001/docs/Turing-workflow-plugins を ProgrammingProject 標準に合わせる
+標準: `ProgrammingProject_260920_oo01`、`AgentBrief_260905_oo01`、`ConceptDocumentStandard_260922_oo01`、
+`TestDocumentStandard_260922_oo01`、`HowToExplainAProgram_261004_oo01`、`AntiPattern_260921_oo01`。決定: 本体の説明2本と 005_index は削除、
+Vision Statement の分からない所は空欄、新しいプラグインは1プラグイン1文書、本文は全部 Claude Code が書く。
+- [ ] ディレクトリを組み替える（git mv）: 050_tutorials→020_tutorials、020_specs の使い方13本→030_operations、
+      PluginDevelopment→050_implementation、025_tests→060_tests（1文書1ディレクトリ）。010_concepts の2本と 005_index.md を削除
+- [ ] 010_concepts: Vision Statement（Business Requirement の5節、分からない所は空欄）とコンセプト文書（コアのアイディア、システム構成、20プラグインの一覧と依存関係）
+- [ ] 030_operations: 論文の3プラグインを1プラグイン1文書に分け、文書の無い8プラグイン（chatui3、codedoc、fineweb-search、kana-kanji、ocr、rst-frame、text、web）の文書を足す
+- [ ] 全文書を共通の節構成（Problem Definition／前提条件と達成状態／How to do it／Under the Hood／参考資料）に直す。060_tests は7項目に合わせる。
+      事実はソースで確かめ、バージョン・日付は書かない
+- [ ] 確認: 全文書の id とファイル名・ディレクトリ名の一致、節の有無、description、data-doc-id の参照先が存在すること
+
+## 2026-10-26: doc_SCIVICS001/docs/Turing-workflow-plugins/030_operations の14本を共通の節構成で書き直す
+指示は `tasks/doc-refactor-brief.md`。1本ずつ、ソースと突き合わせて直す。190_PluginPaperDatabases は触らない。
+- [x] 010_Installation
+- [x] 020_SshSetup
+- [x] 030_CliCommands
+- [x] 040_DatabaseConnection
+- [x] 100_PluginSsh
+- [x] 110_PluginInventory
+- [x] 120_PluginLogDb
+- [x] 130_PluginLogOutput
+- [x] 140_PluginReport
+- [x] 150_PluginLlm
+- [x] 155_PluginLlm_Direct
+- [x] 160_PluginPromptBuilder
+- [x] 170_PluginSecret
+- [x] 180_PluginVault
+- 確かめ方: `run` で動く例（loader で読み込むプラグイン）は `/tmp/twdoc` で実行し、LLM と Vault は手元の模擬サーバで確かめた。
+  `nodeGroup` / `logStore` / `outputMultiplexer` の例は、それらを登録する Java のホストプログラム（`/tmp/twdoc/host/HostDemo.java`）で確かめた。
+- 見つけたソースの不具合（コードは直していない。2つ目と3つ目は文書に制限として書いた。1つ目は文書に書いていない）:
+  - `NodeGroupActor.createNodeActors` が同じ名前を2回登録し、POJO-actor の名前の重複検査（0711270）で `IllegalStateException`。ノードのアクターが作れない
+  - `NodeGroupActor.apply` / `executeCommandOnAllNodes` / `Interpreter.apply` が引数を JSON 配列で渡すので、argsType を持つアクション（`executeCommand`、`runWorkflow` など）は引数の検査で必ず失敗する
+  - `LlmClient.unwrapJsonArray` が `[` で始まるプロンプトを配列として読み、`PromptBuilderActor.build` の結果（`[Constraints]...`）が `Constraints` の1語に切り詰められる
+  - コンセプト文書と README の `setOpenAiUrl` の例の `url` が `/v1/chat/completions` を含まない（`callOpenAi` はその URL にそのまま POST する）
+
+## 2026-10-26: 030_operations に 11 プラグインの文書を書く（論文3本の分割と、文書の無い8プラグイン）
+指示は `tasks/doc-refactor-brief.md`。1プラグイン1文書、YAML の例は `run` で実行して確かめる。
+- [x] 190_PluginArxiv / 200_PluginOpenAlex / 210_PluginSemanticScholar（実サービスに数問）。190_PluginPaperDatabases は `git rm -r`
+- [x] 220_PluginWeb（DuckDuckGo に1問、ページは手元の http.server）、230_PluginFineWebSearch（模擬サーバ）、240_PluginChatUi3（模擬サーバ）
+- [x] 250_PluginKanaKanji（GPU broker に2問）、260_PluginOcr（模擬サーバ）、270_PluginCodeDoc、280_PluginText、290_PluginRstFrame（GPU broker に7問程度）
+- [x] コンセプト文書の参考資料に 11 本の id を足す
+- 見つけたソースの不具合（コードは直していない。文書の Under the Hood に書いた）:
+  - `CodeDocActor` がリストのアクターの `add` と `get` に文字列をそのまま渡すので、argsType の検査で失敗する。
+    `chunkFile`・`scanProject`・`listMarkdownNoDescription` は数を返すがリストは空、`writeFileFromList`・`joinListToStr` は検査の失敗の文を書く
+  - `ChatUi3Actor` を作ったワークフローは、`run` の終了時に `ChatUi3WatchdogActor.close` が閉じ済みの `ChatUi3Actor` を触って
+    `NullPointerException` になり、プロセスが終了しない
+  - `plugin-rst-frame` は H2 を `loadJar`（や `plugins.yaml`）で読み込むと `No suitable driver found`。JVM のクラスパスに置く必要がある
+  - `SemanticScholarClient.resolveId` の `https://doi.org/` の分岐は `:` の判定が先にあるので通らない
+  - `plugin-kana-kanji` の jar の `examples/kana-kanji-pairs.yaml` は引数を文字列で渡しており、今のアクションでは動かない
+
+## 2026-10-26: 020_tutorials の14本を共通の節構成で書き直す
+指示は `tasks/doc-refactor-brief.md`。1本ずつ、id とパスはそのまま。各 YAML は `run`（turing-workflow の shaded jar、プラグインは ~/.m2）で実行して確かめる。
+外部サービスは手元の模擬サーバ。SSH は sshd に設定変更なしで localhost に入れる場合だけ実行する。todo.md の不具合で動かない例は、手順を残して Under the Hood に書く。
+- [x] 010_FirstWorkflow（実行: createNodeActors の不具合で失敗。NodeActor を1回だけ登録する検証用プログラムで後段を確認）
+- [x] 020_ParallelExecution（実行: createNodeActors で失敗。検証用プログラムで apply の引数の失敗と、集計の後段を確認）
+- [x] 030_SystemInventory（実行: createNodeActors で失敗。サブワークフローは検証用プログラムで手元の計算機に対して確認。SSH は未実行）
+- [x] 040_UtilizingResults（実行: 失敗する実行のログを log-search・db-clear で読めることを確認。-n の行は検証用プログラムの実行から）
+- [x] 050_ReportGeneration（実行: 基本の報告は成功。用途別2本は createNodeActors で失敗、検証用プログラムで後段を確認。GPU の節は固定の3行で確認）
+- [x] 060_OverlaySystem（実行: run -o で3通りとも成功。describe -o が namePrefix のあるオーバーレイを当てずにベースを表示することを見つけた）
+- [x] 070_CowsayCharacters（実行: 既定・tux・elephant・meow・知らない名前を確認。一覧は listCowfiles の44種類）
+- [x] 080_PluginSsh（実行: createNodeActors で失敗。検証用プログラムで SUDO_PASSWORD なしの経路まで確認。sudo 付きと遠隔の SSH は未実行）
+- [x] 090_PluginInventory（実行: InventoryCheck は成功。メインは createNodeActors で失敗。--list-nodes の形は検証用プログラムの FAILED の出力から）
+- [x] 100_PluginLlm（実行: 模擬サーバに対して run で成功。接続失敗と [ で始まるプロンプトの切り詰めも確認）
+- [x] 110_PluginPromptBuilder（実行: 模擬サーバに対して run で YES・NO の両方の分岐を確認。ループは LLM なしで成功）
+- [x] 120_PluginReport（実行: run の例は成功。ClusterRunner の例は createNodeActors で失敗、検証用プログラムで後段を確認）
+- [x] 130_PluginSecret（実行: 鍵の生成・暗号化・復号・誤った鍵、RunWithSecrets の起動を確認。ワークフローは createNodeActors で失敗、SUDO_PASSWORD が渡ることは検証用プログラムで確認。sudo は未実行）
+- [x] 140_PluginVault（実行: 模擬 Vault に対して run で成功と4通りの失敗を確認。kubectl exec は未実行。E2E の例は createNodeActors で失敗、検証用プログラムで後段を確認）
+- 確かめ方: 作業は /tmp/twtut。NodeActor を使う例は `ClusterRunner.java`（010 に載せたもの）で実行し、不具合の後段は
+  NodeActor を名前1つにつき1回だけ登録する検証用の `/tmp/twtut/verify/VerifyRunner.java` で確かめた。LLM と Vault は手元の模擬サーバ
+  （`/tmp/twtut/mock/`）。GPU broker と実際の LLM・Vault には問い合わせていない。localhost への SSH は `~/.ssh/known_hosts` の
+  ホスト鍵の食い違いで拒まれるので、SSH の例は実行していない（設定は変えていない）。
+- 新しく見つけたこと（コードは直していない。060 の Under the Hood に書いた）:
+  - `DescribeCLI.loadYamlWithOverlay` はファイル名の完全一致でしか探さないので、`namePrefix`/`nameSuffix` のあるオーバーレイでは
+    何も告げずにベースのファイルを表示する（`run -o` は部分一致で探すので当たる）
+  - `NodeGroupActor.printSessionSummary` は文書サイト構築用の決まった12項目の表を出し、一般のワークフローには使えない（090 から外した）
+
+## 2026-10-26: 060_tests の4本と 050_implementation/010_PluginDevelopment を共通の節構成で書き直す
+指示は `tasks/doc-refactor-brief.md`。060_tests は TestDocumentStandard の7項目に合わせる。コードとテストは変えない。
+- [x] 010_TestsOverview（`rm -rf target */target && mvn test -DexcludedGroups=e2e`: 306 件成功、失敗・飛ばし 0）
+- [x] 020_E2eSsh（E2E は未実行。`mvn test -pl plugin-ssh -DexcludedGroups=e2e` は 0 件で BUILD SUCCESS）
+- [x] 030_E2eLlm（E2E テストはソースツリーに無いと明記。`mvn test -pl plugin-llm`: LlmClientTest 3 件成功）
+- [x] 040_E2eVault（Vault に触れるテストは未実行。環境変数を外した `mvn test`: 3 件とも飛ばし、BUILD SUCCESS）
+- [x] 010_PluginDevelopment（`/tmp/twplugin/plugin-wordcount` を作り、mvn install でテスト 3 件成功、run で loadJar→createChild→count/total と引数検査の失敗を確認。~/.m2 に入れた例の jar は消した）
+- 見つけたこと（コードは直していない。文書の Under the Hood に書いた）:
+  - 親 pom に excludedGroups が無く、`mvn test`/`mvn install` が `NodeE2eTest` を実行して 192.168.5.13 へ接続する。`VAULT_ADDR`/`VAULT_TOKEN` がシェルにあれば Vault の E2E も実行され、Vault に書く
+  - `*E2eRunner` の javadoc の `mvn exec:java` のコマンドは `-Dexec.classpathScope=test` が無く、クラスが見つからずに失敗する
+  - `VaultActorE2eTest.get_missingPath_returnsFailure` はマウントの設定にかかわらず `secret/` を読み、失敗の種類を区別しない
+  - `PomXmlPlugin_260921_oo01` の表はエンジンへの依存を `compile` とするが、親 pom は `provided`
