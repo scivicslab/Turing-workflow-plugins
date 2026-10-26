@@ -46,13 +46,18 @@ public class VllmClient {
             2. 各文・句を文節単位で | で区切る
             3. ページ番号のみの行は除外する
 
+            文節とは、自立語（名詞・動詞・形容詞など）1つと、それに続く付属語（助詞・助動詞）をまとめた単位です。
+            「ね」を入れて切れるところが文節の切れ目です。単語ごとに切ってはいけません。
+
             出力形式（1文・句につき1行）：
             漢字文（文節を|で区切る）
 
             例：
-            巾級数|と|いうもの|は|この|種|の|一般的|な|方法|の|一つ|で
+            巾級数と|いうものは|この|種の|一般的な|方法の|一つで
 
             ルール：
+            - 助詞・助動詞・句読点だけの区切りを作らない。前の文節に付ける（「現代の」「フォントでも、」）
+            - 複合語は分けない（「変数宣言記号」は1つ）
             - 数式・アルファベット・数字・英語はそのまま残す
             - 説明・コメント不要。出力行のみ
 
@@ -68,12 +73,14 @@ public class VllmClient {
             ひらがな読み（文節を|で区切る）\t漢字文（文節を|で区切る）
 
             例（入力）：
-            巾級数|と|いうもの|は|この|種|の|一般的|な|方法|の|一つ|で
+            巾級数と|いうものは|この|種の|一般的な|方法の|一つで
 
             例（出力）：
-            べき|きゅうすう|と|いうもの|は|この|しゅ|の|いっぱんてき|な|ほうほう|の|ひとつ|で\t巾級数|と|いうもの|は|この|種|の|一般的|な|方法|の|一つ|で
+            べききゅうすうと|いうものは|この|しゅの|いっぱんてきな|ほうほうの|ひとつで\t巾級数と|いうものは|この|種の|一般的な|方法の|一つで
 
             ルール：
+            - 区切りの | は、入力と同じ位置に、同じ数だけ置く。増やしたり減らしたりしない
+            - 左（ひらがな読み）と右（漢字文）の | の数は同じにする
             - 数式・アルファベット・数字・英語はひらがな読みなしでそのまま右側に残す
             - ひらがな・カタカナはそのままひらがなに変換する
             - 助詞の「は」「へ」「を」は発音（わ／え／お）ではなく表記どおり「は」「へ」「を」と書く
@@ -113,7 +120,7 @@ public class VllmClient {
         }
         String prompt = SEGMENT_PROMPT.formatted(text);
         try {
-            String response = callVllm(prompt);
+            String response = fixLoneParticles(callVllm(prompt));
             this.lastResponse = response;
             logger.info("Step1 segmentation: " + response.lines().count() + " lines");
             return new ActionResult(true, response);
@@ -158,6 +165,34 @@ public class VllmClient {
         String combined = String.join("\n", results);
         logger.info("Step2 hiragana: " + results.size() + " lines total");
         return new ActionResult(true, combined);
+    }
+
+    /**
+     * Lines that were split into words (a segment of only particles or punctuation) are asked once more,
+     * one line at a time. A line that is still split that way is kept, so the page is not lost.
+     */
+    private String fixLoneParticles(String response) {
+        List<String> fixed = new ArrayList<>();
+        for (String line : response.lines().toList()) {
+            if (!BunsetsuCheck.hasLoneParticle(line)) {
+                fixed.add(line);
+                continue;
+            }
+            String again = line;
+            try {
+                String reply = callVllm(SEGMENT_PROMPT.formatted(line.replace("|", "")));
+                List<String> replyLines = reply.lines().map(String::strip).filter(l -> !l.isBlank()).toList();
+                if (replyLines.size() == 1 && !BunsetsuCheck.hasLoneParticle(replyLines.get(0))) {
+                    again = replyLines.get(0);
+                } else {
+                    logger.info("Kept a line split into words: " + line);
+                }
+            } catch (Exception e) {
+                logger.log(Level.WARNING, "vLLM call failed (re-segment), keeping the line", e);
+            }
+            fixed.add(again);
+        }
+        return String.join("\n", fixed);
     }
 
     private static final int BATCH_SIZE = 20;
@@ -227,8 +262,8 @@ public class VllmClient {
         if (responseLine.isBlank() || !responseLine.contains("\t")) {
             return false;
         }
-        String reading = responseLine.split("\t", 2)[0];
-        return containsHiragana(reading);
+        String[] columns = responseLine.split("\t", 2);
+        return containsHiragana(columns[0]) && BunsetsuCheck.sameBoundaryCount(columns[0], columns[1]);
     }
 
     /**
