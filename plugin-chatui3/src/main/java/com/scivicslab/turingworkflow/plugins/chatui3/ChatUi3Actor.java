@@ -41,15 +41,29 @@ public class ChatUi3Actor extends IIActorRef<ChatUi3Client> {
         return object;
     }
 
-    /** Stops the ongoing Server-Sent Events stream. */
+    /** Stops the ongoing Server-Sent Events stream; does nothing once this actor is closed. */
     public void stopSse() {
-        client().stopSse();
+        ChatUi3Client client = client();
+        if (client != null) {
+            client.stopSse();
+        }
     }
 
-    /** Performs a shutdown of the underlying {@code ChatUi3Client} and then closes the actor. */
+    /**
+     * Closes the watchdog child, shuts down the underlying {@code ChatUi3Client} and then closes the actor.
+     *
+     * <p>The watchdog is closed first because it calls {@link #stopSse()} on this actor. A second call (for example
+     * from {@code IIActorSystem.terminateIIActors()} after this actor was already closed) does nothing.</p>
+     */
     @Override
     public void close() {
-        client().shutdown();
+        if (system() != null && system().getActor(getName() + "-watchdog") instanceof ChatUi3WatchdogActor watchdog) {
+            watchdog.close();
+        }
+        ChatUi3Client client = client();
+        if (client != null) {
+            client.shutdown();
+        }
         super.close();
     }
 
