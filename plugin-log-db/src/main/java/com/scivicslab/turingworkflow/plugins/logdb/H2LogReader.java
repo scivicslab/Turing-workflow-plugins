@@ -72,7 +72,7 @@ public class H2LogReader implements AutoCloseable {
      */
     public H2LogReader(Path dbPath) throws SQLException {
         String url = "jdbc:h2:" + dbPath.toAbsolutePath().toString() + ";AUTO_SERVER=TRUE";
-        this.connection = DriverManager.getConnection(url);
+        this.connection = H2Connections.open(url);
         this.ownsConnection = true;
     }
 
@@ -86,7 +86,7 @@ public class H2LogReader implements AutoCloseable {
      */
     public H2LogReader(String host, int port, String dbPath) throws SQLException {
         String url = "jdbc:h2:tcp://" + host + ":" + port + "/" + dbPath;
-        this.connection = DriverManager.getConnection(url);
+        this.connection = H2Connections.open(url);
         this.ownsConnection = true;
     }
 

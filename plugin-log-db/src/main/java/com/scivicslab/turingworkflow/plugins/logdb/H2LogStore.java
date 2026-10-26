@@ -113,8 +113,8 @@ public class H2LogStore implements DistributedLogStore {
     public H2LogStore(Path dbPath, boolean compress) throws SQLException {
         String url = "jdbc:h2:" + dbPath.toAbsolutePath().toString() + ";AUTO_SERVER=TRUE"
                 + (compress ? ";COMPRESS=TRUE" : "");
-        this.writeConnection = DriverManager.getConnection(url);
-        this.readConnection = DriverManager.getConnection(url);
+        this.writeConnection = H2Connections.open(url);
+        this.readConnection = H2Connections.open(url);
         this.reader = new H2LogReader(readConnection);
         initSchema();
     }
@@ -126,8 +126,8 @@ public class H2LogStore implements DistributedLogStore {
      */
     public H2LogStore() throws SQLException {
         String url = "jdbc:h2:mem:testdb_" + System.nanoTime() + ";DB_CLOSE_DELAY=-1";
-        this.writeConnection = DriverManager.getConnection(url);
-        this.readConnection = DriverManager.getConnection(url);
+        this.writeConnection = H2Connections.open(url);
+        this.readConnection = H2Connections.open(url);
         this.reader = new H2LogReader(readConnection);
         initSchema();
     }

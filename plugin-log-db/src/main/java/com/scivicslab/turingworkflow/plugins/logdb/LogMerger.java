@@ -22,7 +22,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
@@ -222,7 +221,7 @@ public final class LogMerger {
         // database a running program holds open fails with "Database may be already in use".
         String url = "jdbc:h2:" + database.toAbsolutePath() + ";AUTO_SERVER=TRUE"
                 + (compress ? ";COMPRESS=TRUE" : "");
-        Connection conn = DriverManager.getConnection(url);
+        Connection conn = H2Connections.open(url);
         conn.setAutoCommit(false);
         return conn;
     }
