@@ -12,7 +12,7 @@ import java.util.Set;
  * of {@code |} characters.</li>
  * </ul>
  *
- * <p>One instance may serve several workflows or threads at once.</p>
+ * <p>Holds no state and cannot be instantiated; the static methods are safe to call from any thread.</p>
  */
 public final class BunsetsuCheck {
 
