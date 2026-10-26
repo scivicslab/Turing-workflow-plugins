@@ -28,7 +28,6 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
 import com.scivicslab.pojoactor.action.Action;
@@ -37,6 +36,7 @@ import com.scivicslab.pojoactor.action.ActionResult;
 import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
+import com.scivicslab.turingworkflow.workflow.Interpreter;
 
 import com.scivicslab.turingworkflow.plugins.logdb.DistributedLogStore;
 import com.scivicslab.turingworkflow.plugins.logdb.LogEntry;
@@ -649,7 +649,8 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      */
     private ActionResult apply(String actorPattern, String method, Object arguments) {
         try {
-            String args = argumentsToJson(arguments);
+            // Shape the arguments as a step's own action call does, so each child receives the same JSON.
+            String args = Interpreter.argumentsToJson(arguments);
 
             // Find matching child actors
             List<IIActorRef<?>> matchedActors = findMatchingChildActors(actorPattern);
@@ -715,37 +716,6 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
             logger.log(Level.SEVERE, "Error in apply: " + method + " on " + actorPattern, e);
             return new ActionResult(false, "Error: " + e.getMessage());
         }
-    }
-
-    /**
-     * Shapes the arguments of {@code apply} into the JSON string each child actor receives, as the engine's
-     * {@code Interpreter} shapes a step's own action call: a map becomes a JSON object (which an action declaring
-     * named arguments requires), a list a JSON array, {@code null} the empty array, and any single value a
-     * one-element array.
-     *
-     * @param arguments the arguments as read from the {@code apply} call
-     * @return the JSON string passed to each child's action
-     */
-    static String argumentsToJson(Object arguments) {
-        if (arguments == null) {
-            return "[]";
-        }
-        if (arguments instanceof Map<?, ?> map) {
-            JSONObject jsonObject = new JSONObject();
-            for (Map.Entry<?, ?> entry : map.entrySet()) {
-                jsonObject.put(entry.getKey().toString(), entry.getValue());
-            }
-            return jsonObject.toString();
-        }
-        JSONArray jsonArray = new JSONArray();
-        if (arguments instanceof List<?> list) {
-            for (Object item : list) {
-                jsonArray.put(item);
-            }
-        } else {
-            jsonArray.put(arguments);
-        }
-        return jsonArray.toString();
     }
 
     /**
