@@ -3,13 +3,24 @@ description: |
   Two-step kana-kanji pair generation from OCR TSV.
   Step 1: LLM merges OCR fragments into bunsetsu-segmented sentences.
   Step 2: LLM converts bunsetsu text to hiragana readings.
-  Validation loop retries Step 2 if hiragana is missing (max 3 retries via state counter).
+  A page whose step 1 or step 2 fails is skipped.
 
-  Variables (set via -D or vars.set):
-    ocr.file   - path to input OCR TSV file
-    pairs.file - path to output pairs TSV file
-    vllm.url   - vLLM endpoint (default: http://192.168.5.16:8000/v1/chat/completions)
-    vllm.model - model name (default: Qwen3.5-35B-A3B)
+  Parameters (set with -P key=value):
+    ocrFile   - path to input OCR TSV file
+    pairsFile - path to output pairs TSV file
+    vllmUrl   - OpenAI-compatible chat completions URL of the local LLM,
+                e.g. http://host:8000/v1/chat/completions
+    vllmModel - model name served at vllmUrl
+
+params:
+  ocrFile:
+    description: path to input OCR TSV file
+  pairsFile:
+    description: path to output pairs TSV file
+  vllmUrl:
+    description: OpenAI-compatible chat completions URL of the local LLM
+  vllmModel:
+    description: model name served at vllmUrl
 
 steps:
   # ── Setup ─────────────────────────────────────────────────────────────────
@@ -19,7 +30,7 @@ steps:
     actions:
       - actor: loader
         method: loadJar
-        arguments: "com.scivicslab.turingworkflow.plugins:plugin-kana-kanji:1.0.0"
+        arguments: "com.scivicslab.turingworkflow.plugins:plugin-kana-kanji:@project.version@"
 
   - states: ["1", "2"]
     label: create-actors
@@ -39,16 +50,16 @@ steps:
     actions:
       - actor: vllm
         method: setUrl
-        arguments: "${vllm.url}"
+        arguments: {url: "jexl: state.getString('vllmUrl')"}
       - actor: vllm
         method: setModel
-        arguments: "${vllm.model}"
+        arguments: {model: "jexl: state.getString('vllmModel')"}
       - actor: ocr
         method: loadFile
-        arguments: "${ocr.file}"
+        arguments: {path: "jexl: state.getString('ocrFile')"}
       - actor: pairs
         method: openOutput
-        arguments: "${pairs.file}"
+        arguments: {path: "jexl: state.getString('pairsFile')"}
 
   # ── Page loop ─────────────────────────────────────────────────────────────
 
@@ -58,7 +69,6 @@ steps:
     actions:
       - actor: ocr
         method: nextPage
-        arguments: ""
 
   # All pages processed → close and end
   - states: ["3", "end"]
@@ -66,10 +76,9 @@ steps:
     actions:
       - actor: pairs
         method: closeOutput
-        arguments: ""
       - actor: log
         method: add
-        arguments: {"source": "kana-kanji", "type": "stdout", "data": "All pages processed."}
+        arguments: {source: "kana-kanji", type: "stdout", data: "All pages processed."}
 
   # ── Step 1: Bunsetsu segmentation ─────────────────────────────────────────
 
@@ -78,7 +87,6 @@ steps:
     actions:
       - actor: ocr
         method: getPageText
-        arguments: ""
 
   - states: ["5", "6"]
     label: step1-segment
@@ -86,10 +94,10 @@ steps:
     actions:
       - actor: vllm
         method: segment
-        arguments: "${result}"
+        arguments: {text: "jexl: result"}
       - actor: interpreter
         method: putJson
-        arguments: {path: segmented, value: "${result}"}
+        arguments: {path: segmented, value: "jexl: result"}
 
   # Step 1 failed (LLM error) → skip page, go to next
   - states: ["5", "3"]
@@ -97,23 +105,22 @@ steps:
     actions:
       - actor: log
         method: add
-        arguments: {"source": "kana-kanji", "type": "stderr", "data": "Step 1 failed, skipping page"}
+        arguments: {source: "kana-kanji", type: "stderr", data: "Step 1 failed, skipping page"}
 
-  # ── Step 2: Hiragana conversion with retry loop ───────────────────────────
+  # ── Step 2: Hiragana conversion ───────────────────────────────────────────
 
   - states: ["6", "7"]
-    label: set-page-info
+    label: get-page-info
     actions:
       - actor: ocr
         method: getPageInfo
-        arguments: ""
 
   - states: ["7", "8"]
     label: set-pairs-page-info
     actions:
       - actor: pairs
         method: setPageInfo
-        arguments: "${result}"
+        arguments: {pageInfo: "jexl: result"}
 
   # Step 2: toHiragana handles batching (20 lines) and per-line retry internally.
   # Writes pairs on success; on failure goes to next page.
@@ -123,10 +130,10 @@ steps:
     actions:
       - actor: vllm
         method: toHiragana
-        arguments: "${segmented}"
+        arguments: {text: "jexl: state.getString('segmented')"}
       - actor: pairs
         method: writePairs
-        arguments: "${result}"
+        arguments: {response: "jexl: result"}
 
   # Step 2 failed entirely → skip page
   - states: ["8", "3"]
@@ -134,7 +141,7 @@ steps:
     actions:
       - actor: log
         method: add
-        arguments: {"source": "kana-kanji", "type": "stderr", "data": "Step 2 failed, skipping page"}
+        arguments: {source: "kana-kanji", type: "stderr", data: "Step 2 failed, skipping page"}
 
   # ── Error fallback ────────────────────────────────────────────────────────
 
@@ -143,7 +150,6 @@ steps:
     actions:
       - actor: pairs
         method: closeOutput
-        arguments: ""
       - actor: log
         method: add
-        arguments: {"source": "kana-kanji", "type": "stderr", "data": "Workflow ended unexpectedly"}
+        arguments: {source: "kana-kanji", type: "stderr", data: "Workflow ended unexpectedly"}

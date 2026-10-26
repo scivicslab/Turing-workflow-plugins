@@ -1,5 +1,17 @@
 name: llm-hello
-description: Load LLM plugin via Maven, send a prompt to LLM Console (Claude) via MCP Gateway
+description: |
+  Load the LLM plugin from the local Maven repository and send one prompt to an
+  OpenAI-compatible chat completions endpoint.
+
+  Parameters (set with -P key=value):
+    llmUrl   - the URL requests are posted to, e.g. http://host:8000/v1/chat/completions
+    llmModel - model name served at llmUrl
+
+params:
+  llmUrl:
+    description: the URL requests are posted to, e.g. http://host:8000/v1/chat/completions
+  llmModel:
+    description: model name served at llmUrl
 
 steps:
   - states: ["0", "1"]
@@ -8,7 +20,7 @@ steps:
     actions:
       - actor: loader
         method: loadJar
-        arguments: "com.scivicslab.turingworkflow.plugins:plugin-llm:1.0.0"
+        arguments: "com.scivicslab.turingworkflow.plugins:plugin-llm:@project.version@"
 
   - states: ["1", "2"]
     label: create-llm-actor
@@ -22,41 +34,36 @@ steps:
           - com.scivicslab.turingworkflow.plugins.llm.LlmActor
 
   - states: ["2", "3"]
-    label: set-gateway-url
-    note: Point LLM actor to MCP Gateway (llm-console-claude)
+    label: set-endpoint
+    note: Point the llm actor to the OpenAI-compatible endpoint
     actions:
       - actor: llm
-        method: setUrl
-        arguments: http://localhost:8090/mcp
+        method: setOpenAiUrl
+        arguments:
+          url: "jexl: state.getString('llmUrl')"
+          model: "jexl: state.getString('llmModel')"
 
   - states: ["3", "4"]
-    label: check-status
-    note: Check LLM Console status via MCP Gateway
-    actions:
-      - actor: llm
-        method: status
-        arguments: ""
-
-  - states: ["4", "5"]
     label: send-prompt
-    note: Send a simple prompt to Claude via MCP Gateway
+    note: Send a simple prompt and keep the reply as the result
     actions:
       - actor: llm
-        method: prompt
-        arguments: "Hello! Please respond with a short greeting and tell me what you can do."
+        method: callOpenAi
+        arguments:
+          prompt: "Hello! Please respond with a short greeting and tell me what you can do."
 
-  - states: ["5", "end"]
+  - states: ["4", "end"]
     label: done
-    note: Log completion
+    note: Print the reply
     actions:
-      - actor: log
-        method: info
-        arguments: Workflow completed successfully
+      - actor: interpreter
+        method: print
+        arguments: "jexl: result"
 
   - states: ["!end", "end"]
     label: catch-all
     note: Prevent infinite loop
     actions:
-      - actor: log
-        method: warn
-        arguments: Unexpected state - forcing end
+      - actor: interpreter
+        method: print
+        arguments: "llm-hello: a step failed - forcing end"

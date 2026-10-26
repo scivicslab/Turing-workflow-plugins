@@ -35,4 +35,23 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <excludes>
+                    <exclude>examples/**</exclude>
+                </excludes>
+            </resource>
+            <!-- The example workflows load this module's own jar: @project.version@ becomes its version. -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>examples/**</include>
+                </includes>
+            </resource>
+        </resources>
+    </build>
 </project>
