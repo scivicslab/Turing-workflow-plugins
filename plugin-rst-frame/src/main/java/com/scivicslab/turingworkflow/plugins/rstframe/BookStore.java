@@ -161,10 +161,11 @@ public final class BookStore implements AutoCloseable {
             s.execute("CREATE TABLE IF NOT EXISTS frame_relation (from_id VARCHAR(40) NOT NULL, kind VARCHAR(20) NOT NULL, "
                     + "to_id VARCHAR(40) NOT NULL, book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
                     + "PRIMARY KEY (from_id, kind, to_id, book, number))");
-            // the lookups the viewer makes of one frame: its concrete frames, its kinds, the relations that point to it
-            s.execute("CREATE INDEX IF NOT EXISTS frame_registry_member_id ON frame_registry_member (id)");
-            s.execute("CREATE INDEX IF NOT EXISTS frame_registry_parent ON frame_registry (parent)");
-            s.execute("CREATE INDEX IF NOT EXISTS frame_relation_to ON frame_relation (to_id)");
+            // no query looks a frame up by these columns: the viewer reads the registry whole, so the indexes an older
+            // version made only slowed the writes
+            s.execute("DROP INDEX IF EXISTS frame_registry_member_id");
+            s.execute("DROP INDEX IF EXISTS frame_registry_parent");
+            s.execute("DROP INDEX IF EXISTS frame_relation_to");
             s.execute("CREATE TABLE IF NOT EXISTS frame_registry_item (id VARCHAR(40) NOT NULL, ordinal INT NOT NULL, "
                     + "question VARCHAR(2000) NOT NULL, rules CLOB NOT NULL, PRIMARY KEY (id, ordinal))");
             s.execute("CREATE TABLE IF NOT EXISTS section_pattern (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
