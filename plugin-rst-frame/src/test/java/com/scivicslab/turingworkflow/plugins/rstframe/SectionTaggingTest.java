@@ -33,7 +33,7 @@ class SectionTaggingTest {
         new BookStructure().readToc(db, "core", dir.resolve("book").toString());
         new BookStructure().cutSections(db, "core");
         List<String> asked = new ArrayList<>();
-        try (BookStore store = new BookStore("jdbc:h2:" + db + ";AUTO_SERVER=TRUE")) {
+        try (BookStore store = BookStore.forWriting("jdbc:h2:" + db + ";AUTO_SERVER=TRUE")) {
             String summary = SectionTagging.tagAll(store, "core", List.of(), q -> { asked.add(q); return fair(q); }, 2, line -> { });
             assertEquals("2 section(s) of core made into rule files, 0 failed", summary);
             BookStore.SectionRules r = store.sectionRules("core", "4.1.1");

@@ -32,7 +32,7 @@ class BookStructureTest {
         String db = dir.resolve("db/books").toString();
         assertEquals("read 2 markdown file(s) of core: {chapter=1, section=2, subsection=1}", s.readToc(db, "core", book(dir).toString()));
         assertEquals("4 section(s) of core; 1 with no text of their own; 1 spanning more than one file", s.cutSections(db, "core"));
-        try (BookStore store = new BookStore("jdbc:h2:" + db + ";AUTO_SERVER=TRUE")) {
+        try (BookStore store = BookStore.forWriting("jdbc:h2:" + db + ";AUTO_SERVER=TRUE")) {
             assertEquals("A class is a template.\n\nIt runs on.", store.sections("core").get(2).text());
         }
     }

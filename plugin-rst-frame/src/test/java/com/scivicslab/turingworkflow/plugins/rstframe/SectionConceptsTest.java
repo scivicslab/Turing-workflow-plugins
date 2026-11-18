@@ -39,7 +39,7 @@ class SectionConceptsTest {
         String db = dir.resolve("db/books").toString();
         new BookStructure().readToc(db, "core", dir.resolve("book").toString());
         new BookStructure().cutSections(db, "core");
-        try (BookStore store = new BookStore("jdbc:h2:" + db + ";AUTO_SERVER=TRUE")) {
+        try (BookStore store = BookStore.forWriting("jdbc:h2:" + db + ";AUTO_SERVER=TRUE")) {
             store.saveSectionRules("core", new BookStore.SectionRules("4.1.1", """
                     (defrule s1 -> p1 :heading "## 4.1.1. Classes")
                     (defrule p1 -> :nucleus p1/1 :example p1/2)

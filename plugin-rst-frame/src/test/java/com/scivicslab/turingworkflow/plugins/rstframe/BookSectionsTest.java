@@ -93,7 +93,7 @@ class BookSectionsTest {
         Map<String, String> f = book();
         BookOutline.Outline o = BookOutline.read(f);
         BookSections.Result r = BookSections.split(f, o.nodes());
-        try (BookStore s = new BookStore("jdbc:h2:" + dir.resolve("books"))) {
+        try (BookStore s = BookStore.forWriting("jdbc:h2:" + dir.resolve("books"))) {
             s.saveOutline("core", "/b", o);
             s.saveSections("core", r.sections());
             s.saveSections("core", r.sections());
@@ -160,11 +160,11 @@ class BookSectionsTest {
         new BookStructure().readToc(db, "b", book.toString());
         new BookStructure().cutSections(db, "b");
         java.util.List<String> first, second;
-        try (BookStore s = new BookStore("jdbc:h2:" + db + ";AUTO_SERVER=TRUE")) {
+        try (BookStore s = BookStore.forWriting("jdbc:h2:" + db + ";AUTO_SERVER=TRUE")) {
             first = s.outline("b").stream().map(BookOutline.Node::number).toList();
         }
         new BookStructure().cutSections(db, "b");
-        try (BookStore s = new BookStore("jdbc:h2:" + db + ";AUTO_SERVER=TRUE")) {
+        try (BookStore s = BookStore.forWriting("jdbc:h2:" + db + ";AUTO_SERVER=TRUE")) {
             second = s.outline("b").stream().map(BookOutline.Node::number).toList();
             assertEquals(second.size(), s.sections("b").size());
         }

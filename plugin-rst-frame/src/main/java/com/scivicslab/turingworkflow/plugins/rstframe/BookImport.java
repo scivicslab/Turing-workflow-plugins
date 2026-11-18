@@ -33,9 +33,12 @@ import java.util.Map;
  * using a local LLM.</li>
  * <li>{@code collect} gathers the materials required for the generalized frames using a local LLM.</li>
  * <li>{@code prune} removes concepts from the database that do not meet a minimum rule count.</li>
+ * <li>{@code migrate} converts a database from before the schema versions to the current one, after backing it up
+ * ({@link BookMigration}).</li>
  * </ul>
  *
  * <pre>{@code
+ * BookImport migrate <db-file>
  * BookImport toc <db-file> <book-name> <book-dir>
  * BookImport rules <db-file> <book-name> <chat-url> <model> <parallel> [section-number...]
  * BookImport similar <db-file> <chat-url> <model> <parallel> <embed-url> <embed-model> [section-number...]
@@ -47,18 +50,23 @@ public final class BookImport {
     }
 
     public static void main(String[] a) throws Exception {
+        if (a.length == 2 && a[0].equals("migrate")) {
+            // a database from before the schema versions: backed up, converted, checked, compacted (BookMigration)
+            BookMigration.migrate(Path.of(a[1]).toAbsolutePath(), System.out);
+            return;
+        }
         if (a.length == 3 && a[0].equals("sections")) {
             sections(a[1], a[2]);
             return;
         }
         if (a.length == 3 && a[0].equals("judge")) {
-            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+            try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 System.out.println(ConceptImportance.judgeAll(store, a[2]));
             }
             return;
         }
         if (a.length >= 6 && a[0].equals("concepts")) {
-            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+            try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
                 System.out.println(SectionConcepts.listAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 400), Integer.parseInt(a[5]),
                         line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
@@ -66,7 +74,7 @@ public final class BookImport {
             return;
         }
         if (a.length >= 6 && a[0].equals("relations")) {
-            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+            try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
                 System.out.println(SectionRelations.relateAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 600), Integer.parseInt(a[5]),
                         line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
@@ -74,7 +82,7 @@ public final class BookImport {
             return;
         }
         if (a.length >= 6 && a[0].equals("collect")) {
-            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+            try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
                 System.out.println(FrameMaterial.collectAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 800), Integer.parseInt(a[5]),
                         line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
@@ -82,13 +90,13 @@ public final class BookImport {
             return;
         }
         if (a.length == 4 && a[0].equals("prune")) {
-            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+            try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 System.out.println(FrameMaterial.pruneAll(store, a[2], Integer.parseInt(a[3])));
             }
             return;
         }
         if (a.length >= 6 && (a[0].equals("place") || a[0].equals("relate") || a[0].equals("frame-items") || a[0].equals("frame-names"))) {
-            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+            try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
                 java.util.function.Consumer<String> log = line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line);
                 int parallel = Integer.parseInt(a[5]);
@@ -102,7 +110,7 @@ public final class BookImport {
             return;
         }
         if (a.length >= 6 && (a[0].equals("identify") || a[0].equals("merge") || a[0].equals("generalize"))) {
-            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+            try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
                 java.util.function.Consumer<String> log = line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line);
                 int parallel = Integer.parseInt(a[5]);
@@ -115,7 +123,7 @@ public final class BookImport {
             return;
         }
         if (a.length >= 6 && a[0].equals("items")) {
-            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+            try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
                 System.out.println(FrameItems.askAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 1000), Integer.parseInt(a[5]),
                         line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
@@ -124,7 +132,7 @@ public final class BookImport {
         }
         if (a.length >= 7 && a[0].equals("similar")) {
             // similar <db> <chat-url> <model> <parallel> <embed-url> <embed-model> [section-number...]
-            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+            try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 java.util.List<String> only = java.util.Arrays.asList(a).subList(7, a.length);
                 System.out.println(SimilarConcepts.askAll(store, a[5], a[6], only, new ChatEndpoint(a[2], a[3], 400), Integer.parseInt(a[4]),
                         line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
@@ -132,7 +140,7 @@ public final class BookImport {
             return;
         }
         if (a.length >= 6 && a[0].equals("relations-of-concepts")) {
-            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+            try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
                 System.out.println(ConceptRelations.askAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 2000), Integer.parseInt(a[5]),
                         line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
@@ -140,7 +148,7 @@ public final class BookImport {
             return;
         }
         if (a.length >= 6 && a[0].equals("properties")) {
-            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+            try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
                 System.out.println(ConceptProperties.askAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 1200), Integer.parseInt(a[5]),
                         line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
@@ -148,7 +156,7 @@ public final class BookImport {
             return;
         }
         if (a.length >= 6 && a[0].equals("causes")) {
-            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+            try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
                 System.out.println(ConceptCauses.askAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 1200), Integer.parseInt(a[5]),
                         line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
@@ -156,7 +164,7 @@ public final class BookImport {
             return;
         }
         if (a.length >= 6 && a[0].equals("groups")) {
-            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+            try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
                 System.out.println(SectionGroups.askAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 800), Integer.parseInt(a[5]),
                         line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
@@ -164,7 +172,7 @@ public final class BookImport {
             return;
         }
         if (a.length >= 6 && a[0].equals("patterns")) {
-            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+            try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
                 // worked examples of the cases that are easy to get wrong: -Drstframe.patternExamples=<file>
                 String ex = System.getProperty("rstframe.patternExamples", "");
@@ -175,7 +183,7 @@ public final class BookImport {
             return;
         }
         if (a.length >= 6 && a[0].equals("review")) {
-            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+            try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
                 System.out.println(SectionReview.reviewAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 400), Integer.parseInt(a[5]),
                         line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
@@ -183,7 +191,7 @@ public final class BookImport {
             return;
         }
         if (a.length >= 6 && a[0].equals("rules")) {
-            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+            try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 java.util.List<String> only = java.util.Arrays.asList(a).subList(6, a.length);
                 System.out.println(SectionTagging.tagAll(store, a[2], only, new ChatEndpoint(a[3], a[4], 2000), Integer.parseInt(a[5]),
                         line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
@@ -199,7 +207,7 @@ public final class BookImport {
             }
             BookOutline.Outline o = BookOutline.withDirectoryChapters(files, OutlineByModel.read(a[2], files, new ChatEndpoint(a[4], a[5], 1500),
                     line -> System.out.println(java.time.LocalTime.now().withNano(0) + " " + line)));
-            try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+            try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
                 store.saveOutline(a[2], dir.toString(), o);
             }
             Map<String, Integer> byLevel = new LinkedHashMap<>();
@@ -218,7 +226,7 @@ public final class BookImport {
             for (Path p : s.filter(p -> p.toString().endsWith(".md")).sorted().toList()) files.put(dir.relativize(p).toString(), Files.readString(p));
         }
         BookOutline.Outline o = BookOutline.withDirectoryChapters(files, BookOutline.read(files));
-        try (BookStore store = new BookStore("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+        try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(a[1]).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
             store.saveOutline(a[2], dir.toString(), o);
         }
         Map<String, Integer> byLevel = new LinkedHashMap<>();
@@ -228,7 +236,7 @@ public final class BookImport {
     }
 
     private static void sections(String dbFile, String book) throws Exception {
-        try (BookStore store = new BookStore("jdbc:h2:" + Path.of(dbFile).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
+        try (BookStore store = BookStore.forWriting("jdbc:h2:" + Path.of(dbFile).toAbsolutePath() + ";AUTO_SERVER=TRUE")) {
             String d = store.dirOf(book);
             if (d == null) throw new IllegalArgumentException("no book " + book + "; run toc first");
             Path dir = Path.of(d);

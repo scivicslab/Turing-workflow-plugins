@@ -26,7 +26,7 @@ class BookStoreDriverTest {
     void opensWithoutDriverManagerRegistration() throws Exception {
         org.h2.Driver.unload();
 
-        try (BookStore store = new BookStore("jdbc:h2:" + dir.resolve("books"))) {
+        try (BookStore store = BookStore.forWriting("jdbc:h2:" + dir.resolve("books"))) {
             assertEquals(0, store.books().size());
         }
     }

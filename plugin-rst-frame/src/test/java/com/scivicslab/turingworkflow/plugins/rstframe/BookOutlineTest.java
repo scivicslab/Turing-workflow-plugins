@@ -75,7 +75,7 @@ class BookOutlineTest {
     @Test
     void theOutlineIsStoredAndReadBack(@TempDir Path dir) throws Exception {
         BookOutline.Outline o = BookOutline.read(book());
-        try (BookStore s = new BookStore("jdbc:h2:" + dir.resolve("books"))) {
+        try (BookStore s = BookStore.forWriting("jdbc:h2:" + dir.resolve("books"))) {
             s.saveOutline("core", "/b", o);
             s.saveOutline("core", "/b", o);           // saving again replaces, it does not add
             assertEquals(List.of("core"), s.books());

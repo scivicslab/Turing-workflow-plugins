@@ -95,112 +95,86 @@ public final class BookStore implements AutoCloseable {
         return connection;
     }
 
+    private final String where;
+
+    private BookStore(Connection db, String where) {
+        this.db = db;
+        this.where = where;
+    }
+
     /**
-     * Initializes a connection to an H2 database that stores the intermediate data of the steps that make frames from
-     * books.
+     * Opens the books database for a writer: the steps that make frames from books, and {@code BookImport}. A new database
+     * gets its tables; a database at {@link BookSchema#VERSION} is used as it is, with no DDL.
      *
      * @param url a JDBC URL, e.g. {@code jdbc:h2:/home/u/works/rst-on-lisp/db/books;AUTO_SERVER=TRUE}
-     * @throws SQLException if a database access error occurs or the connection cannot be established
+     * @throws SQLException if the database cannot be opened, is from before the schema versions ({@code BookImport
+     *         migrate} converts it), or is at another version
      */
-    public BookStore(String url) throws SQLException {
-        this.db = openH2(url);
+    public static BookStore forWriting(String url) throws SQLException {
+        Connection db = openH2(url);
+        try {
+            BookSchema.prepareForWriting(db, url);
+            return new BookStore(db, url);
+        } catch (SQLException e) {
+            db.close();
+            throw e;
+        }
+    }
+
+    /**
+     * Opens the books database for a reader, such as Frame Viewer. Runs no DDL: a reader never changes the shape of a
+     * database the workflows write.
+     *
+     * @param url a JDBC URL
+     * @throws SQLException if the database cannot be opened or is not at {@link BookSchema#VERSION}
+     */
+    public static BookStore forReading(String url) throws SQLException {
+        Connection db = openH2(url);
+        try {
+            BookSchema.checkForReading(db, url);
+            return new BookStore(db, url);
+        } catch (SQLException e) {
+            db.close();
+            throw e;
+        }
+    }
+
+    /**
+     * The number of changes written to the database. Every write of this class adds one in its own transaction, so a
+     * reader that keeps what it read knows it is out of date when this number has moved.
+     */
+    public synchronized long dataVersion() throws SQLException {
+        try (Statement s = db.createStatement(); ResultSet r = s.executeQuery("SELECT version FROM data_version WHERE id = 1")) {
+            if (!r.next()) throw new SQLException("data_version has no row in " + where);
+            return r.getLong(1);
+        }
+    }
+
+    /** Counts one change, inside the caller's transaction. */
+    private void changed() throws SQLException {
         try (Statement s = db.createStatement()) {
-            s.execute("CREATE TABLE IF NOT EXISTS book (name VARCHAR(200) PRIMARY KEY, dir VARCHAR(2000) NOT NULL)");
-            s.execute("CREATE TABLE IF NOT EXISTS toc_node (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
-                    + "ordinal INT NOT NULL, level VARCHAR(20) NOT NULL, title VARCHAR(2000) NOT NULL, parent VARCHAR(40), "
-                    + "first_file VARCHAR(2000) NOT NULL, PRIMARY KEY (book, number))");
-            s.execute("CREATE TABLE IF NOT EXISTS section_text (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
-                    + "text CLOB NOT NULL, files CLOB NOT NULL, chars INT NOT NULL, PRIMARY KEY (book, number))");
-            s.execute("CREATE TABLE IF NOT EXISTS section_rules (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
-                    + "rules CLOB NOT NULL, questions INT NOT NULL, PRIMARY KEY (book, number))");
-            s.execute("CREATE TABLE IF NOT EXISTS section_code (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
-                    + "name VARCHAR(200) NOT NULL, text CLOB NOT NULL, PRIMARY KEY (book, number, name))");
-            s.execute("CREATE TABLE IF NOT EXISTS section_concept (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
-                    + "ordinal INT NOT NULL, concept VARCHAR(1000) NOT NULL, PRIMARY KEY (book, number, ordinal))");
-            // step 5: whether a concept is kept, and why; null until judged
-            s.execute("ALTER TABLE section_concept ADD COLUMN IF NOT EXISTS kept BOOLEAN");
-            s.execute("ALTER TABLE section_concept ADD COLUMN IF NOT EXISTS reason VARCHAR(1000)");
-            // step 4: the numbers of the sentences that explain the concept, comma separated; null when listed without them
-            s.execute("ALTER TABLE section_concept ADD COLUMN IF NOT EXISTS sentences VARCHAR(1000)");
-            // step 6: how the concepts of one section relate: is-a, part-of, feature
-            s.execute("CREATE TABLE IF NOT EXISTS section_relation (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
-                    + "ordinal INT NOT NULL, kind VARCHAR(20) NOT NULL, child VARCHAR(1000) NOT NULL, parent VARCHAR(1000) NOT NULL, "
-                    + "sentences VARCHAR(1000), PRIMARY KEY (book, number, ordinal))");
-            // step 7: what the review made of each relation: keep, is-a, part-of, feature, reverse or drop; null until reviewed
-            s.execute("ALTER TABLE section_relation ADD COLUMN IF NOT EXISTS review VARCHAR(20)");
-            // the material of a section's concrete frame: the rules that say a concept's properties and behaviors
-            s.execute("CREATE TABLE IF NOT EXISTS frame_concept (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
-                    + "ordinal INT NOT NULL, concept VARCHAR(1000) NOT NULL, kept BOOLEAN, PRIMARY KEY (book, number, ordinal))");
-            // the features and parts of a concept folded into it: their rules are collected as the concept's own
-            s.execute("ALTER TABLE frame_concept ADD COLUMN IF NOT EXISTS folded VARCHAR(4000)");
-            s.execute("CREATE TABLE IF NOT EXISTS frame_rule (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
-                    + "concept VARCHAR(1000) NOT NULL, ordinal INT NOT NULL, kind VARCHAR(20) NOT NULL, rule VARCHAR(400) NOT NULL, "
-                    + "text CLOB NOT NULL, PRIMARY KEY (book, number, concept, ordinal))");
-            // how a section explains its main concept: sequence, structure, partition or aspects; the blocks that are the concept's
-            // steps, parts, kinds or aspects, one "block<TAB>relation<TAB>name" line each
-            // the items of a concept's concrete frame: the questions its explanation answers, each with the rules that
-            // answer it, comma separated
-            s.execute("CREATE TABLE IF NOT EXISTS frame_item (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
-                    + "concept VARCHAR(1000) NOT NULL, ordinal INT NOT NULL, question VARCHAR(2000) NOT NULL, rules VARCHAR(4000) NOT NULL, "
-                    + "PRIMARY KEY (book, number, concept, ordinal))");
-            // the concepts of the book (one per concept, recognized across sections) and the generalized concepts above
-            // them; members are "number<TAB>concept" lines, children the ids of a generalized concept's kinds
-            s.execute("CREATE TABLE IF NOT EXISTS concept_entity (book VARCHAR(200) NOT NULL, id VARCHAR(1000) NOT NULL, "
-                    + "name VARCHAR(1000) NOT NULL, level VARCHAR(20) NOT NULL, members CLOB, children CLOB, PRIMARY KEY (book, id))");
-            // the items of a concept of the book: the questions, each with the sentences ("number:rule") that answer it
-            s.execute("CREATE TABLE IF NOT EXISTS concept_entity_item (book VARCHAR(200) NOT NULL, id VARCHAR(1000) NOT NULL, "
-                    + "ordinal INT NOT NULL, question VARCHAR(2000) NOT NULL, rules CLOB NOT NULL, PRIMARY KEY (book, id, ordinal))");
-            // the registry of generalized frames, kept across books and runs: each with an id that is not a name, the frame
-            // above it in the concept tree, the concrete frames put into it, and its items
-            s.execute("CREATE TABLE IF NOT EXISTS frame_registry (id VARCHAR(40) PRIMARY KEY, name VARCHAR(1000) NOT NULL, "
-                    + "parent VARCHAR(40), seq INT NOT NULL)");
-            s.execute("CREATE TABLE IF NOT EXISTS frame_registry_member (id VARCHAR(40) NOT NULL, book VARCHAR(200) NOT NULL, "
-                    + "number VARCHAR(40) NOT NULL, concept VARCHAR(1000) NOT NULL, seq INT NOT NULL, PRIMARY KEY (book, number, concept))");
-            // the relations between generalized frames of the registry besides the tree's is-a: part-of, feature,
-            // operation, other, and the is-a the sections said, each with the section that said it
-            s.execute("CREATE TABLE IF NOT EXISTS frame_relation (from_id VARCHAR(40) NOT NULL, kind VARCHAR(20) NOT NULL, "
-                    + "to_id VARCHAR(40) NOT NULL, book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
-                    + "PRIMARY KEY (from_id, kind, to_id, book, number))");
-            // no query looks a frame up by these columns: the viewer reads the registry whole, so the indexes an older
-            // version made only slowed the writes
-            s.execute("DROP INDEX IF EXISTS frame_registry_member_id");
-            s.execute("DROP INDEX IF EXISTS frame_registry_parent");
-            s.execute("DROP INDEX IF EXISTS frame_relation_to");
-            s.execute("CREATE TABLE IF NOT EXISTS frame_registry_item (id VARCHAR(40) NOT NULL, ordinal INT NOT NULL, "
-                    + "question VARCHAR(2000) NOT NULL, rules CLOB NOT NULL, PRIMARY KEY (id, ordinal))");
-            s.execute("CREATE TABLE IF NOT EXISTS section_pattern (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
-                    + "concept VARCHAR(1000) NOT NULL, pattern VARCHAR(20) NOT NULL, members CLOB, PRIMARY KEY (book, number))");
-            s.execute("CREATE TABLE IF NOT EXISTS section_group (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
-                    + "ordinal INT NOT NULL, type VARCHAR(20) NOT NULL, concept VARCHAR(1000), members CLOB NOT NULL, "
-                    + "PRIMARY KEY (book, number, ordinal))");
-            s.execute("CREATE TABLE IF NOT EXISTS concept_cause (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
-                    + "ordinal INT NOT NULL, group_ordinal INT NOT NULL, relation VARCHAR(60) NOT NULL, kind VARCHAR(20) NOT NULL, "
-                    + "from_concept VARCHAR(1000) NOT NULL, to_concept VARCHAR(1000) NOT NULL, nucleus_rule VARCHAR(200) NOT NULL, "
-                    + "satellite_rule VARCHAR(200) NOT NULL, PRIMARY KEY (book, number, ordinal))");
-            s.execute("CREATE TABLE IF NOT EXISTS concept_relation (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
-                    + "ordinal INT NOT NULL, group_ordinal INT NOT NULL, source VARCHAR(60) NOT NULL, link VARCHAR(60) NOT NULL, "
-                    + "from_concept VARCHAR(1000) NOT NULL, to_concept VARCHAR(1000) NOT NULL, rule VARCHAR(200) NOT NULL, "
-                    + "PRIMARY KEY (book, number, ordinal))");
-            s.execute("CREATE TABLE IF NOT EXISTS concept_relation_asked (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
-                    + "PRIMARY KEY (book, number))");
-            // similarity between units is kept apart from the sections' tables, keyed by the criterion it was judged by
-            s.execute("CREATE TABLE IF NOT EXISTS unit_embedding (model VARCHAR(200) NOT NULL, book VARCHAR(200) NOT NULL, "
-                    + "number VARCHAR(40) NOT NULL, ordinal INT NOT NULL, text CLOB NOT NULL, vector VARBINARY(16384) NOT NULL, "
-                    + "PRIMARY KEY (model, book, number, ordinal))");
-            s.execute("CREATE TABLE IF NOT EXISTS concept_similarity (criterion VARCHAR(200) NOT NULL, book VARCHAR(200) NOT NULL, "
-                    + "number VARCHAR(40) NOT NULL, ordinal INT NOT NULL, concept VARCHAR(1000) NOT NULL, other_book VARCHAR(200) NOT NULL, "
-                    + "other_number VARCHAR(40) NOT NULL, other_ordinal INT NOT NULL, other_concept VARCHAR(1000) NOT NULL, "
-                    + "common VARCHAR(1000) NOT NULL, PRIMARY KEY (criterion, book, number, ordinal, other_book, other_number, other_ordinal))");
-            s.execute("CREATE TABLE IF NOT EXISTS concept_similarity_judged (criterion VARCHAR(200) NOT NULL, book VARCHAR(200) NOT NULL, "
-                    + "number VARCHAR(40) NOT NULL, ordinal INT NOT NULL, concept VARCHAR(1000) NOT NULL, "
-                    + "PRIMARY KEY (criterion, book, number, ordinal))");
-            s.execute("CREATE TABLE IF NOT EXISTS concept_property (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
-                    + "ordinal INT NOT NULL, group_ordinal INT NOT NULL, concept VARCHAR(1000), kind VARCHAR(20) NOT NULL, "
-                    + "property VARCHAR(2000) NOT NULL, rule VARCHAR(200) NOT NULL, PRIMARY KEY (book, number, ordinal))");
-            s.execute("CREATE TABLE IF NOT EXISTS concept_property_asked (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
-                    + "PRIMARY KEY (book, number))");
-            s.execute("CREATE TABLE IF NOT EXISTS concept_cause_asked (book VARCHAR(200) NOT NULL, number VARCHAR(40) NOT NULL, "
-                    + "PRIMARY KEY (book, number))");
+            s.executeUpdate("UPDATE data_version SET version = version + 1 WHERE id = 1");
+        }
+    }
+
+    /** A write that may throw what JDBC throws. */
+    @FunctionalInterface
+    private interface Write {
+        void run() throws SQLException;
+    }
+
+    /** Runs one write as a transaction, with the change counted in it. */
+    private void write(Write w) throws SQLException {
+        db.setAutoCommit(false);
+        try {
+            w.run();
+            changed();
+            db.commit();
+        } catch (SQLException | RuntimeException e) {
+            db.rollback();
+            throw e;
+        } finally {
+            db.setAutoCommit(true);
         }
     }
 
@@ -243,6 +217,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 i.executeBatch();
             }
+            changed();
             db.commit();
         } catch (SQLException e) {
             db.rollback();
@@ -282,6 +257,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 i.executeBatch();
             }
+            changed();
             db.commit();
         } catch (SQLException e) {
             db.rollback();
@@ -361,6 +337,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 i.executeBatch();
             }
+            changed();
             db.commit();
         } catch (SQLException e) {
             db.rollback();
@@ -472,6 +449,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 i.executeBatch();
             }
+            changed();
             db.commit();
         } catch (SQLException e) {
             db.rollback();
@@ -632,6 +610,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 i.executeBatch();
             }
+            changed();
             db.commit();
         } catch (SQLException e) {
             db.rollback();
@@ -715,6 +694,7 @@ public final class BookStore implements AutoCloseable {
                 c.executeBatch();
                 r.executeBatch();
             }
+            changed();
             db.commit();
         } catch (SQLException e) {
             db.rollback();
@@ -861,6 +841,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 p.executeBatch();
             }
+            changed();
             db.commit();
         } catch (SQLException e) {
             db.rollback();
@@ -927,6 +908,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 p.executeBatch();
             }
+            changed();
             db.commit();
         } catch (SQLException e) {
             db.rollback();
@@ -1009,12 +991,14 @@ public final class BookStore implements AutoCloseable {
      * @throws SQLException if a database access error occurs
      */
     public synchronized void addRegistryFrame(String id, String name, int seq) throws SQLException {
-        try (PreparedStatement p = db.prepareStatement("INSERT INTO frame_registry (id, name, parent, seq) VALUES (?, ?, NULL, ?)")) {
-            p.setString(1, id);
-            p.setString(2, name);
-            p.setInt(3, seq);
-            p.executeUpdate();
-        }
+        write(() -> {
+            try (PreparedStatement p = db.prepareStatement("INSERT INTO frame_registry (id, name, parent, seq) VALUES (?, ?, NULL, ?)")) {
+                p.setString(1, id);
+                p.setString(2, name);
+                p.setInt(3, seq);
+                p.executeUpdate();
+            }
+        });
     }
 
     /**
@@ -1027,14 +1011,16 @@ public final class BookStore implements AutoCloseable {
      * @throws SQLException if a database access error occurs
      */
     public synchronized void addRegistryMember(String id, RegistryMember m, int seq) throws SQLException {
-        try (PreparedStatement p = db.prepareStatement("MERGE INTO frame_registry_member (id, book, number, concept, seq) KEY (book, number, concept) VALUES (?, ?, ?, ?, ?)")) {
-            p.setString(1, id);
-            p.setString(2, m.book());
-            p.setString(3, m.number());
-            p.setString(4, m.concept());
-            p.setInt(5, seq);
-            p.executeUpdate();
-        }
+        write(() -> {
+            try (PreparedStatement p = db.prepareStatement("MERGE INTO frame_registry_member (id, book, number, concept, seq) KEY (book, number, concept) VALUES (?, ?, ?, ?, ?)")) {
+                p.setString(1, id);
+                p.setString(2, m.book());
+                p.setString(3, m.number());
+                p.setString(4, m.concept());
+                p.setInt(5, seq);
+                p.executeUpdate();
+            }
+        });
     }
 
     /**
@@ -1045,11 +1031,13 @@ public final class BookStore implements AutoCloseable {
      * @throws SQLException if a database access error occurs
      */
     public synchronized void renameRegistryFrame(String id, String name) throws SQLException {
-        try (PreparedStatement p = db.prepareStatement("UPDATE frame_registry SET name = ? WHERE id = ?")) {
-            p.setString(1, name);
-            p.setString(2, id);
-            p.executeUpdate();
-        }
+        write(() -> {
+            try (PreparedStatement p = db.prepareStatement("UPDATE frame_registry SET name = ? WHERE id = ?")) {
+                p.setString(1, name);
+                p.setString(2, id);
+                p.executeUpdate();
+            }
+        });
     }
 
     /**
@@ -1062,11 +1050,13 @@ public final class BookStore implements AutoCloseable {
      * @throws SQLException if a database access error occurs
      */
     public synchronized void setRegistryParent(String id, String parent) throws SQLException {
-        try (PreparedStatement p = db.prepareStatement("UPDATE frame_registry SET parent = ? WHERE id = ?")) {
-            p.setString(1, parent);
-            p.setString(2, id);
-            p.executeUpdate();
-        }
+        write(() -> {
+            try (PreparedStatement p = db.prepareStatement("UPDATE frame_registry SET parent = ? WHERE id = ?")) {
+                p.setString(1, parent);
+                p.setString(2, id);
+                p.executeUpdate();
+            }
+        });
     }
 
     /**
@@ -1110,6 +1100,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 p.executeBatch();
             }
+            changed();
             db.commit();
         } catch (SQLException e) {
             db.rollback();
@@ -1140,12 +1131,14 @@ public final class BookStore implements AutoCloseable {
      * <p>A caller gets a clean registry state where no generalized frames or their associated data exist.</p>
      */
     public synchronized void clearRegistry() throws SQLException {
-        try (Statement st = db.createStatement()) {
-            st.execute("DELETE FROM frame_relation");
-            st.execute("DELETE FROM frame_registry_item");
-            st.execute("DELETE FROM frame_registry_member");
-            st.execute("DELETE FROM frame_registry");
-        }
+        write(() -> {
+            try (Statement st = db.createStatement()) {
+                st.execute("DELETE FROM frame_relation");
+                st.execute("DELETE FROM frame_registry_item");
+                st.execute("DELETE FROM frame_registry_member");
+                st.execute("DELETE FROM frame_registry");
+            }
+        });
     }
 
     /**
@@ -1171,6 +1164,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 p.executeBatch();
             }
+            changed();
             db.commit();
         } catch (SQLException e) {
             db.rollback();
@@ -1239,6 +1233,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 p.executeBatch();
             }
+            changed();
             db.commit();
         } catch (SQLException e) {
             db.rollback();
@@ -1283,32 +1278,34 @@ public final class BookStore implements AutoCloseable {
      * rule that connects them
      */
     public synchronized void saveRelationsOfConcepts(String book, String number, List<ConceptRelations.Relation> rels) throws SQLException {
-        try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_relation WHERE book = ? AND number = ?")) {
-            d.setString(1, book);
-            d.setString(2, number);
-            d.executeUpdate();
-        }
-        try (PreparedStatement p = db.prepareStatement("INSERT INTO concept_relation (book, number, ordinal, group_ordinal, source, link, "
-                + "from_concept, to_concept, rule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
-            int i = 0;
-            for (ConceptRelations.Relation x : rels) {
+        write(() -> {
+            try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_relation WHERE book = ? AND number = ?")) {
+                d.setString(1, book);
+                d.setString(2, number);
+                d.executeUpdate();
+            }
+            try (PreparedStatement p = db.prepareStatement("INSERT INTO concept_relation (book, number, ordinal, group_ordinal, source, link, "
+                    + "from_concept, to_concept, rule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+                int i = 0;
+                for (ConceptRelations.Relation x : rels) {
+                    p.setString(1, book);
+                    p.setString(2, number);
+                    p.setInt(3, ++i);
+                    p.setInt(4, x.group());
+                    p.setString(5, x.source());
+                    p.setString(6, x.link());
+                    p.setString(7, x.from());
+                    p.setString(8, x.to());
+                    p.setString(9, x.rule());
+                    p.executeUpdate();
+                }
+            }
+            try (PreparedStatement p = db.prepareStatement("MERGE INTO concept_relation_asked (book, number) KEY (book, number) VALUES (?, ?)")) {
                 p.setString(1, book);
                 p.setString(2, number);
-                p.setInt(3, ++i);
-                p.setInt(4, x.group());
-                p.setString(5, x.source());
-                p.setString(6, x.link());
-                p.setString(7, x.from());
-                p.setString(8, x.to());
-                p.setString(9, x.rule());
                 p.executeUpdate();
             }
-        }
-        try (PreparedStatement p = db.prepareStatement("MERGE INTO concept_relation_asked (book, number) KEY (book, number) VALUES (?, ?)")) {
-            p.setString(1, book);
-            p.setString(2, number);
-            p.executeUpdate();
-        }
+        });
     }
 
     /**
@@ -1364,18 +1361,20 @@ public final class BookStore implements AutoCloseable {
      * @throws SQLException if a database access error occurs
      */
     public synchronized void saveUnitEmbedding(String model, SimilarConcepts.Unit u, float[] v) throws SQLException {
-        java.nio.ByteBuffer b = java.nio.ByteBuffer.allocate(v.length * 4);
-        for (float f : v) b.putFloat(f);
-        try (PreparedStatement p = db.prepareStatement("MERGE INTO unit_embedding (model, book, number, ordinal, text, vector) KEY (model, book, number, ordinal) "
-                + "VALUES (?, ?, ?, ?, ?, ?)")) {
-            p.setString(1, model);
-            p.setString(2, u.book());
-            p.setString(3, u.number());
-            p.setInt(4, u.ordinal());
-            p.setString(5, u.concept());
-            p.setBytes(6, b.array());
-            p.executeUpdate();
-        }
+        write(() -> {
+            java.nio.ByteBuffer b = java.nio.ByteBuffer.allocate(v.length * 4);
+            for (float f : v) b.putFloat(f);
+            try (PreparedStatement p = db.prepareStatement("MERGE INTO unit_embedding (model, book, number, ordinal, text, vector) KEY (model, book, number, ordinal) "
+                    + "VALUES (?, ?, ?, ?, ?, ?)")) {
+                p.setString(1, model);
+                p.setString(2, u.book());
+                p.setString(3, u.number());
+                p.setInt(4, u.ordinal());
+                p.setString(5, u.concept());
+                p.setBytes(6, b.array());
+                p.executeUpdate();
+            }
+        });
     }
 
     /**
@@ -1410,39 +1409,41 @@ public final class BookStore implements AutoCloseable {
      * and the common concept they share
      */
     public synchronized void saveSimilar(String criterion, SimilarConcepts.Unit u, List<SimilarConcepts.Similar> similar) throws SQLException {
-        try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_similarity WHERE criterion = ? AND book = ? AND number = ? AND ordinal = ?")) {
-            d.setString(1, criterion);
-            d.setString(2, u.book());
-            d.setString(3, u.number());
-            d.setInt(4, u.ordinal());
-            d.executeUpdate();
-        }
-        try (PreparedStatement p = db.prepareStatement("MERGE INTO concept_similarity (criterion, book, number, ordinal, concept, other_book, other_number, "
-                + "other_ordinal, other_concept, common) KEY (criterion, book, number, ordinal, other_book, other_number, other_ordinal) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
-            for (SimilarConcepts.Similar x : similar) {
+        write(() -> {
+            try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_similarity WHERE criterion = ? AND book = ? AND number = ? AND ordinal = ?")) {
+                d.setString(1, criterion);
+                d.setString(2, u.book());
+                d.setString(3, u.number());
+                d.setInt(4, u.ordinal());
+                d.executeUpdate();
+            }
+            try (PreparedStatement p = db.prepareStatement("MERGE INTO concept_similarity (criterion, book, number, ordinal, concept, other_book, other_number, "
+                    + "other_ordinal, other_concept, common) KEY (criterion, book, number, ordinal, other_book, other_number, other_ordinal) "
+                    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+                for (SimilarConcepts.Similar x : similar) {
+                    p.setString(1, criterion);
+                    p.setString(2, u.book());
+                    p.setString(3, u.number());
+                    p.setInt(4, u.ordinal());
+                    p.setString(5, u.concept());
+                    p.setString(6, x.other().book());
+                    p.setString(7, x.other().number());
+                    p.setInt(8, x.other().ordinal());
+                    p.setString(9, x.other().concept());
+                    p.setString(10, x.common());
+                    p.executeUpdate();
+                }
+            }
+            try (PreparedStatement p = db.prepareStatement("MERGE INTO concept_similarity_judged (criterion, book, number, ordinal, concept) "
+                    + "KEY (criterion, book, number, ordinal) VALUES (?, ?, ?, ?, ?)")) {
                 p.setString(1, criterion);
                 p.setString(2, u.book());
                 p.setString(3, u.number());
                 p.setInt(4, u.ordinal());
                 p.setString(5, u.concept());
-                p.setString(6, x.other().book());
-                p.setString(7, x.other().number());
-                p.setInt(8, x.other().ordinal());
-                p.setString(9, x.other().concept());
-                p.setString(10, x.common());
                 p.executeUpdate();
             }
-        }
-        try (PreparedStatement p = db.prepareStatement("MERGE INTO concept_similarity_judged (criterion, book, number, ordinal, concept) "
-                + "KEY (criterion, book, number, ordinal) VALUES (?, ?, ?, ?, ?)")) {
-            p.setString(1, criterion);
-            p.setString(2, u.book());
-            p.setString(3, u.number());
-            p.setInt(4, u.ordinal());
-            p.setString(5, u.concept());
-            p.executeUpdate();
-        }
+        });
     }
 
     /**
@@ -1517,31 +1518,33 @@ public final class BookStore implements AutoCloseable {
      * property text, and the rule name
      */
     public synchronized void saveProperties(String book, String number, List<ConceptProperties.Property> props) throws SQLException {
-        try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_property WHERE book = ? AND number = ?")) {
-            d.setString(1, book);
-            d.setString(2, number);
-            d.executeUpdate();
-        }
-        try (PreparedStatement p = db.prepareStatement("INSERT INTO concept_property (book, number, ordinal, group_ordinal, concept, kind, "
-                + "property, rule) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
-            int i = 0;
-            for (ConceptProperties.Property x : props) {
+        write(() -> {
+            try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_property WHERE book = ? AND number = ?")) {
+                d.setString(1, book);
+                d.setString(2, number);
+                d.executeUpdate();
+            }
+            try (PreparedStatement p = db.prepareStatement("INSERT INTO concept_property (book, number, ordinal, group_ordinal, concept, kind, "
+                    + "property, rule) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
+                int i = 0;
+                for (ConceptProperties.Property x : props) {
+                    p.setString(1, book);
+                    p.setString(2, number);
+                    p.setInt(3, ++i);
+                    p.setInt(4, x.group());
+                    p.setString(5, x.concept());
+                    p.setString(6, x.kind());
+                    p.setString(7, x.property());
+                    p.setString(8, x.rule());
+                    p.executeUpdate();
+                }
+            }
+            try (PreparedStatement p = db.prepareStatement("MERGE INTO concept_property_asked (book, number) KEY (book, number) VALUES (?, ?)")) {
                 p.setString(1, book);
                 p.setString(2, number);
-                p.setInt(3, ++i);
-                p.setInt(4, x.group());
-                p.setString(5, x.concept());
-                p.setString(6, x.kind());
-                p.setString(7, x.property());
-                p.setString(8, x.rule());
                 p.executeUpdate();
             }
-        }
-        try (PreparedStatement p = db.prepareStatement("MERGE INTO concept_property_asked (book, number) KEY (book, number) VALUES (?, ?)")) {
-            p.setString(1, book);
-            p.setString(2, number);
-            p.executeUpdate();
-        }
+        });
     }
 
     /**
@@ -1593,33 +1596,35 @@ public final class BookStore implements AutoCloseable {
      * @param links the list of causal or motivational links to store
      */
     public synchronized void saveCauses(String book, String number, List<ConceptCauses.Link> links) throws SQLException {
-        try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_cause WHERE book = ? AND number = ?")) {
-            d.setString(1, book);
-            d.setString(2, number);
-            d.executeUpdate();
-        }
-        try (PreparedStatement p = db.prepareStatement("INSERT INTO concept_cause (book, number, ordinal, group_ordinal, relation, kind, "
-                + "from_concept, to_concept, nucleus_rule, satellite_rule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
-            int i = 0;
-            for (ConceptCauses.Link l : links) {
+        write(() -> {
+            try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_cause WHERE book = ? AND number = ?")) {
+                d.setString(1, book);
+                d.setString(2, number);
+                d.executeUpdate();
+            }
+            try (PreparedStatement p = db.prepareStatement("INSERT INTO concept_cause (book, number, ordinal, group_ordinal, relation, kind, "
+                    + "from_concept, to_concept, nucleus_rule, satellite_rule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+                int i = 0;
+                for (ConceptCauses.Link l : links) {
+                    p.setString(1, book);
+                    p.setString(2, number);
+                    p.setInt(3, ++i);
+                    p.setInt(4, l.group());
+                    p.setString(5, l.relation());
+                    p.setString(6, l.kind());
+                    p.setString(7, l.from());
+                    p.setString(8, l.to());
+                    p.setString(9, l.nucleusRule());
+                    p.setString(10, l.satelliteRule());
+                    p.executeUpdate();
+                }
+            }
+            try (PreparedStatement p = db.prepareStatement("MERGE INTO concept_cause_asked (book, number) KEY (book, number) VALUES (?, ?)")) {
                 p.setString(1, book);
                 p.setString(2, number);
-                p.setInt(3, ++i);
-                p.setInt(4, l.group());
-                p.setString(5, l.relation());
-                p.setString(6, l.kind());
-                p.setString(7, l.from());
-                p.setString(8, l.to());
-                p.setString(9, l.nucleusRule());
-                p.setString(10, l.satelliteRule());
                 p.executeUpdate();
             }
-        }
-        try (PreparedStatement p = db.prepareStatement("MERGE INTO concept_cause_asked (book, number) KEY (book, number) VALUES (?, ?)")) {
-            p.setString(1, book);
-            p.setString(2, number);
-            p.executeUpdate();
-        }
+        });
     }
 
     /**
@@ -1672,28 +1677,30 @@ public final class BookStore implements AutoCloseable {
      * @param groups the list of units to record, each containing a type, a main concept, and its constituent blocks
      */
     public synchronized void saveGroups(String book, String number, List<SectionGroups.Group> groups) throws SQLException {
-        // what was read of the old groups refers to them by ordinal: it goes with them
-        for (String t : List.of("section_group", "concept_cause", "concept_cause_asked", "concept_property", "concept_property_asked",
-                "concept_relation", "concept_relation_asked")) {
-            try (PreparedStatement d = db.prepareStatement("DELETE FROM " + t + " WHERE book = ? AND number = ?")) {
-                d.setString(1, book);
-                d.setString(2, number);
-                d.executeUpdate();
+        write(() -> {
+            // what was read of the old groups refers to them by ordinal: it goes with them
+            for (String t : List.of("section_group", "concept_cause", "concept_cause_asked", "concept_property", "concept_property_asked",
+                    "concept_relation", "concept_relation_asked")) {
+                try (PreparedStatement d = db.prepareStatement("DELETE FROM " + t + " WHERE book = ? AND number = ?")) {
+                    d.setString(1, book);
+                    d.setString(2, number);
+                    d.executeUpdate();
+                }
             }
-        }
-        try (PreparedStatement p = db.prepareStatement("INSERT INTO section_group (book, number, ordinal, type, concept, members) VALUES (?, ?, ?, ?, ?, ?)")) {
-            for (SectionGroups.Group g : groups) {
-                StringBuilder members = new StringBuilder();
-                for (SectionGroups.Member m : g.blocks()) members.append(m.block()).append('\t').append(m.name() == null ? "" : m.name().replace('\n', ' ')).append('\n');
-                p.setString(1, book);
-                p.setString(2, number);
-                p.setInt(3, g.ordinal());
-                p.setString(4, g.type());
-                p.setString(5, g.concept());
-                p.setString(6, members.toString());
-                p.executeUpdate();
+            try (PreparedStatement p = db.prepareStatement("INSERT INTO section_group (book, number, ordinal, type, concept, members) VALUES (?, ?, ?, ?, ?, ?)")) {
+                for (SectionGroups.Group g : groups) {
+                    StringBuilder members = new StringBuilder();
+                    for (SectionGroups.Member m : g.blocks()) members.append(m.block()).append('\t').append(m.name() == null ? "" : m.name().replace('\n', ' ')).append('\n');
+                    p.setString(1, book);
+                    p.setString(2, number);
+                    p.setInt(3, g.ordinal());
+                    p.setString(4, g.type());
+                    p.setString(5, g.concept());
+                    p.setString(6, members.toString());
+                    p.executeUpdate();
+                }
             }
-        }
+        });
     }
 
     /**
@@ -1733,17 +1740,19 @@ public final class BookStore implements AutoCloseable {
      * @throws SQLException if a database access error occurs
      */
     public synchronized void savePattern(String book, String number, SectionPattern.Layout layout) throws SQLException {
-        StringBuilder members = new StringBuilder();
-        for (SectionPattern.Member m : layout.members()) members.append(m.block()).append('\t').append(m.relation()).append('\t').append(m.name().replace('\n', ' ')).append('\n');
-        try (PreparedStatement p = db.prepareStatement("MERGE INTO section_pattern (book, number, concept, pattern, members) KEY (book, number) "
-                + "VALUES (?, ?, ?, ?, ?)")) {
-            p.setString(1, book);
-            p.setString(2, number);
-            p.setString(3, layout.concept());
-            p.setString(4, layout.pattern());
-            p.setString(5, members.toString());
-            p.executeUpdate();
-        }
+        write(() -> {
+            StringBuilder members = new StringBuilder();
+            for (SectionPattern.Member m : layout.members()) members.append(m.block()).append('\t').append(m.relation()).append('\t').append(m.name().replace('\n', ' ')).append('\n');
+            try (PreparedStatement p = db.prepareStatement("MERGE INTO section_pattern (book, number, concept, pattern, members) KEY (book, number) "
+                    + "VALUES (?, ?, ?, ?, ?)")) {
+                p.setString(1, book);
+                p.setString(2, number);
+                p.setString(3, layout.concept());
+                p.setString(4, layout.pattern());
+                p.setString(5, members.toString());
+                p.executeUpdate();
+            }
+        });
     }
 
     /**
@@ -1794,6 +1803,7 @@ public final class BookStore implements AutoCloseable {
                 u.addBatch();
             }
             u.executeBatch();
+            changed();
             db.commit();
         } catch (SQLException e) {
             db.rollback();
@@ -1862,6 +1872,7 @@ public final class BookStore implements AutoCloseable {
                 u.addBatch();
             }
             u.executeBatch();
+            changed();
             db.commit();
         } catch (SQLException e) {
             db.rollback();

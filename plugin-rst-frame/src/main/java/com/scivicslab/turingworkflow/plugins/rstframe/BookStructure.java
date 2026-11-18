@@ -76,7 +76,7 @@ public final class BookStructure {
         Path dbFile = Path.of(db).toAbsolutePath().normalize();
         files.mayWrite(dbFile);
         if (dbFile.getParent() != null) Files.createDirectories(dbFile.getParent());
-        try (BookStore store = new BookStore(url(dbFile))) {
+        try (BookStore store = BookStore.forWriting(url(dbFile))) {
             store.saveOutline(name, root.toString(), outline);
         }
         Map<String, Integer> byLevel = new LinkedHashMap<>();
@@ -96,7 +96,7 @@ public final class BookStructure {
     public String cutSections(String db, String name) throws Exception {
         Path dbFile = Path.of(db).toAbsolutePath().normalize();
         files.mayWrite(dbFile);
-        try (BookStore store = new BookStore(url(dbFile))) {
+        try (BookStore store = BookStore.forWriting(url(dbFile))) {
             String dir = store.dirOf(name);
             if (dir == null) throw new IllegalArgumentException("no book " + name + " in " + db + "; read its table of contents first");
             BookSections.Result result = cutAndStore(store, name, dir, markdown(Path.of(dir)));
@@ -192,7 +192,7 @@ public final class BookStructure {
     public String judge(String db, String name) throws Exception {
         Path dbFile = Path.of(db).toAbsolutePath().normalize();
         files.mayWrite(dbFile);
-        try (BookStore store = new BookStore(url(dbFile))) {
+        try (BookStore store = BookStore.forWriting(url(dbFile))) {
             return ConceptImportance.judgeAll(store, name);
         }
     }
@@ -474,7 +474,7 @@ public final class BookStructure {
     public String prune(String db, String name, int min) throws Exception {
         Path dbFile = Path.of(db).toAbsolutePath().normalize();
         files.mayWrite(dbFile);
-        try (BookStore store = new BookStore(url(dbFile))) {
+        try (BookStore store = BookStore.forWriting(url(dbFile))) {
             return FrameMaterial.pruneAll(store, name, min);
         }
     }
@@ -484,7 +484,7 @@ public final class BookStructure {
         if (url == null || url.isBlank() || model == null || model.isBlank()) throw new IllegalArgumentException("url and model are required");
         Path dbFile = Path.of(db).toAbsolutePath().normalize();
         files.mayWrite(dbFile);
-        try (BookStore store = new BookStore(url(dbFile))) {
+        try (BookStore store = BookStore.forWriting(url(dbFile))) {
             if (store.dirOf(name) == null) throw new IllegalArgumentException("no book " + name + " in " + db);
             java.util.logging.Logger log = java.util.logging.Logger.getLogger(BookStructure.class.getName());
             return batch.run(store, name, only == null ? List.of() : only, new ChatEndpoint(url, model, maxTokens), Math.max(1, parallel),
