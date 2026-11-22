@@ -268,12 +268,16 @@ public class LlmClient {
             if (json.has("error")) {
                 return new ActionResult(false, "OpenAI API error: " + json.getJSONObject("error").optString("message", responseBody));
             }
-            String content = json.getJSONArray("choices")
-                    .getJSONObject(0)
-                    .getJSONObject("message")
-                    .getString("content");
+            org.json.JSONObject choice = json.getJSONArray("choices").getJSONObject(0);
+            // a reply the model stopped at its token limit, or one with no text, is not an answer
+            if ("length".equals(choice.optString("finish_reason", null))) {
+                return new ActionResult(false, "callOpenAi failed: POST " + openAiUrl + " (model " + model
+                        + "): reply cut off (finish_reason=length)");
+            }
+            org.json.JSONObject message = choice.getJSONObject("message");
+            String content = message.isNull("content") ? null : message.optString("content", null);
             if (content == null || content.isBlank()) {
-                return new ActionResult(true, "");
+                return new ActionResult(false, "callOpenAi failed: POST " + openAiUrl + " (model " + model + "): empty reply");
             }
 
             emit("<<< callOpenAi response (" + content.length() + " chars)");
