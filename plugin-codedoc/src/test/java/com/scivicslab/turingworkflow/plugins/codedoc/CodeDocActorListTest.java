@@ -2,8 +2,8 @@ package com.scivicslab.turingworkflow.plugins.codedoc;
 
 import com.scivicslab.pojoactor.action.ActionResult;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
-import com.scivicslab.turingworkflow.workflow.ListActor;
-import com.scivicslab.turingworkflow.workflow.StringActor;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -17,7 +17,8 @@ import java.nio.file.Path;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * CodeDocActor working with the engine's built-in ListActor and StringActor.
+ * CodeDocActor answering the lists it finds as JSON arrays, and taking the lists and texts it uses as values.
+ * A workflow keeps them in its own state; the engine's {@code list} and {@code str} actors were removed in 5.0.0.
  */
 class CodeDocActorListTest {
 
@@ -25,18 +26,12 @@ class CodeDocActorListTest {
     Path dir;
 
     private IIActorSystem system;
-    private ListActor list;
-    private StringActor str;
     private CodeDocActor codedoc;
 
     @BeforeEach
     void setUp() {
         system = new IIActorSystem("codedoc-test");
-        list = new ListActor("chunks", system);
-        str = new StringActor("text", system);
         codedoc = new CodeDocActor("codedoc", system);
-        system.addIIActor(list);
-        system.addIIActor(str);
         system.addIIActor(codedoc);
     }
 
@@ -46,95 +41,123 @@ class CodeDocActorListTest {
         system.terminate();
     }
 
-    private String listItem(int index) {
-        ActionResult r = list.callByActionName("get", "{\"index\":" + index + "}");
+    /** The JSON array a list-answering action returned. */
+    private JSONArray listOf(ActionResult r) {
         assertThat(r.isSuccess()).as(r.getResult()).isTrue();
-        return r.getResult();
-    }
-
-    private void addToList(String value) {
-        ActionResult r = list.add(new ListActor.ValueArgs(value));
-        assertThat(r.isSuccess()).as(r.getResult()).isTrue();
+        return new JSONArray(r.getResult());
     }
 
     @Test
-    @DisplayName("chunkFile adds every chunk to the list")
-    void chunkFileFillsList() throws IOException {
+    @DisplayName("chunkFile answers every chunk")
+    void chunkFileAnswersChunks() throws IOException {
         Path md = dir.resolve("doc.md");
         Files.writeString(md, "# Title\n\nbody text\n");
 
-        ActionResult r = codedoc.callByActionName("chunkFile",
-                "{\"file\":\"" + md + "\",\"listActor\":\"chunks\"}");
+        JSONArray chunks = listOf(codedoc.callByActionName("chunkFile",
+                new JSONObject().put("file", md.toString()).toString()));
 
-        assertThat(r.isSuccess()).as(r.getResult()).isTrue();
-        assertThat(list.callByActionName("size", "").getResult()).isEqualTo(r.getResult());
-        assertThat(listItem(0)).contains("body text");
+        assertThat(chunks.length()).isPositive();
+        assertThat(chunks.getString(0)).contains("body text");
     }
 
     @Test
-    @DisplayName("scanProject adds each file to the list")
-    void scanProjectFillsList() throws IOException {
+    @DisplayName("scanProject answers each file")
+    void scanProjectAnswersFiles() throws IOException {
         Files.writeString(dir.resolve("A.java"), "class A {}\n");
 
-        ActionResult r = codedoc.callByActionName("scanProject",
-                "{\"directory\":\"" + dir + "\",\"listActor\":\"chunks\"}");
+        JSONArray files = listOf(codedoc.callByActionName("scanProject",
+                new JSONObject().put("directory", dir.toString()).toString()));
 
-        assertThat(r.isSuccess()).as(r.getResult()).isTrue();
-        assertThat(r.getResult()).isEqualTo("1");
-        assertThat(list.callByActionName("size", "").getResult()).isEqualTo("1");
-        assertThat(listItem(0)).startsWith("FILE: A.java").contains("class A {}");
+        assertThat(files.length()).isEqualTo(1);
+        assertThat(files.getString(0)).startsWith("FILE: A.java").contains("class A {}");
     }
 
     @Test
-    @DisplayName("listMarkdownNoDescription adds each path to the list")
-    void listMarkdownNoDescriptionFillsList() throws IOException {
+    @DisplayName("listMarkdownNoDescription answers each path")
+    void listMarkdownNoDescriptionAnswersPaths() throws IOException {
         Path md = dir.resolve("plain.md");
         Files.writeString(md, "# No frontmatter\n");
 
-        ActionResult r = codedoc.callByActionName("listMarkdownNoDescription",
-                "{\"directory\":\"" + dir + "\",\"listActor\":\"chunks\"}");
+        JSONArray paths = listOf(codedoc.callByActionName("listMarkdownNoDescription",
+                new JSONObject().put("directory", dir.toString()).toString()));
 
-        assertThat(r.getResult()).isEqualTo("1");
-        assertThat(listItem(0)).isEqualTo(md.toAbsolutePath().normalize().toString());
+        assertThat(paths.length()).isEqualTo(1);
+        assertThat(paths.getString(0)).isEqualTo(md.toAbsolutePath().normalize().toString());
     }
 
     @Test
     @DisplayName("writeFileFromList writes the items, not an error text")
     void writeFileFromListWritesItems() throws IOException {
-        addToList("first");
-        addToList("second");
         Path out = dir.resolve("out.md");
 
-        ActionResult r = codedoc.callByActionName("writeFileFromList",
-                "{\"file\":\"" + out + "\",\"listActor\":\"chunks\",\"separator\":\"|\"}");
+        ActionResult r = codedoc.callByActionName("writeFileFromList", new JSONObject()
+                .put("file", out.toString())
+                .put("items", new JSONArray().put("first").put("second"))
+                .put("separator", "|").toString());
 
         assertThat(r.isSuccess()).as(r.getResult()).isTrue();
         assertThat(Files.readString(out)).isEqualTo("first|second");
     }
 
     @Test
-    @DisplayName("joinListToStr stores the joined items in the string actor")
-    void joinListToStrStoresItems() {
-        addToList("first");
-        addToList("second");
-
-        ActionResult r = codedoc.callByActionName("joinListToStr",
-                "{\"listActor\":\"chunks\",\"strActor\":\"text\",\"separator\":\"|\"}");
+    @DisplayName("joinListToStr answers the joined items")
+    void joinListToStrAnswersJoinedText() {
+        ActionResult r = codedoc.callByActionName("joinListToStr", new JSONObject()
+                .put("items", new JSONArray().put("first").put("second"))
+                .put("separator", "|").toString());
 
         assertThat(r.isSuccess()).as(r.getResult()).isTrue();
-        assertThat(str.callByActionName("get", "").getResult()).isEqualTo("first|second");
+        assertThat(r.getResult()).isEqualTo("first|second");
     }
 
     @Test
-    @DisplayName("readFileToStr keeps content that is itself a JSON array")
+    @DisplayName("readFileToStr answers the content, kept as it is even when it is a JSON array")
     void readFileToStrKeepsJsonArrayContent() throws IOException {
         Path f = dir.resolve("data.json");
         Files.writeString(f, "[\"a\", \"b\"]");
 
         ActionResult r = codedoc.callByActionName("readFileToStr",
-                "{\"file\":\"" + f + "\",\"strActor\":\"text\"}");
+                new JSONObject().put("file", f.toString()).toString());
 
         assertThat(r.isSuccess()).as(r.getResult()).isTrue();
-        assertThat(str.callByActionName("get", "").getResult()).isEqualTo("[\"a\", \"b\"]");
+        assertThat(r.getResult()).isEqualTo("[\"a\", \"b\"]");
+    }
+
+    @Test
+    @DisplayName("writeStrToFile writes the content it is given")
+    void writeStrToFileWritesContent() throws IOException {
+        Path out = dir.resolve("sub/out.md");
+
+        ActionResult r = codedoc.callByActionName("writeStrToFile", new JSONObject()
+                .put("file", out.toString()).put("content", "# Title\n").toString());
+
+        assertThat(r.isSuccess()).as(r.getResult()).isTrue();
+        assertThat(r.getResult()).isEqualTo(out.toString());
+        assertThat(Files.readString(out)).isEqualTo("# Title\n");
+    }
+
+    @Test
+    @DisplayName("setFrontmatterDescription inserts the description it is given")
+    void setFrontmatterDescriptionInsertsDescription() throws IOException {
+        Path md = dir.resolve("doc.md");
+        Files.writeString(md, "# Title\n");
+
+        ActionResult r = codedoc.callByActionName("setFrontmatterDescription", new JSONObject()
+                .put("file", md.toString()).put("description", "What it is.").toString());
+
+        assertThat(r.isSuccess()).as(r.getResult()).isTrue();
+        assertThat(Files.readString(md)).isEqualTo("---\ndescription: |\n  What it is.\n---\n# Title\n");
+    }
+
+    @Test
+    @DisplayName("an action that cannot do its work is false, with the reason")
+    void failureIsFalseWithReason() {
+        Path missing = dir.resolve("missing.md");
+
+        ActionResult r = codedoc.callByActionName("readFileToStr",
+                new JSONObject().put("file", missing.toString()).toString());
+
+        assertThat(r.isSuccess()).isFalse();
+        assertThat(r.getResult()).startsWith("readFileToStr: ").contains("missing.md");
     }
 }

@@ -34,7 +34,7 @@ A workflow names the fields the action declares:
     - actor: llm
       method: callOpenAi
       arguments:
-        prompt: "jexl: actors.get('str:content').get()"
+        prompt: "jexl: state.getString('content')"
 ```
 
 ## Modules
