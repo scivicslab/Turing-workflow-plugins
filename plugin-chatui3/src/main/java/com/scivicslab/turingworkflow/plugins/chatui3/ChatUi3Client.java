@@ -147,14 +147,17 @@ public class ChatUi3Client {
 
             HttpResponse<InputStream> sseResp =
                     http.send(sseReq, HttpResponse.BodyHandlers.ofInputStream());
+            InputStream body = sseResp.body();
 
             if (sseResp.statusCode() != 200) {
+                closeQuietly(body);
                 return new ActionResult(false,
-                        "SSE connection failed with HTTP " + sseResp.statusCode());
+                        "SSE connection to " + baseUrl + "/api/chat/stream failed with HTTP " + sseResp.statusCode());
             }
 
             // Step 2: SSE connection is now established.
             // Send POST /api/chat — the server will push events into the SSE stream.
+            // A refused POST means no event will come, so the stream is closed and the call fails at once.
             String reqBody = "{\"message\":" + JSONObject.quote(message) + "}";
             HttpRequest chatReq = HttpRequest.newBuilder()
                     .uri(URI.create(baseUrl + "/api/chat"))
@@ -163,11 +166,21 @@ public class ChatUi3Client {
                     .timeout(Duration.ofSeconds(10))
                     .build();
 
-            http.send(chatReq, HttpResponse.BodyHandlers.discarding());
+            HttpResponse<String> chatResp;
+            try {
+                chatResp = http.send(chatReq, HttpResponse.BodyHandlers.ofString());
+            } catch (Exception e) {
+                closeQuietly(body);
+                throw e;
+            }
+            if (chatResp.statusCode() < 200 || chatResp.statusCode() >= 300) {
+                closeQuietly(body);
+                return new ActionResult(false, "POST " + baseUrl + "/api/chat returned HTTP " + chatResp.statusCode()
+                        + ": " + chatResp.body());
+            }
 
             // Step 3: Read SSE stream until result or error.
             // Publish the stream so stopSse()/close() can force this read to abort.
-            InputStream body = sseResp.body();
             this.activeSse = body;
             try (BufferedReader reader = new BufferedReader(
                     new InputStreamReader(body, StandardCharsets.UTF_8))) {
@@ -280,6 +293,14 @@ public class ChatUi3Client {
     }
 
     // ── private helpers ───────────────────────────────────────────────────────
+
+    private static void closeQuietly(InputStream stream) {
+        try {
+            stream.close();
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "closing the SSE stream failed", e);
+        }
+    }
 
     private ActionResult get(String path) {
         try {
