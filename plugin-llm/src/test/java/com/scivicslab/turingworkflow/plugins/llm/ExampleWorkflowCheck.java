@@ -27,7 +27,7 @@ final class ExampleWorkflowCheck {
 
     /** Actions of the loader actor, which dispatches by name rather than through {@code @Action}. */
     private static final Set<String> LOADER_ACTIONS = Set.of(
-            "loadJar", "createChild", "removeChild", "listLoadedJars", "loadFromJar",
+            "loadJar", "createChild", "removeChild", "listLoadedJars",
             "createFromProvider", "listProviders", "loadProvidersFromJar");
 
     private ExampleWorkflowCheck() {
