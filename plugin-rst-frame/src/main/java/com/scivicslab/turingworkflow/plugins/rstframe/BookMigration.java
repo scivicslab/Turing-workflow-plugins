@@ -56,6 +56,7 @@ public final class BookMigration {
     public static Result migrate(Path base, PrintStream out) throws SQLException, IOException {
         Path file = Path.of(base + ".mv.db");
         if (!Files.isRegularFile(file)) throw new IllegalStateException("no database " + file);
+        H2Url.check(base);
         String url = "jdbc:h2:" + base.toAbsolutePath();
         // alone: without AUTO_SERVER, H2 refuses a file another process holds
         try (Connection db = BookStore.openH2(url)) {

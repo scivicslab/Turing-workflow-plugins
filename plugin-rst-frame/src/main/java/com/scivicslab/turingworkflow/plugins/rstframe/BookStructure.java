@@ -73,7 +73,7 @@ public final class BookStructure {
         Map<String, String> md = markdown(root);
         if (md.isEmpty()) throw new IllegalArgumentException("no markdown file under " + root);
         BookOutline.Outline outline = BookOutline.withDirectoryChapters(md, BookOutline.read(md));
-        Path dbFile = Path.of(db).toAbsolutePath().normalize();
+        Path dbFile = databaseFile(db);
         files.mayWrite(dbFile);
         if (dbFile.getParent() != null) Files.createDirectories(dbFile.getParent());
         try (BookStore store = BookStore.forWriting(url(dbFile))) {
@@ -94,7 +94,7 @@ public final class BookStructure {
      * more than one file, and any additional notes
      */
     public String cutSections(String db, String name) throws Exception {
-        Path dbFile = Path.of(db).toAbsolutePath().normalize();
+        Path dbFile = databaseFile(db);
         files.mayWrite(dbFile);
         try (BookStore store = BookStore.forWriting(url(dbFile))) {
             String dir = store.dirOf(name);
@@ -190,7 +190,7 @@ public final class BookStructure {
      * @throws Exception if the database file cannot be accessed or the book is not found
      */
     public String judge(String db, String name) throws Exception {
-        Path dbFile = Path.of(db).toAbsolutePath().normalize();
+        Path dbFile = databaseFile(db);
         files.mayWrite(dbFile);
         try (BookStore store = BookStore.forWriting(url(dbFile))) {
             return ConceptImportance.judgeAll(store, name);
@@ -472,7 +472,7 @@ public final class BookStructure {
      * @return a summary of the pruning results in one line
      */
     public String prune(String db, String name, int min) throws Exception {
-        Path dbFile = Path.of(db).toAbsolutePath().normalize();
+        Path dbFile = databaseFile(db);
         files.mayWrite(dbFile);
         try (BookStore store = BookStore.forWriting(url(dbFile))) {
             return FrameMaterial.pruneAll(store, name, min);
@@ -482,7 +482,7 @@ public final class BookStructure {
     private String ask(String db, String name, String url, String model, int maxTokens, int parallel, List<String> only, Batch batch)
             throws Exception {
         if (url == null || url.isBlank() || model == null || model.isBlank()) throw new IllegalArgumentException("url and model are required");
-        Path dbFile = Path.of(db).toAbsolutePath().normalize();
+        Path dbFile = databaseFile(db);
         files.mayWrite(dbFile);
         try (BookStore store = BookStore.forWriting(url(dbFile))) {
             if (store.dirOf(name) == null) throw new IllegalArgumentException("no book " + name + " in " + db);
@@ -502,7 +502,16 @@ public final class BookStructure {
         return out;
     }
 
+    /**
+     * The database file {@code db} names, as an absolute path. Refused before the {@link FileGate} is asked and
+     * before anything is created if {@code db} holds more than a file name ({@link H2Url}).
+     */
+    private static Path databaseFile(String db) {
+        H2Url.check(db);
+        return Path.of(db).toAbsolutePath().normalize();
+    }
+
     private static String url(Path dbFile) {
-        return "jdbc:h2:" + dbFile + ";AUTO_SERVER=TRUE";
+        return H2Url.of(dbFile);
     }
 }
