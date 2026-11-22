@@ -50,7 +50,7 @@
         <module>plugin-ssh</module>
         <module>plugin-inventory</module>
         <module>plugin-web</module>
-        <module>plugin-chatui3</module>
+        <module>plugin-chatui</module>
         <module>plugin-fineweb-search</module>
         <module>plugin-openalex</module>
         <module>plugin-arxiv</module>

@@ -41,7 +41,7 @@ A workflow names the fields the action declares:
 
 | Module | What its actors do |
 |---|---|
-| `plugin-chatui3` | Calls quarkus-chat-ui3 — chat over SSE, trace, configuration |
+| `plugin-chatui` | Calls one conversation of chat-ui-with-audit-trail — send a prompt and read its answer from the history, cancel, status, conversation, models, provider, chats, sessions, turns and trace |
 | `plugin-codedoc` | Scans a source tree, chunks files, writes documents |
 | `plugin-fineweb-search` | Queries a FineWeb BM25 search server |
 | `plugin-inventory` | Reads an Ansible inventory and manages node groups |

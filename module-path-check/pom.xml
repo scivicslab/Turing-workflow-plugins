@@ -44,7 +44,7 @@
         <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-ssh</artifactId><version>${project.version}</version><scope>test</scope></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-inventory</artifactId><version>${project.version}</version><scope>test</scope></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-web</artifactId><version>${project.version}</version><scope>test</scope></dependency>
-        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-chatui3</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-chatui</artifactId><version>${project.version}</version><scope>test</scope></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-fineweb-search</artifactId><version>${project.version}</version><scope>test</scope></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-openalex</artifactId><version>${project.version}</version><scope>test</scope></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-arxiv</artifactId><version>${project.version}</version><scope>test</scope></dependency>
