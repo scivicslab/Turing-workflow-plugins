@@ -114,6 +114,11 @@ public class MultiplexerAccumulatorActor extends IIActorRef<MultiplexerAccumulat
      */
     public record AddArgs(@NotNull String source, @NotNull String type, @NotNull String data) {}
 
+    /**
+     * Hands the entry to the multiplexer without waiting, so that logging never blocks its caller. A success means
+     * the entry was enqueued, not that it was delivered: a target that fails to take it, or a hand-over that fails, is
+     * reported on System.err together with the entry, not in this result.
+     */
     @Action(value = "add", argsType = AddArgs.class)
     public ActionResult add(AddArgs args) {
         // Do NOT log through JUL anywhere on this path: MultiplexerLogHandler calls this action, so
