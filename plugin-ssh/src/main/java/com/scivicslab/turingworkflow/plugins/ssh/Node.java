@@ -56,10 +56,47 @@ import com.jcraft.jsch.Session;
  * out during local execution, it returns a {@link CommandResult} with an exit code of -1 and a message indicating the
  * timeout.</p>
  *
+ * <p>Time limits on waits for another machine or process, read from system properties when they are used:</p>
+ * <ul>
+ * <li>{@value #CONNECT_TIMEOUT_PROPERTY} (default {@value #DEFAULT_CONNECT_TIMEOUT_SECONDS}): seconds the SSH
+ * connect to the node, and to a {@code ProxyJump} host, may take; a server that accepts the connection and never
+ * answers fails the command with an {@link IOException}.</li>
+ * <li>{@value #SERVER_ALIVE_INTERVAL_PROPERTY} (default {@value #DEFAULT_SERVER_ALIVE_INTERVAL_SECONDS}) and
+ * {@value #SERVER_ALIVE_COUNT_MAX_PROPERTY} (default {@value #DEFAULT_SERVER_ALIVE_COUNT_MAX}): an open session sends
+ * a keepalive after that many silent seconds and is dropped after that many unanswered keepalives, so a remote command
+ * whose peer died fails with an {@link IOException} instead of waiting for output forever.</li>
+ * <li>{@value #LOCAL_COMMAND_TIMEOUT_PROPERTY} (default {@value #DEFAULT_LOCAL_COMMAND_TIMEOUT_SECONDS}): seconds a
+ * local command, with or without sudo, may run before it and the processes it started are killed.</li>
+ * </ul>
+ *
  * @author devteam@scivicslab.com
  * @since 2.0.0
  */
 public class Node {
+
+    /** System property: seconds the SSH connect may take. */
+    public static final String CONNECT_TIMEOUT_PROPERTY = "turingworkflow.ssh.connectTimeoutSeconds";
+
+    /** System property: seconds of silence after which an open SSH session sends a keepalive. */
+    public static final String SERVER_ALIVE_INTERVAL_PROPERTY = "turingworkflow.ssh.serverAliveIntervalSeconds";
+
+    /** System property: unanswered keepalives after which an SSH session is dropped. */
+    public static final String SERVER_ALIVE_COUNT_MAX_PROPERTY = "turingworkflow.ssh.serverAliveCountMax";
+
+    /** System property: seconds a local command may run. */
+    public static final String LOCAL_COMMAND_TIMEOUT_PROPERTY = "turingworkflow.ssh.localCommandTimeoutSeconds";
+
+    /** Default of {@value #CONNECT_TIMEOUT_PROPERTY}. */
+    public static final long DEFAULT_CONNECT_TIMEOUT_SECONDS = 30;
+
+    /** Default of {@value #SERVER_ALIVE_INTERVAL_PROPERTY}. */
+    public static final long DEFAULT_SERVER_ALIVE_INTERVAL_SECONDS = 30;
+
+    /** Default of {@value #SERVER_ALIVE_COUNT_MAX_PROPERTY}. */
+    public static final long DEFAULT_SERVER_ALIVE_COUNT_MAX = 3;
+
+    /** Default of {@value #LOCAL_COMMAND_TIMEOUT_PROPERTY}. */
+    public static final long DEFAULT_LOCAL_COMMAND_TIMEOUT_SECONDS = 300;
 
     /** The hostname or IP address of the remote node. */
     private final String hostname;
@@ -211,52 +248,31 @@ public class Node {
      * @throws IOException if the process fails to start or the execution is interrupted
      */
     private CommandResult executeLocalCommand(String command, OutputCallback callback) throws IOException {
-        ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
-        Process process = pb.start();
-
-        StringBuilder stdoutBuilder = new StringBuilder();
-        StringBuilder stderrBuilder = new StringBuilder();
-
-        // Read stderr in virtual thread (Java 21) to avoid deadlock
-        Thread stderrThread = Thread.ofVirtual().start(() -> {
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    synchronized (stderrBuilder) {
-                        stderrBuilder.append(line).append("\n");
-                    }
-                    if (callback != null) {
-                        callback.onStderr(line);
-                    }
-                }
-            } catch (IOException e) {
-                // Ignore
-            }
-        });
-
-        // Read stdout with real-time streaming
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                stdoutBuilder.append(line).append("\n");
-                if (callback != null) {
-                    callback.onStdout(line);
-                }
-            }
-        }
-
+        Process process = new ProcessBuilder("bash", "-c", command).start();
         try {
-            stderrThread.join();
-            int exitCode = process.waitFor();
-            return new CommandResult(
-                stdoutBuilder.toString().trim(),
-                stderrBuilder.toString().trim(),
-                exitCode
-            );
+            return resultOfLocal(command, process, callback);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Command execution interrupted", e);
         }
+    }
+
+    /**
+     * Returns the result of a started local process, which may run for {@value #LOCAL_COMMAND_TIMEOUT_PROPERTY}
+     * seconds; past that it is killed and the result has exit code -1 and a stderr naming the command and the limit.
+     */
+    private static CommandResult resultOfLocal(String command, Process process, OutputCallback callback)
+            throws InterruptedException {
+        long limit = SystemPropertyLimit.read(LOCAL_COMMAND_TIMEOUT_PROPERTY, DEFAULT_LOCAL_COMMAND_TIMEOUT_SECONDS);
+        ProcessWithLimit.Outcome outcome = ProcessWithLimit.waitFor(process, limit,
+                callback == null ? null : callback::onStdout,
+                callback == null ? null : callback::onStderr);
+        if (!outcome.finished()) {
+            return new CommandResult(outcome.stdout(),
+                    "local command did not finish within " + limit + " s and was killed (" + LOCAL_COMMAND_TIMEOUT_PROPERTY
+                            + "): " + command, -1);
+        }
+        return new CommandResult(outcome.stdout(), outcome.stderr(), outcome.exitCode());
     }
 
     /**
@@ -280,9 +296,88 @@ public class Node {
             jumpHostSession.disconnect();
         }
         jumpHostSession = null;
-        cachedSession = createSession();
-        cachedSession.connect();
+        cachedSession = null;
+        Session session = createSession();
+        connectWithinLimit(session, effectiveHostname, effectivePort);
+        cachedSession = session;
         return cachedSession;
+    }
+
+    /**
+     * Connects the session within {@value #CONNECT_TIMEOUT_PROPERTY} seconds and sets its keepalive.
+     *
+     * @param session the session to connect
+     * @param host the host named in the failure message
+     * @param port the port named in the failure message
+     * @throws IOException if the connect does not complete within the limit
+     * @throws JSchException if the connect fails for another reason
+     */
+    private static void connectWithinLimit(Session session, String host, int port) throws IOException, JSchException {
+        long limit = SystemPropertyLimit.read(CONNECT_TIMEOUT_PROPERTY, DEFAULT_CONNECT_TIMEOUT_SECONDS);
+        long interval = SystemPropertyLimit.read(SERVER_ALIVE_INTERVAL_PROPERTY, DEFAULT_SERVER_ALIVE_INTERVAL_SECONDS);
+        long countMax = SystemPropertyLimit.read(SERVER_ALIVE_COUNT_MAX_PROPERTY, DEFAULT_SERVER_ALIVE_COUNT_MAX);
+        session.setServerAliveInterval((int) Math.min(Integer.MAX_VALUE, interval * 1000));
+        session.setServerAliveCountMax((int) Math.min(Integer.MAX_VALUE, countMax));
+        try {
+            session.connect((int) Math.min(Integer.MAX_VALUE, limit * 1000));
+        } catch (JSchException e) {
+            session.disconnect();
+            if (isTimeout(e)) {
+                throw new IOException("SSH connection to " + host + ":" + port + " did not complete within " + limit
+                        + " s (" + CONNECT_TIMEOUT_PROPERTY + "): " + e.getMessage(), e);
+            }
+            throw e;
+        }
+    }
+
+    /** Returns whether the exception, or one of its causes, reports a timeout. */
+    private static boolean isTimeout(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof java.net.SocketTimeoutException) {
+                return true;
+            }
+            String message = t.getMessage();
+            if (message != null && (message.contains("timeout") || message.contains("timed out"))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns the exit status of a closed channel, or throws when the session was lost before the command ended.
+     *
+     * <p>A dropped session (its keepalives went unanswered) closes its channels, so the output read ends and the
+     * channel has no exit status; that is reported as a failure, not as an exit code.</p>
+     */
+    private int exitStatusOf(ChannelExec channel, Session session) throws IOException {
+        int exitCode = channel.getExitStatus();
+        if (exitCode == -1 && !session.isConnected()) {
+            synchronized (this) {
+                if (cachedSession == session) {
+                    cachedSession = null;
+                }
+            }
+            throw new IOException("SSH session to " + effectiveHostname + ":" + effectivePort
+                    + " was lost before the command finished (no answer to "
+                    + SystemPropertyLimit.read(SERVER_ALIVE_COUNT_MAX_PROPERTY, DEFAULT_SERVER_ALIVE_COUNT_MAX)
+                    + " keepalives sent every "
+                    + SystemPropertyLimit.read(SERVER_ALIVE_INTERVAL_PROPERTY, DEFAULT_SERVER_ALIVE_INTERVAL_SECONDS)
+                    + " s)");
+        }
+        return exitCode;
+    }
+
+    /** Waits until the channel is closed, or until its session is gone, which closes it as well. */
+    private static void awaitChannelClose(ChannelExec channel, Session session) throws IOException {
+        while (!channel.isClosed() && session.isConnected()) {
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Command execution interrupted", e);
+            }
+        }
     }
 
     /**
@@ -349,20 +444,11 @@ public class Node {
                 }
             }
 
-            // Wait for stderr thread
+            // Wait for stderr thread; both streams end when the channel closes or the session is dropped
             stderrThread.join();
 
-            // Wait for channel to close
-            while (!channel.isClosed()) {
-                try {
-                    Thread.sleep(100);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("Command execution interrupted", e);
-                }
-            }
-
-            int exitCode = channel.getExitStatus();
+            awaitChannelClose(channel, session);
+            int exitCode = exitStatusOf(channel, session);
 
             return new CommandResult(
                 stdoutBuilder.toString().trim(),
@@ -514,14 +600,8 @@ public class Node {
 
             stderrThread.join();
 
-            while (!channel.isClosed()) {
-                try { Thread.sleep(100); } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("Command execution interrupted", e);
-                }
-            }
-
-            int exitCode = channel.getExitStatus();
+            awaitChannelClose(channel, session);
+            int exitCode = exitStatusOf(channel, session);
             return new CommandResult(
                 stdoutBuilder.toString().trim(),
                 stderrBuilder.toString().trim(),
@@ -560,45 +640,11 @@ public class Node {
             stdin.flush();
         }
 
-        StringBuilder stdoutBuilder = new StringBuilder();
-        StringBuilder stderrBuilder = new StringBuilder();
-
-        Thread stdoutThread = Thread.ofVirtual().start(() -> {
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    stdoutBuilder.append(line).append("\n");
-                    if (callback != null) { callback.onStdout(line); }
-                }
-            } catch (IOException e) { /* Ignore */ }
-        });
-
-        Thread stderrThread = Thread.ofVirtual().start(() -> {
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    synchronized (stderrBuilder) { stderrBuilder.append(line).append("\n"); }
-                    if (callback != null) { callback.onStderr(line); }
-                }
-            } catch (IOException e) { /* Ignore */ }
-        });
-
         try {
-            boolean finished = process.waitFor(300, java.util.concurrent.TimeUnit.SECONDS);
-            if (!finished) {
-                process.destroyForcibly();
-                stdoutThread.join(1000);
-                stderrThread.join(1000);
-                return new CommandResult(stdoutBuilder.toString(), "Command timed out", -1);
-            }
-            stdoutThread.join(1000);
-            stderrThread.join(1000);
-            int exitCode = process.exitValue();
-            return new CommandResult(stdoutBuilder.toString().trim(), stderrBuilder.toString().trim(), exitCode);
+            return resultOfLocal(command, process, callback);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            process.destroyForcibly();
-            return new CommandResult(stdoutBuilder.toString(), "Interrupted: " + e.getMessage(), -1);
+            return new CommandResult("", "Interrupted: " + e.getMessage(), -1);
         }
     }
 
@@ -857,7 +903,7 @@ public class Node {
         if (password != null && !password.isEmpty()) {
             jumpHostSession.setPassword(password);
         }
-        jumpHostSession.connect();
+        connectWithinLimit(jumpHostSession, jumpHost, jumpPort);
 
         int localPort = jumpHostSession.setPortForwardingL(0, targetHost, targetPort);
 
