@@ -4,8 +4,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -167,11 +165,11 @@ public final class FrameItems {
         AtomicInteger items = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
         BatchFailures failures = new BatchFailures();
-        ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
+        LimitedVirtualThreads threads = new LimitedVirtualThreads(parallel);
         try {
             List<Future<?>> fs = new ArrayList<>();
             for (Todo t : todo) {
-                fs.add(pool.submit(() -> {
+                fs.add(threads.submit(() -> {
                     try {
                         List<BookStore.FrameRule> rules = t.concept().rules();
                         List<BookStore.FrameItem> got = read(writer.apply(question(nodes.get(t.number()), t.concept().concept(), rules)), rules);
@@ -189,7 +187,7 @@ public final class FrameItems {
             }
             for (Future<?> f : fs) f.get();
         } finally {
-            pool.shutdown();
+            threads.shutdown();
         }
         return failures.outcome(todo.size(), done.get() + " concept(s) of " + book + " given " + items.get() + " item(s), " + failed.get() + " failed");
     }

@@ -7,8 +7,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -216,11 +214,11 @@ public final class ConceptRelations {
         AtomicInteger done = new AtomicInteger(), failed = new AtomicInteger();
         BatchFailures failures = new BatchFailures();
         Map<String, AtomicInteger> tally = new ConcurrentHashMap<>();
-        ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
+        LimitedVirtualThreads threads = new LimitedVirtualThreads(parallel);
         try {
             List<Future<?>> fs = new ArrayList<>();
             for (String number : todo) {
-                fs.add(pool.submit(() -> {
+                fs.add(threads.submit(() -> {
                     try {
                         List<SectionGroups.Group> units = grouped.get(number);
                         Map<String, String> concepts = new LinkedHashMap<>();
@@ -254,7 +252,7 @@ public final class ConceptRelations {
             }
             for (Future<?> f : fs) f.get();
         } finally {
-            pool.shutdown();
+            threads.shutdown();
         }
         return failures.outcome(todo.size(), done.get() + " section(s) of " + book + " asked for relations: " + new java.util.TreeMap<>(tally) + ", " + failed.get() + " failed");
     }

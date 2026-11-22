@@ -7,8 +7,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -166,11 +164,11 @@ public final class SectionRelations {
         AtomicInteger found = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
         BatchFailures failures = new BatchFailures();
-        ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
+        LimitedVirtualThreads threads = new LimitedVirtualThreads(parallel);
         try {
             List<Future<?>> fs = new ArrayList<>();
             for (String number : todo) {
-                fs.add(pool.submit(() -> {
+                fs.add(threads.submit(() -> {
                     try {
                         List<String> concepts = judged.get(number).stream().filter(c -> !Boolean.FALSE.equals(c.kept()))
                                 .map(BookStore.JudgedConcept::concept).toList();
@@ -190,7 +188,7 @@ public final class SectionRelations {
             }
             for (Future<?> f : fs) f.get();
         } finally {
-            pool.shutdown();
+            threads.shutdown();
         }
         return failures.outcome(todo.size(), asked.get() + " section(s) of " + book + " asked, " + found.get() + " relation(s) found, " + failed.get() + " failed");
     }

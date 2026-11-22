@@ -7,8 +7,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -190,11 +188,11 @@ public final class GeneralFrames {
         AtomicInteger failed = new AtomicInteger();
         BatchFailures failures = new BatchFailures();
         Set<String> notJudged = java.util.concurrent.ConcurrentHashMap.newKeySet();
-        ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
+        LimitedVirtualThreads threads = new LimitedVirtualThreads(parallel);
         try {
             List<Future<?>> fs = new ArrayList<>();
             for (String n : asked) {
-                fs.add(pool.submit(() -> {
+                fs.add(threads.submit(() -> {
                     List<BookStore.Occurrence> occ = byName.get(n);
                     try {
                         List<List<Integer>> g = readGroups(writer.apply(identifyQuestion(n, occ, itemsOf)), occ.size());
@@ -212,7 +210,7 @@ public final class GeneralFrames {
             }
             for (Future<?> f : fs) f.get();
         } finally {
-            pool.shutdown();
+            threads.shutdown();
         }
         List<BookStore.Entity> entities = new ArrayList<>();
         int shared = 0;
@@ -379,11 +377,11 @@ public final class GeneralFrames {
         AtomicInteger items = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
         BatchFailures failures = new BatchFailures();
-        ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
+        LimitedVirtualThreads threads = new LimitedVirtualThreads(parallel);
         try {
             List<Future<?>> fs = new ArrayList<>();
             for (Ask a : asks) {
-                fs.add(pool.submit(() -> {
+                fs.add(threads.submit(() -> {
                     try {
                         List<BookStore.FrameItem> got = readItems(writer.apply(itemsQuestion(a.entity().name(), a.kinds(), a.sentences())), a.sentences());
                         if (got.isEmpty()) throw new IllegalStateException("the reply names no item a sentence answers");
@@ -400,7 +398,7 @@ public final class GeneralFrames {
             }
             for (Future<?> f : fs) f.get();
         } finally {
-            pool.shutdown();
+            threads.shutdown();
         }
         return failures.outcome(asks.size(), done.get() + " concept(s) of " + book + " given " + items.get() + " item(s), " + failed.get() + " failed");
     }

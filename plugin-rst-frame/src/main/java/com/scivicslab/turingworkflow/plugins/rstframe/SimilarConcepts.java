@@ -12,8 +12,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -287,11 +285,11 @@ public final class SimilarConcepts {
         log.accept("start: " + todo.size() + " unit(s) to judge, " + parallel + " at a time");
         AtomicInteger done = new AtomicInteger(), failed = new AtomicInteger(), pairs = new AtomicInteger();
         BatchFailures failures = new BatchFailures();
-        ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
+        LimitedVirtualThreads threads = new LimitedVirtualThreads(parallel);
         try {
             List<Future<?>> fs = new ArrayList<>();
             for (Unit u : todo) {
-                fs.add(pool.submit(() -> {
+                fs.add(threads.submit(() -> {
                     try {
                         List<Unit> cands = nearest(u, units, current, CANDIDATES);
                         String reply = cands.isEmpty() ? "none" : writer.apply(question(u, cands));
@@ -310,7 +308,7 @@ public final class SimilarConcepts {
             }
             for (Future<?> f : fs) f.get();
         } finally {
-            pool.shutdown();
+            threads.shutdown();
         }
         return failures.outcome(todo.size(), done.get() + " unit(s) judged under " + CRITERION + ": " + pairs.get() + " similar pair(s), " + failed.get() + " failed");
     }

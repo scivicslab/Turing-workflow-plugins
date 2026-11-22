@@ -3,8 +3,6 @@ package com.scivicslab.turingworkflow.plugins.rstframe;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -112,11 +110,11 @@ public final class SectionTagging {
         AtomicInteger made = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
         BatchFailures failures = new BatchFailures();
-        ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
+        LimitedVirtualThreads threads = new LimitedVirtualThreads(parallel);
         try {
             List<Future<?>> fs = new ArrayList<>();
             for (BookSections.Section s : todo) {
-                fs.add(pool.submit(() -> {
+                fs.add(threads.submit(() -> {
                     long t0 = System.currentTimeMillis();
                     try {
                         BookStore.SectionRules r = tag(book, nodes.get(s.number()), s, writer);
@@ -132,7 +130,7 @@ public final class SectionTagging {
             }
             for (Future<?> f : fs) f.get();
         } finally {
-            pool.shutdown();
+            threads.shutdown();
         }
         return failures.outcome(todo.size(), made.get() + " section(s) of " + book + " made into rule files, " + failed.get() + " failed");
     }

@@ -6,8 +6,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -165,11 +163,11 @@ public final class SectionReview {
         AtomicInteger failed = new AtomicInteger();
         BatchFailures failures = new BatchFailures();
         Map<String, AtomicInteger> tally = new java.util.concurrent.ConcurrentHashMap<>();
-        ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
+        LimitedVirtualThreads threads = new LimitedVirtualThreads(parallel);
         try {
             List<Future<?>> fs = new ArrayList<>();
             for (String number : todo) {
-                fs.add(pool.submit(() -> {
+                fs.add(threads.submit(() -> {
                     try {
                         List<BookStore.Relation> rel = all.get(number);
                         List<String> concepts = judged.getOrDefault(number, List.of()).stream().filter(c -> !Boolean.FALSE.equals(c.kept()))
@@ -189,7 +187,7 @@ public final class SectionReview {
             }
             for (Future<?> f : fs) f.get();
         } finally {
-            pool.shutdown();
+            threads.shutdown();
         }
         return failures.outcome(todo.size(), done.get() + " section(s) of " + book + " reviewed: " + new java.util.TreeMap<>(tally) + ", " + failed.get() + " failed");
     }
