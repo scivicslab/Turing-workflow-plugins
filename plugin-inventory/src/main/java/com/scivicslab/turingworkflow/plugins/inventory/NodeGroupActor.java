@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -625,7 +626,12 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     }
 
     /**
-     * Applies an action to all child actors matching a wildcard pattern in parallel.
+     * Applies an action to all child actors matching a wildcard pattern.
+     *
+     * <p>Each child's work runs on the ManagedThreadPool's real threads, never on commonPool. Called
+     * on a thread that is not one of the pool's real threads, the children run in parallel and the
+     * calling thread waits; called on one of the pool's real threads, which is where a workflow
+     * step reaches it, they run on that real thread one after another.</p>
      *
      * Returns an action result that is a success if all matched child actors executed the method successfully, or a
      * failure containing a list of specific errors for each failed actor. If no actors match the pattern, it returns a
@@ -659,7 +665,7 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
                 return new ActionResult(false, "No actors matched pattern: " + actorPattern);
             }
 
-            logger.info(String.format("Applying method '%s' to %d actors matching '%s' (async parallel)",
+            logger.info(String.format("Applying method '%s' to %d actors matching '%s'",
                 method, matchedActors.size(), actorPattern));
 
             // Thread-safe collections for gathering results
@@ -668,11 +674,18 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
             DistributedLogStore logStore = this.object.getLogStore();
             long sessionId = this.object.getSessionId();
 
-            // Create async tasks for all actors
+            // Each child's work is given to the ManagedThreadPool through the child actor,
+            // ask(action, pool); nothing here runs on commonPool. Called on a thread that is not
+            // one of the pool's real threads (this actor's mailbox virtual thread, say), the
+            // children run in parallel on the pool's real threads and this thread waits for them.
+            // Called on one of the pool's real threads, as a workflow step reaches it, ask runs
+            // each child right here, one after another (ActorRef's inline rule): no parallelism,
+            // but no pool real thread waits for work queued behind itself.
+            ExecutorService pool = this.system().getManagedThreadPool();
             List<CompletableFuture<Void>> futures = new ArrayList<>();
 
             for (IIActorRef<?> actor : matchedActors) {
-                CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                CompletableFuture<Void> future = actor.<Void>ask(unused -> {
                     try {
                         ActionResult result = actor.callByActionName(method, args);
                         if (!result.isSuccess()) {
@@ -694,7 +707,8 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
                         failures.put(actor.getName(), e.getMessage());
                         logger.log(Level.WARNING, "Exception on " + actor.getName(), e);
                     }
-                });
+                    return null;
+                }, pool);
                 futures.add(future);
             }
 
