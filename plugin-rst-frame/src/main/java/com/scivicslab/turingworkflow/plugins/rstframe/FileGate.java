@@ -116,30 +116,38 @@ public interface FileGate {
     /**
      * Returns the gate of the actor named {@value #ACTOR} in {@code system}, reached through that actor's mailbox.
      *
-     * If the actor named {@value #ACTOR} is not registered in {@code system}, or if its object is not a {@link
-     * FileGate}, returns a gate that refuses nothing via {@link #open()}.
-     *
-     * <p>If the actor is registered but cannot be asked whether its object is a {@link FileGate}, throws a {@link
-     * SecurityException}: a gate that was configured must not silently turn into one that allows everything.</p>
+     * <ul>
+     * <li>No actor named {@value #ACTOR} in {@code system} (or no system): returns {@link #open()}, a gate that refuses
+     * nothing, as a program without a gate (the command line) has always had.</li>
+     * <li>An actor named {@value #ACTOR} whose object is a {@link FileGate}: returns a gate that asks that object, in
+     * its actor's mailbox, for every read, write, listing and check.</li>
+     * <li>An actor named {@value #ACTOR} whose object is not a {@link FileGate}, or that cannot be asked: throws a
+     * {@link SecurityException}, so no gate is built and the files are neither read nor written. A program that
+     * registered something under that name meant to fence the files; a gate that was configured must not silently
+     * turn into one that allows everything.</li>
+     * </ul>
      *
      * @param system the actor system to search for the {@value #ACTOR} actor
-     * @throws SecurityException if the {@value #ACTOR} actor exists but the check fails or is interrupted; the
-     *         interrupt flag is kept
+     * @throws SecurityException if the {@value #ACTOR} actor exists and its object is not a {@link FileGate} (the
+     *         message names its actual type), or the check fails or is interrupted; the interrupt flag is kept
      */
     @SuppressWarnings("unchecked")
     static FileGate of(IIActorSystem system) {
         IIActorRef<Object> ref = system == null ? null : (IIActorRef<Object>) system.getIIActor(ACTOR);
         if (ref == null) return open();
-        boolean isGate;
+        Class<?> type;
         try {
-            isGate = ref.ask(o -> o instanceof FileGate).get();
+            type = ref.ask(o -> o == null ? null : o.getClass()).get();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new SecurityException("interrupted while asking the '" + ACTOR + "' actor whether it is a FileGate", e);
         } catch (ExecutionException e) {
             throw new SecurityException("cannot ask the '" + ACTOR + "' actor whether it is a FileGate: " + e.getCause(), e);
         }
-        if (!isGate) return open();
+        if (type == null || !FileGate.class.isAssignableFrom(type)) {
+            throw new SecurityException("the '" + ACTOR + "' actor is not a FileGate (actual type: "
+                    + (type == null ? "null" : type.getName()) + "); refusing file access");
+        }
         return new FileGate() {
             @Override
             public String read(Path file) throws IOException {

@@ -1,11 +1,15 @@
 package com.scivicslab.turingworkflow.plugins.rstframe;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
 
 import org.junit.jupiter.api.AfterEach;
@@ -80,5 +84,35 @@ class FileGateLookupTest {
 
         assertFalse(gate.exists(dir.resolve("missing")));
         assertTrue(gate.exists(dir));
+    }
+
+    @Test
+    void of_filesActorIsNotAFileGate_throwsSecurityExceptionNamingItsType() {
+        system.addIIActor(new IIActorRef<Object>(FileGate.ACTOR, "not a gate", system) { });
+
+        SecurityException refused = assertThrows(SecurityException.class, () -> FileGate.of(system),
+                "a files actor that is not a gate must not yield an open gate");
+        assertTrue(refused.getMessage().contains("java.lang.String"), refused.getMessage());
+        assertTrue(refused.getMessage().contains("not a FileGate"), refused.getMessage());
+    }
+
+    @Test
+    void of_filesActorIsAFileGate_delegatesToIt(@TempDir Path dir) throws Exception {
+        List<String> asked = new CopyOnWriteArrayList<>();
+        FileGate open = FileGate.open();
+        FileGate recording = new FileGate() {
+            public String read(Path f) throws IOException { asked.add("read " + f.getFileName()); return "from the gate"; }
+            public void write(Path f, String t) throws IOException { asked.add("write " + f.getFileName()); }
+            public List<Path> list(Path d, String s, int depth) throws IOException { return open.list(d, s, depth); }
+            public void mayWrite(Path f) { asked.add("mayWrite " + f.getFileName()); }
+            public boolean exists(Path p) { return open.exists(p); }
+        };
+        system.addIIActor(new IIActorRef<FileGate>(FileGate.ACTOR, recording, system) { });
+
+        FileGate gate = FileGate.of(system);
+
+        assertEquals("from the gate", gate.read(dir.resolve("a.md")));
+        gate.write(dir.resolve("b.md"), "text");
+        assertEquals(List.of("read a.md", "write b.md"), asked);
     }
 }
