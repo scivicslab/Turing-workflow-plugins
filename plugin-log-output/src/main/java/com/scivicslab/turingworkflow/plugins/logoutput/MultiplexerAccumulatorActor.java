@@ -116,19 +116,32 @@ public class MultiplexerAccumulatorActor extends IIActorRef<MultiplexerAccumulat
 
     @Action(value = "add", argsType = AddArgs.class)
     public ActionResult add(AddArgs args) {
-        // Note: Do NOT log here - it causes infinite loop via MultiplexerLogHandler
+        // Do NOT log through JUL anywhere on this path: MultiplexerLogHandler calls this action, so
+        // a log call here re-enters it. Failures go to System.err. The entry is handed to the
+        // multiplexer without waiting, so logging never blocks the caller.
         try {
             String source = args.source();
             String type = args.type();
             String data = args.data();
 
-            this.tell(acc -> acc.add(source, type, data));
+            this.tell(acc -> acc.add(source, type, data))
+                .whenComplete((ignored, failure) -> {
+                    if (failure != null) {
+                        writeToStderr(args, failure);
+                    }
+                });
 
             return new ActionResult(true, "Enqueued");
         } catch (Exception e) {
-            logger.log(Level.SEVERE, "Error in add", e);
+            writeToStderr(args, e);
             return new ActionResult(false, "Error: " + e.getMessage());
         }
+    }
+
+    /** Writes an entry the multiplexer could not take to System.err, so that it is not lost. */
+    private static void writeToStderr(AddArgs args, Throwable failure) {
+        System.err.println("MultiplexerAccumulator: could not write the entry (" + failure + "): "
+                + args.source() + " " + args.type() + " " + args.data());
     }
 
     /**
