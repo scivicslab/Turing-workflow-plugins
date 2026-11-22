@@ -63,6 +63,17 @@ public class ArxivClient {
     private static final int RETRIES = 3;
 
     /**
+     * System property: the longest single wait, in seconds, before a refused request (HTTP 429 or 503) is asked again,
+     * whatever the growing backoff or the server's {@code Retry-After} asks for. Default {@value
+     * #DEFAULT_MAX_RETRY_WAIT_SECONDS}; with its 3 retries a refused request waits at most three times
+     * this long in total.
+     */
+    public static final String MAX_RETRY_WAIT_PROPERTY = "turingworkflow.arxiv.maxRetryWaitSeconds";
+
+    /** Default of {@value #MAX_RETRY_WAIT_PROPERTY}. */
+    public static final long DEFAULT_MAX_RETRY_WAIT_SECONDS = 60;
+
+    /**
      * The duration in milliseconds that this process refuses to send any requests after the retry attempts are
      * exhausted.
      */
@@ -426,7 +437,7 @@ public class ArxivClient {
      * @throws Exception if the server is currently in a cooldown period, if the retries are exhausted, or if the
      * server returns a non-200 status code
      */
-    private String get(String url) throws Exception {
+    String get(String url) throws Exception {
         long waitingOut = refusingUntil - System.currentTimeMillis();
         if (waitingOut > 0) {
             throw new Exception("arXiv refused this caller; not asking again for another "
@@ -435,6 +446,7 @@ public class ArxivClient {
         boolean refused = false;
         HttpResponse<String> resp = null;
         long wait = RETRY_AFTER_MILLIS;
+        long maxWait = SystemPropertyLimit.read(MAX_RETRY_WAIT_PROPERTY, DEFAULT_MAX_RETRY_WAIT_SECONDS) * 1000L;
         for (int attempt = 0; attempt <= RETRIES; attempt++) {
             try {
                 resp = send(url);
@@ -449,6 +461,8 @@ public class ArxivClient {
             if (attempt == RETRIES) break;
             long asked = retryAfterMillis(resp);
             if (asked > wait) wait = asked;
+            // a Retry-After of hours, tripled on each retry, would hold the action for most of a day
+            wait = Math.min(wait, maxWait);
             logger.warning("arXiv answered " + resp.statusCode() + "; waiting " + wait
                     + "ms and asking again (attempt " + (attempt + 1) + " of " + RETRIES + ")");
             Thread.sleep(wait);

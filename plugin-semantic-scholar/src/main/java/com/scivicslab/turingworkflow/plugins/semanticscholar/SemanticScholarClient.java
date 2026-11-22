@@ -58,6 +58,17 @@ public class SemanticScholarClient {
     private static final int RETRIES = 3;
 
     /**
+     * System property: the longest single wait, in seconds, before a refused request (HTTP 429 or 503) is asked again,
+     * whatever the growing backoff or the server's {@code Retry-After} asks for. Default {@value
+     * #DEFAULT_MAX_RETRY_WAIT_SECONDS}; with its 3 retries a refused request waits at most three times
+     * this long in total.
+     */
+    public static final String MAX_RETRY_WAIT_PROPERTY = "turingworkflow.semanticscholar.maxRetryWaitSeconds";
+
+    /** Default of {@value #MAX_RETRY_WAIT_PROPERTY}. */
+    public static final long DEFAULT_MAX_RETRY_WAIT_SECONDS = 60;
+
+    /**
      * The duration in milliseconds that the process refuses to send any new requests after all retries have been
      * exhausted.
      */
@@ -366,7 +377,7 @@ public class SemanticScholarClient {
      * @throws Exception if the request fails, the service is in a cooldown period, or the server returns a non-200
      * status code.
      */
-    private String get(String url) throws Exception {
+    String get(String url) throws Exception {
         long waitingOut = refusingUntil - System.currentTimeMillis();
         if (waitingOut > 0) {
             throw new Exception("Semantic Scholar refused this caller; not asking again for another "
@@ -375,6 +386,7 @@ public class SemanticScholarClient {
         boolean refused = false;
         HttpResponse<String> resp = null;
         long wait = RETRY_AFTER_MILLIS;
+        long maxWait = SystemPropertyLimit.read(MAX_RETRY_WAIT_PROPERTY, DEFAULT_MAX_RETRY_WAIT_SECONDS) * 1000L;
         for (int attempt = 0; attempt <= RETRIES; attempt++) {
             try {
                 resp = send(url);
@@ -389,6 +401,8 @@ public class SemanticScholarClient {
             if (attempt == RETRIES) break;
             long asked = retryAfterMillis(resp);
             if (asked > wait) wait = asked;
+            // a Retry-After of hours, tripled on each retry, would hold the action for most of a day
+            wait = Math.min(wait, maxWait);
             logger.warning("Semantic Scholar answered " + resp.statusCode() + "; waiting " + wait
                     + "ms and asking again (attempt " + (attempt + 1) + " of " + RETRIES + ")");
             Thread.sleep(wait);
