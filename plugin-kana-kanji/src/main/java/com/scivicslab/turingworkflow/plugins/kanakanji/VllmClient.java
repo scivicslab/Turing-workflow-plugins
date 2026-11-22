@@ -372,16 +372,19 @@ public class VllmClient {
         return false;
     }
 
+    /** The most tokens one answer may have; a reply that reaches it is cut off and fails. */
+    private static final int MAX_TOKENS = 8192;
+
     private String callVllm(String prompt) throws Exception {
         String body = """
                 {
                     "model": "%s",
                     "messages": [{"role": "user", "content": %s}],
-                    "max_tokens": 8192,
+                    "max_tokens": %d,
                     "temperature": 0.0,
                     "chat_template_kwargs": {"enable_thinking": false}
                 }
-                """.formatted(model, jsonEscape(prompt));
+                """.formatted(model, jsonEscape(prompt), MAX_TOKENS);
 
         logger.info("vLLM request URL: " + vllmUrl);
         logger.info("vLLM request body (first 500 chars): " + body.substring(0, Math.min(500, body.length())));
@@ -412,32 +415,26 @@ public class VllmClient {
         return extractContent(response.body());
     }
 
+    /**
+     * Returns {@code choices[0].message.content} of an OpenAI-compatible response, stripped.
+     *
+     * @throws RuntimeException if the body has no answer, if the model stopped at the token limit ({@code
+     * finish_reason} {@code length}: the reply is cut off), or if the answer's text is empty
+     */
     private String extractContent(String jsonBody) {
-        // Extract choices[0].message.content from OpenAI-compatible response
-        int contentIdx = jsonBody.lastIndexOf("\"content\":");
-        if (contentIdx < 0) {
-            throw new RuntimeException("No content field in response: " + jsonBody.substring(0, Math.min(200, jsonBody.length())));
+        org.json.JSONObject choice;
+        try {
+            choice = new org.json.JSONObject(jsonBody).getJSONArray("choices").getJSONObject(0);
+        } catch (org.json.JSONException e) {
+            throw new RuntimeException("No answer in response: " + jsonBody.substring(0, Math.min(200, jsonBody.length())), e);
         }
-        int valueStart = jsonBody.indexOf('"', contentIdx + 10);
-        if (valueStart < 0) return "";
-        valueStart++;
-
-        StringBuilder sb = new StringBuilder();
-        for (int i = valueStart; i < jsonBody.length(); i++) {
-            char c = jsonBody.charAt(i);
-            if (c == '"' && jsonBody.charAt(i - 1) != '\\') break;
-            if (c == '\\' && i + 1 < jsonBody.length()) {
-                char next = jsonBody.charAt(i + 1);
-                switch (next) {
-                    case 'n' -> { sb.append('\n'); i++; continue; }
-                    case 't' -> { sb.append('\t'); i++; continue; }
-                    case '"' -> { sb.append('"'); i++; continue; }
-                    case '\\' -> { sb.append('\\'); i++; continue; }
-                }
-            }
-            sb.append(c);
+        if ("length".equals(choice.optString("finish_reason", null))) {
+            throw new RuntimeException("reply cut off at max_tokens=" + MAX_TOKENS);
         }
-        return sb.toString().strip();
+        org.json.JSONObject message = choice.optJSONObject("message");
+        String content = message == null || message.isNull("content") ? null : message.optString("content", null);
+        if (content == null || content.isBlank()) throw new RuntimeException("empty reply");
+        return content.strip();
     }
 
     private static String jsonEscape(String text) {
