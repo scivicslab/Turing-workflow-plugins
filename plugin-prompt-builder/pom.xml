@@ -15,6 +15,10 @@
     <name>Turing Workflow Plugin: Prompt Builder</name>
     <description>Actor that assembles prompts step-by-step from warnings, context, and message sections.</description>
 
+    <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.promptbuilder</automatic-module-name>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.scivicslab</groupId>

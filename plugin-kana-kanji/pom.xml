@@ -15,6 +15,10 @@
     <name>Turing Workflow Plugin: Kana-Kanji Pairs Generator</name>
     <description>Actors for OCR-to-kana-kanji pair generation via vLLM</description>
 
+    <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.kanakanji</automatic-module-name>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.scivicslab</groupId>

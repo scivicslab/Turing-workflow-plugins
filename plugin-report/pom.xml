@@ -15,6 +15,10 @@
     <name>Turing Workflow Plugin: Report</name>
     <description>Section-based workflow report builder for Turing-workflow</description>
 
+    <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.report</automatic-module-name>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.scivicslab</groupId>

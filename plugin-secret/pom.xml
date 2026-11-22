@@ -11,6 +11,7 @@
     </parent>
 
     <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.secret</automatic-module-name>
         <!-- This module declares no actions, so there are no argument schemas to generate. -->
         <actionSchemas.skip>true</actionSchemas.skip>
     </properties>

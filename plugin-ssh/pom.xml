@@ -15,6 +15,10 @@
     <name>Turing Workflow Plugin: SSH</name>
     <description>SSH-based command execution and node management for Turing-workflow</description>
 
+    <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.ssh</automatic-module-name>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.scivicslab</groupId>

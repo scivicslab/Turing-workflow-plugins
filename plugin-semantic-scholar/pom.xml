@@ -15,6 +15,10 @@
     <name>Turing Workflow Plugin: Semantic Scholar</name>
     <description>Actor that queries the Semantic Scholar Graph API (search, one paper, its citations and references)</description>
 
+    <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.semanticscholar</automatic-module-name>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.scivicslab</groupId>

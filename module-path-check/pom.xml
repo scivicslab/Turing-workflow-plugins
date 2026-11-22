@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.scivicslab.turingworkflow.plugins</groupId>
+        <artifactId>turing-workflow-plugins-parent</artifactId>
+        <version>4.9.0-SNAPSHOT</version>
+    </parent>
+
+    <!-- Not published. It checks the jars that are published: pojo-actor, turing-workflow and every
+         plugin, each as an automatic module with its declared name, all of them resolved together.
+         A jar exists only after the package phase, so the check is a failsafe test that runs in
+         integration-test, after every module it depends on has been packaged. -->
+    <artifactId>module-path-check</artifactId>
+    <version>4.9.0-SNAPSHOT</version>
+    <name>Turing Workflow Plugins: module path check</name>
+    <description>Resolves the published jars on the module path (not published)</description>
+
+    <properties>
+        <actionSchemas.skip>true</actionSchemas.skip>
+        <maven.install.skip>true</maven.install.skip>
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <maven.source.skip>true</maven.source.skip>
+        <gpg.skip>true</gpg.skip>
+        <!-- Never on a module path, but its jar is built like the others and needs a legal name. -->
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.modulepathcheck</automatic-module-name>
+    </properties>
+
+    <dependencies>
+        <dependency><groupId>com.scivicslab</groupId><artifactId>pojo-actor</artifactId><version>${pojo-actor.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>com.scivicslab</groupId><artifactId>turing-workflow</artifactId><version>${turing-workflow.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-llm</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-prompt-builder</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-secret</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-vault</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-log-db</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-log-output</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-kana-kanji</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-report</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-ssh</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-inventory</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-web</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-chatui3</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-fineweb-search</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-openalex</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-arxiv</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-semantic-scholar</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-ocr</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-codedoc</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-rst-frame</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>plugin-text</artifactId><version>${project.version}</version><scope>test</scope></dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>3.5.2</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

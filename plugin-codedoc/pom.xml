@@ -15,6 +15,10 @@
     <name>Turing Workflow Plugin: Code Documentation</name>
     <description>Deterministic actors (scan / chunk / write) for code-understanding and document-generation workflows.</description>
 
+    <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.codedoc</automatic-module-name>
+    </properties>
+
     <dependencies>
         <!-- All provided by the turing-workflow host (runner) at runtime; needed only for compilation. -->
         <dependency>

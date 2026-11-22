@@ -15,6 +15,10 @@
     <name>Turing Workflow Plugin: ChatUI3</name>
     <description>Actor that calls quarkus-chat-ui3 primitives (POST /api/chat via SSE, trace, config)</description>
 
+    <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.chatui3</automatic-module-name>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.scivicslab</groupId>

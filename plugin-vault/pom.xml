@@ -15,6 +15,10 @@
     <name>Turing Workflow Plugin: Vault</name>
     <description>HashiCorp Vault integration for Turing-workflow</description>
 
+    <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.vault</automatic-module-name>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.scivicslab</groupId>

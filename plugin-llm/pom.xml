@@ -15,6 +15,10 @@
     <name>Turing Workflow Plugin: LLM</name>
     <description>Actor that calls an LLM through an OpenAI-compatible chat completions endpoint or the quarkus-chat-ui REST API</description>
 
+    <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.llm</automatic-module-name>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.scivicslab</groupId>

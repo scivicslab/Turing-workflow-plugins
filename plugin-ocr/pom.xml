@@ -18,6 +18,10 @@
     <name>Turing Workflow Plugin: OCR</name>
     <description>Actor that sends PDFs to Marker (English/math) or YomiToku (Japanese) OCR backends and returns Markdown text</description>
 
+    <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.ocr</automatic-module-name>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.scivicslab</groupId>

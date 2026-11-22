@@ -59,6 +59,8 @@
         <module>plugin-codedoc</module>
         <module>plugin-rst-frame</module>
         <module>plugin-text</module>
+        <!-- Last: it resolves every jar above on the module path, so they must be packaged first. -->
+        <module>module-path-check</module>
     </modules>
 
     <properties>
@@ -74,6 +76,8 @@
              -Pe2e, which selects only them. -->
         <excludedGroups>e2e</excludedGroups>
         <groups></groups>
+        <!-- Set by each published module to its package root; see maven-jar-plugin below. -->
+        <automatic-module-name></automatic-module-name>
     </properties>
 
     <dependencyManagement>
@@ -117,6 +121,21 @@
 
     <build>
         <plugins>
+            <!-- The name each plugin jar has on the module path, which each module sets from its package
+                 root. A module that leaves it empty fails to build: maven-archiver refuses an empty name. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.1</version>
+                <configuration>
+                    <archive>
+                        <manifestEntries>
+                            <Automatic-Module-Name>${automatic-module-name}</Automatic-Module-Name>
+                        </manifestEntries>
+                    </archive>
+                </configuration>
+            </plugin>
+
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>
@@ -137,6 +156,10 @@
                 <version>3.6.3</version>
                 <configuration>
                     <doclint>none</doclint>
+                    <!-- Classpath, as before the modules had names. With an Automatic-Module-Name in the
+                         jar plugin's configuration the javadoc plugin builds a module path instead, and a
+                         dependency of type pom (plugin-ssh's junixsocket-core) is refused there. -->
+                    <legacyMode>true</legacyMode>
                 </configuration>
                 <executions>
                     <execution>
@@ -165,8 +188,10 @@
                             </docletArtifact>
                             <useStandardDocletOptions>false</useStandardDocletOptions>
                             <additionalOptions>
-                                <additionalOption>-turingOutputDir</additionalOption>
-                                <additionalOption>${project.build.outputDirectory}/META-INF</additionalOption>
+                                <!-- One manifest per actor class, META-INF/turing-actions/<class>.json:
+                                     named after the class, so an uber-jar keeps every plugin's. -->
+                                <additionalOption>-turingClassesDir</additionalOption>
+                                <additionalOption>${project.build.outputDirectory}</additionalOption>
                             </additionalOptions>
                             <doclint>none</doclint>
                         </configuration>
@@ -197,6 +222,10 @@
                 <configuration>
                     <publishingServerId>central</publishingServerId>
                     <autoPublish>true</autoPublish>
+                    <!-- module-path-check only tests the published jars; it is not one of them. -->
+                    <excludeArtifacts>
+                        <artifact>module-path-check</artifact>
+                    </excludeArtifacts>
                 </configuration>
             </plugin>
         </plugins>

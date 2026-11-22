@@ -15,6 +15,10 @@
     <name>Turing Workflow Plugin: Inventory</name>
     <description>Ansible inventory parsing and node group management for Turing-workflow</description>
 
+    <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.inventory</automatic-module-name>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.scivicslab</groupId>

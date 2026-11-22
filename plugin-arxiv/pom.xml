@@ -15,6 +15,10 @@
     <name>Turing Workflow Plugin: arXiv</name>
     <description>Actor that queries the arXiv API (search, one paper, its PDF)</description>
 
+    <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.arxiv</automatic-module-name>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.scivicslab</groupId>

@@ -15,6 +15,10 @@
     <name>Turing Workflow Plugin: rst-on-lisp Frames</name>
     <description>Reads and rewrites rst-on-lisp rule files: takes a frame's next blank, builds what a writer is asked for it, and writes the answer back.</description>
 
+    <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.rstframe</automatic-module-name>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.scivicslab</groupId>

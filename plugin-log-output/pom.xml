@@ -15,6 +15,10 @@
     <name>Turing Workflow Plugin: Log Output</name>
     <description>Console, file, and multiplexer log output for Turing-workflow</description>
 
+    <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.logoutput</automatic-module-name>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.scivicslab</groupId>

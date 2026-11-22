@@ -15,6 +15,10 @@
     <name>Turing Workflow Plugin: Web (search + fetch)</name>
     <description>Actors for DuckDuckGo web search and URL fetch (HTML to Markdown)</description>
 
+    <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.web</automatic-module-name>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.scivicslab</groupId>

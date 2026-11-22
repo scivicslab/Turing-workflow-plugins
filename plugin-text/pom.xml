@@ -18,6 +18,10 @@
     <name>Turing Workflow Plugin: Text</name>
     <description>Actor that works on texts a workflow keeps: front matter, lists as lines, verdicts compared, rewrites checked</description>
 
+    <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.text</automatic-module-name>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.scivicslab</groupId>

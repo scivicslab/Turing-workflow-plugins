@@ -17,6 +17,10 @@
     <name>Turing Workflow Plugin: Log Database</name>
     <description>H2 database-backed distributed log storage for Turing-workflow</description>
 
+    <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.logdb</automatic-module-name>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.scivicslab</groupId>

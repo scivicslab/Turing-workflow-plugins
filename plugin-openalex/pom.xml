@@ -18,6 +18,10 @@
     <name>Turing Workflow Plugin: OpenAlex</name>
     <description>Actor that queries the OpenAlex open scholarly metadata API (works, authors, institutions)</description>
 
+    <properties>
+        <automatic-module-name>com.scivicslab.turingworkflow.plugins.openalex</automatic-module-name>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.scivicslab</groupId>
