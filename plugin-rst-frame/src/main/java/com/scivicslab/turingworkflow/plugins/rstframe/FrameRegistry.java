@@ -382,6 +382,7 @@ public final class FrameRegistry {
         List<Concrete> todo = concretes(store, book).stream().filter(c -> !placed.contains(book + "\t" + c.at().number() + "\t" + c.at().concept())).toList();
         log.accept("start: " + todo.size() + " concrete frame(s) of " + book + " to place, " + byId.size() + " generalized frame(s) in the registry");
         int matched = 0, made = 0, failed = 0, done = 0;
+        BatchFailures failures = new BatchFailures();
         for (Concrete c : todo) {
             try {
                 List<Frame> cand = candidates(c, new ArrayList<>(byId.values()));
@@ -445,10 +446,11 @@ public final class FrameRegistry {
             } catch (Exception ex) {
                 failed++;
                 log.accept("FAILED " + c.at().number() + " " + c.at().concept() + ": " + ex.getMessage());
+                failures.add(c.at().number() + " " + c.at().concept(), ex);
             }
         }
-        return done + " concrete frame(s) of " + book + " placed: " + matched + " into frames already made, " + made + " new; "
-                + byId.size() + " generalized frame(s) in the registry, " + failed + " failed";
+        return failures.outcome(todo.size(), done + " concrete frame(s) of " + book + " placed: " + matched + " into frames already made, " + made + " new; "
+                + byId.size() + " generalized frame(s) in the registry, " + failed + " failed");
     }
 
     /**
@@ -534,6 +536,7 @@ public final class FrameRegistry {
         log.accept("start: naming " + several.size() + " generalized frame(s), " + parallel + " at a time");
         AtomicInteger done = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
+        BatchFailures failures = new BatchFailures();
         ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
         try {
             List<Future<?>> fs = new ArrayList<>();
@@ -548,6 +551,7 @@ public final class FrameRegistry {
                     } catch (Exception ex) {
                         failed.incrementAndGet();
                         log.accept("FAILED " + r.id() + ": " + ex.getMessage());
+                        failures.add(r.id(), ex);
                     }
                 }));
             }
@@ -555,7 +559,7 @@ public final class FrameRegistry {
         } finally {
             pool.shutdown();
         }
-        return done.get() + " generalized frame(s) named, " + failed.get() + " failed";
+        return failures.outcome(several.size(), done.get() + " generalized frame(s) named, " + failed.get() + " failed");
     }
 
     /**
@@ -602,6 +606,7 @@ public final class FrameRegistry {
         AtomicInteger done = new AtomicInteger();
         AtomicInteger items = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
+        BatchFailures failures = new BatchFailures();
         ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
         try {
             List<Future<?>> fs = new ArrayList<>();
@@ -635,6 +640,7 @@ public final class FrameRegistry {
                     } catch (Exception ex) {
                         failed.incrementAndGet();
                         log.accept("FAILED " + r.id() + " " + r.name() + ": " + ex.getMessage());
+                        failures.add(r.id() + " " + r.name(), ex);
                     }
                 }));
             }
@@ -642,6 +648,6 @@ public final class FrameRegistry {
         } finally {
             pool.shutdown();
         }
-        return done.get() + " generalized frame(s) given " + items.get() + " item(s), " + failed.get() + " failed";
+        return failures.outcome(several.size(), done.get() + " generalized frame(s) given " + items.get() + " item(s), " + failed.get() + " failed");
     }
 }

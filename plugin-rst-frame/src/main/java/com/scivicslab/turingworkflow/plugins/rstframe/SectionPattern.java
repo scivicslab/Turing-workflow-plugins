@@ -327,6 +327,7 @@ public final class SectionPattern {
                 + parallel + " at a time");
         AtomicInteger done = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
+        BatchFailures failures = new BatchFailures();
         Map<String, AtomicInteger> tally = new ConcurrentHashMap<>();
         ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
         try {
@@ -343,6 +344,7 @@ public final class SectionPattern {
                     } catch (Exception ex) {
                         failed.incrementAndGet();
                         log.accept("FAILED " + number + ": " + ex.getMessage());
+                        failures.add(number, ex);
                     }
                 }));
             }
@@ -350,7 +352,7 @@ public final class SectionPattern {
         } finally {
             pool.shutdown();
         }
-        return done.get() + " section(s) of " + book + " given a pattern: " + new java.util.TreeMap<>(tally) + ", " + failed.get()
-                + " failed";
+        return failures.outcome(todo.size(), done.get() + " section(s) of " + book + " given a pattern: " + new java.util.TreeMap<>(tally) + ", " + failed.get()
+                + " failed");
     }
 }

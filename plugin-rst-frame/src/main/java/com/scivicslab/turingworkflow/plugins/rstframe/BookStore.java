@@ -775,17 +775,34 @@ public final class BookStore implements AutoCloseable {
      * @throws SQLException if a database access error occurs
      */
     public synchronized void saveEntities(String book, String level, List<Entity> entities) throws SQLException {
+        saveEntities(book, level, entities, java.util.Set.of());
+    }
+
+    /**
+     * Replaces the concepts of the book at the specified level, as {@link #saveEntities(String, String, List)} does,
+     * except that the concepts whose ids are in {@code keep}, and their items, are left as they are.
+     *
+     * <p>A batch uses this for the concepts it could not decide this time: an earlier decision stays until a rerun
+     * makes a new one.</p>
+     *
+     * @param keep ids of existing concepts at this level to leave untouched; none of them may be in {@code entities}
+     */
+    public synchronized void saveEntities(String book, String level, List<Entity> entities, java.util.Set<String> keep) throws SQLException {
+        String notKept = keep.isEmpty() ? "" : " AND id NOT IN (" + String.join(", ", java.util.Collections.nCopies(keep.size(), "?")) + ")";
+        List<String> kept = new ArrayList<>(keep);
         write(() -> {
             try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_entity_item WHERE book = ? AND id IN "
-                    + "(SELECT id FROM concept_entity WHERE book = ? AND level = ?)")) {
+                    + "(SELECT id FROM concept_entity WHERE book = ? AND level = ?)" + notKept)) {
                 d.setString(1, book);
                 d.setString(2, book);
                 d.setString(3, level);
+                for (int i = 0; i < kept.size(); i++) d.setString(4 + i, kept.get(i));
                 d.executeUpdate();
             }
-            try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_entity WHERE book = ? AND level = ?")) {
+            try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_entity WHERE book = ? AND level = ?" + notKept)) {
                 d.setString(1, book);
                 d.setString(2, level);
+                for (int i = 0; i < kept.size(); i++) d.setString(3 + i, kept.get(i));
                 d.executeUpdate();
             }
             try (PreparedStatement p = db.prepareStatement("INSERT INTO concept_entity (book, id, name, level, members, children) VALUES (?, ?, ?, ?, ?, ?)")) {

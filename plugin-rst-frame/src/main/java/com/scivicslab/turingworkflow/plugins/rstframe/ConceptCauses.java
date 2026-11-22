@@ -258,6 +258,7 @@ public final class ConceptCauses {
         }
         log.accept("start: " + todo.size() + " section(s) of " + book + ", " + parallel + " at a time");
         AtomicInteger done = new AtomicInteger(), failed = new AtomicInteger(), causes = new AtomicInteger(), motives = new AtomicInteger();
+        BatchFailures failures = new BatchFailures();
         ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
         try {
             List<Future<?>> fs = new ArrayList<>();
@@ -287,6 +288,7 @@ public final class ConceptCauses {
                     } catch (Exception ex) {
                         failed.incrementAndGet();
                         log.accept("FAILED " + number + ": " + ex.getMessage());
+                        failures.add(number, ex);
                     }
                 }));
             }
@@ -294,6 +296,6 @@ public final class ConceptCauses {
         } finally {
             pool.shutdown();
         }
-        return done.get() + " section(s) of " + book + " asked: " + causes.get() + " cause(s), " + motives.get() + " motive(s), " + failed.get() + " failed";
+        return failures.outcome(todo.size(), done.get() + " section(s) of " + book + " asked: " + causes.get() + " cause(s), " + motives.get() + " motive(s), " + failed.get() + " failed");
     }
 }

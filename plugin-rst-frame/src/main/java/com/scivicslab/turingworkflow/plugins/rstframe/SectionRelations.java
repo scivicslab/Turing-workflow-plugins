@@ -165,6 +165,7 @@ public final class SectionRelations {
         AtomicInteger asked = new AtomicInteger();
         AtomicInteger found = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
+        BatchFailures failures = new BatchFailures();
         ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
         try {
             List<Future<?>> fs = new ArrayList<>();
@@ -183,6 +184,7 @@ public final class SectionRelations {
                     } catch (Exception e) {
                         failed.incrementAndGet();
                         log.accept("FAILED " + number + ": " + e.getMessage());
+                        failures.add(number, e);
                     }
                 }));
             }
@@ -190,6 +192,6 @@ public final class SectionRelations {
         } finally {
             pool.shutdown();
         }
-        return asked.get() + " section(s) of " + book + " asked, " + found.get() + " relation(s) found, " + failed.get() + " failed";
+        return failures.outcome(todo.size(), asked.get() + " section(s) of " + book + " asked, " + found.get() + " relation(s) found, " + failed.get() + " failed");
     }
 }

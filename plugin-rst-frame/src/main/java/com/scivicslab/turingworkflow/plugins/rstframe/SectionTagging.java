@@ -111,6 +111,7 @@ public final class SectionTagging {
         log.accept("start: " + todo.size() + " section(s) of " + book + ", " + parallel + " at a time");
         AtomicInteger made = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
+        BatchFailures failures = new BatchFailures();
         ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
         try {
             List<Future<?>> fs = new ArrayList<>();
@@ -125,6 +126,7 @@ public final class SectionTagging {
                     } catch (Exception e) {
                         failed.incrementAndGet();
                         log.accept("FAILED " + s.number() + ": " + e.getMessage());
+                        failures.add(s.number(), e);
                     }
                 }));
             }
@@ -132,6 +134,6 @@ public final class SectionTagging {
         } finally {
             pool.shutdown();
         }
-        return made.get() + " section(s) of " + book + " made into rule files, " + failed.get() + " failed";
+        return failures.outcome(todo.size(), made.get() + " section(s) of " + book + " made into rule files, " + failed.get() + " failed");
     }
 }

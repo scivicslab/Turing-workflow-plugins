@@ -286,6 +286,7 @@ public final class SimilarConcepts {
         List<Unit> todo = units.stream().filter(u -> only.isEmpty() ? !judged.contains(u.key() + "\t" + u.concept()) : only.contains(u.number())).toList();
         log.accept("start: " + todo.size() + " unit(s) to judge, " + parallel + " at a time");
         AtomicInteger done = new AtomicInteger(), failed = new AtomicInteger(), pairs = new AtomicInteger();
+        BatchFailures failures = new BatchFailures();
         ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
         try {
             List<Future<?>> fs = new ArrayList<>();
@@ -303,6 +304,7 @@ public final class SimilarConcepts {
                     } catch (Exception ex) {
                         failed.incrementAndGet();
                         log.accept("FAILED " + u.key() + ": " + ex.getMessage());
+                        failures.add(u.key(), ex);
                     }
                 }));
             }
@@ -310,6 +312,6 @@ public final class SimilarConcepts {
         } finally {
             pool.shutdown();
         }
-        return done.get() + " unit(s) judged under " + CRITERION + ": " + pairs.get() + " similar pair(s), " + failed.get() + " failed";
+        return failures.outcome(todo.size(), done.get() + " unit(s) judged under " + CRITERION + ": " + pairs.get() + " similar pair(s), " + failed.get() + " failed");
     }
 }

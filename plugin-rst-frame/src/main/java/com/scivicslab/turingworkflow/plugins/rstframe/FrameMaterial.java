@@ -197,6 +197,7 @@ public final class FrameMaterial {
         AtomicInteger asked = new AtomicInteger();
         AtomicInteger collected = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
+        BatchFailures failures = new BatchFailures();
         ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
         try {
             List<Future<?>> fs = new ArrayList<>();
@@ -218,6 +219,7 @@ public final class FrameMaterial {
                     } catch (Exception ex) {
                         failed.incrementAndGet();
                         log.accept("FAILED " + number + ": " + ex.getMessage());
+                        failures.add(number, ex);
                     }
                 }));
             }
@@ -225,7 +227,7 @@ public final class FrameMaterial {
         } finally {
             pool.shutdown();
         }
-        return asked.get() + " section(s) of " + book + " asked, " + collected.get() + " rule(s) collected, " + failed.get() + " failed";
+        return failures.outcome(todo.size(), asked.get() + " section(s) of " + book + " asked, " + collected.get() + " rule(s) collected, " + failed.get() + " failed");
     }
 
     /**

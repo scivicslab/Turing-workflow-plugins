@@ -172,7 +172,8 @@ public final class GeneralFrames {
      * identifyAll(store, "core-java-14-vol1", List.of(), writer, 4, log)
      * }</pre>
      *
-     * If a name cannot be judged by the model, it remains a single concept.
+     * If the model cannot judge a name, the name keeps the concepts an earlier run stored (none on a first run) and the
+     * batch fails naming it, so a rerun judges it again; the names judged are stored either way.
      */
     public static String identifyAll(BookStore store, String book, List<String> only, Function<String, String> writer, int parallel,
             Consumer<String> log) throws Exception {
@@ -187,6 +188,8 @@ public final class GeneralFrames {
         Map<String, List<List<Integer>>> groups = new java.util.concurrent.ConcurrentHashMap<>();
         AtomicInteger done = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
+        BatchFailures failures = new BatchFailures();
+        Set<String> notJudged = java.util.concurrent.ConcurrentHashMap.newKeySet();
         ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
         try {
             List<Future<?>> fs = new ArrayList<>();
@@ -199,9 +202,11 @@ public final class GeneralFrames {
                         log.accept("done " + done.incrementAndGet() + "/" + asked.size() + " " + n + ": " + occ.size() + " appearance(s), "
                                 + g.size() + " concept(s)");
                     } catch (Exception ex) {
-                        // a name the model could not judge stays one concept
+                        // the model's failure is not a decision: the name keeps the concepts an earlier run stored
                         failed.incrementAndGet();
+                        notJudged.add(n);
                         log.accept("FAILED " + n + ": " + ex.getMessage());
+                        failures.add(n, ex);
                     }
                 }));
             }
@@ -212,6 +217,7 @@ public final class GeneralFrames {
         List<BookStore.Entity> entities = new ArrayList<>();
         int shared = 0;
         for (Map.Entry<String, List<BookStore.Occurrence>> e : byName.entrySet()) {
+            if (notJudged.contains(e.getKey())) continue;
             List<BookStore.Occurrence> occ = e.getValue();
             List<List<Integer>> g = groups.getOrDefault(e.getKey(), List.of(java.util.stream.IntStream.range(0, occ.size()).boxed().toList()));
             for (int k = 0; k < g.size(); k++) {
@@ -221,8 +227,15 @@ public final class GeneralFrames {
                 if (members.size() > 1) shared++;
             }
         }
-        store.saveEntities(book, BookStore.Entity.CONCEPT, entities);
-        return entities.size() + " concept(s) of " + book + ", " + shared + " of them in more than one section, " + failed.get() + " failed";
+        Set<String> kept = new java.util.HashSet<>();
+        for (BookStore.Entity earlier : store.entities(book)) {
+            if (!BookStore.Entity.CONCEPT.equals(earlier.level())) continue;
+            // ids are the name alone, or name#k when an earlier run split it; a name may itself hold '#' (C#)
+            if (notJudged.stream().anyMatch(n -> earlier.id().equals(n) || earlier.id().startsWith(n + "#"))) kept.add(earlier.id());
+        }
+        store.saveEntities(book, BookStore.Entity.CONCEPT, entities, kept);
+        return failures.outcome(asked.size(), entities.size() + " concept(s) of " + book + ", " + shared + " of them in more than one section, "
+                + failed.get() + " failed");
     }
 
     // ---- steps 2 and 3: the same question over material put together
@@ -361,6 +374,7 @@ public final class GeneralFrames {
         AtomicInteger done = new AtomicInteger();
         AtomicInteger items = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
+        BatchFailures failures = new BatchFailures();
         ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
         try {
             List<Future<?>> fs = new ArrayList<>();
@@ -376,6 +390,7 @@ public final class GeneralFrames {
                     } catch (Exception ex) {
                         failed.incrementAndGet();
                         log.accept("FAILED " + a.entity().id() + ": " + ex.getMessage());
+                        failures.add(a.entity().id(), ex);
                     }
                 }));
             }
@@ -383,7 +398,7 @@ public final class GeneralFrames {
         } finally {
             pool.shutdown();
         }
-        return done.get() + " concept(s) of " + book + " given " + items.get() + " item(s), " + failed.get() + " failed";
+        return failures.outcome(asks.size(), done.get() + " concept(s) of " + book + " given " + items.get() + " item(s), " + failed.get() + " failed");
     }
 
     /**
