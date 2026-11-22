@@ -665,8 +665,10 @@ public class NodeInterpreter extends Interpreter {
                 return "no git URL beside its path in " + docListPath;
             }
             System.out.println("=== Cloning: " + gitUrl + " -> " + path + " ===");
-            String removed = failureOf("rm -rf " + path);
-            return removed != null ? removed : failureOf("git clone " + gitUrl + " " + path, "git clone");
+            // -- ends the options, so a path or URL cannot be read as one; the ext:: transport runs a command and is not allowed
+            String removed = failureOf("rm -rf -- " + ShellWords.path(path));
+            return removed != null ? removed : failureOf("git -c protocol.ext.allow=never clone -- "
+                    + ShellWords.quote(gitUrl) + " " + ShellWords.path(path), "git clone");
         });
     }
 
@@ -690,7 +692,7 @@ public class NodeInterpreter extends Interpreter {
         System.out.println("=== Building changed documents ===");
         return forEachChangedDocument(docListPath, "Built", (path, gitUrl, docName) -> {
             System.out.println("=== Building: " + path + " ===");
-            return failureOf("cd " + path + " && yarn install && yarn build", "yarn install && yarn build");
+            return failureOf("cd " + ShellWords.path(path) + " && yarn install && yarn build", "yarn install && yarn build");
         });
     }
 
@@ -721,8 +723,8 @@ public class NodeInterpreter extends Interpreter {
         ActionResult result = forEachChangedDocument(docListPath, "Deployed", (path, gitUrl, docName) -> {
             String destPath = "~/public_html/" + docName;
             System.out.println("=== Copying " + docName + " to public_html ===");
-            String removed = failureOf("rm -rf " + destPath);
-            return removed != null ? removed : failureOf("cp -r " + path + "/build " + destPath);
+            String removed = failureOf("rm -rf -- " + ShellWords.path(destPath));
+            return removed != null ? removed : failureOf("cp -r -- " + ShellWords.path(path + "/build") + " " + ShellWords.path(destPath));
         });
 
         System.out.println("=== public_html contents ===");
@@ -761,7 +763,15 @@ public class NodeInterpreter extends Interpreter {
                     continue;
                 }
                 tried++;
-                String why = work.on(path, gitUrl, docName);
+                String why;
+                try {
+                    // the path and the URL become words of a shell command line: check them first
+                    ShellWords.checkDocumentPath(path);
+                    if (gitUrl != null && !gitUrl.isEmpty()) ShellWords.checkGitUrl(gitUrl);
+                    why = work.on(path, gitUrl, docName);
+                } catch (IllegalArgumentException refused) {
+                    why = "refused: " + refused.getMessage();
+                }
                 if (why == null) {
                     done++;
                 } else {
