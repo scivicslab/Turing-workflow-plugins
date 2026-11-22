@@ -163,16 +163,26 @@ public final class BookStore implements AutoCloseable {
         void run() throws SQLException;
     }
 
-    /** Runs one write as a transaction, with the change counted in it. */
+    /**
+     * Runs one write as a transaction, with the change counted in it.
+     *
+     * <p>Whatever ends the write early, a checked {@code SQLException}, a {@code RuntimeException} or an {@code Error},
+     * rolls the transaction back before {@code setAutoCommit(true)}: by the JDBC rules, switching auto-commit back on
+     * commits the pending work, so a failed write would otherwise keep what it did before failing.</p>
+     */
     private void write(Write w) throws SQLException {
         db.setAutoCommit(false);
         try {
             w.run();
             changed();
             db.commit();
-        } catch (SQLException | RuntimeException e) {
-            db.rollback();
-            throw e;
+        } catch (Throwable t) {
+            try {
+                db.rollback();
+            } catch (SQLException rollbackFailure) {
+                t.addSuppressed(rollbackFailure);
+            }
+            throw t;
         } finally {
             db.setAutoCommit(true);
         }
@@ -191,8 +201,7 @@ public final class BookStore implements AutoCloseable {
      * @throws SQLException if a database access error occurs
      */
     public void saveOutline(String book, String dir, BookOutline.Outline outline) throws SQLException {
-        db.setAutoCommit(false);
-        try {
+        write(() -> {
             try (PreparedStatement d = db.prepareStatement("DELETE FROM toc_node WHERE book = ?")) {
                 d.setString(1, book);
                 d.executeUpdate();
@@ -217,14 +226,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 i.executeBatch();
             }
-            changed();
-            db.commit();
-        } catch (SQLException e) {
-            db.rollback();
-            throw e;
-        } finally {
-            db.setAutoCommit(true);
-        }
+        });
     }
 
     /**
@@ -238,8 +240,7 @@ public final class BookStore implements AutoCloseable {
      * @param sections the new section data to store
      */
     public synchronized void saveSections(String book, List<BookSections.Section> sections) throws SQLException {
-        db.setAutoCommit(false);
-        try {
+        write(() -> {
             for (String table : List.of("section_text", "section_rules", "section_code", "section_concept", "section_relation", "frame_concept", "frame_rule")) {
                 try (PreparedStatement d = db.prepareStatement("DELETE FROM " + table + " WHERE book = ?")) {
                     d.setString(1, book);
@@ -257,14 +258,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 i.executeBatch();
             }
-            changed();
-            db.commit();
-        } catch (SQLException e) {
-            db.rollback();
-            throw e;
-        } finally {
-            db.setAutoCommit(true);
-        }
+        });
     }
 
     /**
@@ -311,8 +305,7 @@ public final class BookStore implements AutoCloseable {
      * @param r the rules and code files to store
      */
     public synchronized void saveSectionRules(String book, SectionRules r) throws SQLException {
-        db.setAutoCommit(false);
-        try {
+        write(() -> {
             for (String table : List.of("section_rules", "section_code")) {
                 try (PreparedStatement d = db.prepareStatement("DELETE FROM " + table + " WHERE book = ? AND number = ?")) {
                     d.setString(1, book);
@@ -337,14 +330,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 i.executeBatch();
             }
-            changed();
-            db.commit();
-        } catch (SQLException e) {
-            db.rollback();
-            throw e;
-        } finally {
-            db.setAutoCommit(true);
-        }
+        });
     }
 
     /**
@@ -430,8 +416,7 @@ public final class BookStore implements AutoCloseable {
      * @throws SQLException if a database error occurs
      */
     public synchronized void saveListedConcepts(String book, String number, List<ListedConcept> concepts) throws SQLException {
-        db.setAutoCommit(false);
-        try {
+        write(() -> {
             try (PreparedStatement d = db.prepareStatement("DELETE FROM section_concept WHERE book = ? AND number = ?")) {
                 d.setString(1, book);
                 d.setString(2, number);
@@ -449,14 +434,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 i.executeBatch();
             }
-            changed();
-            db.commit();
-        } catch (SQLException e) {
-            db.rollback();
-            throw e;
-        } finally {
-            db.setAutoCommit(true);
-        }
+        });
     }
 
     /**
@@ -586,8 +564,7 @@ public final class BookStore implements AutoCloseable {
      * mark the section as queried
      */
     public synchronized void saveRelations(String book, String number, List<Relation> relations) throws SQLException {
-        db.setAutoCommit(false);
-        try {
+        write(() -> {
             try (PreparedStatement d = db.prepareStatement("DELETE FROM section_relation WHERE book = ? AND number = ?")) {
                 d.setString(1, book);
                 d.setString(2, number);
@@ -610,14 +587,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 i.executeBatch();
             }
-            changed();
-            db.commit();
-        } catch (SQLException e) {
-            db.rollback();
-            throw e;
-        } finally {
-            db.setAutoCommit(true);
-        }
+        });
     }
 
     /**
@@ -658,8 +628,7 @@ public final class BookStore implements AutoCloseable {
      * @param concepts the list of concepts, each with its rules, whether it is kept, and any folded features or parts
      */
     public synchronized void saveFrameConcepts(String book, String number, List<FrameConcept> concepts) throws SQLException {
-        db.setAutoCommit(false);
-        try {
+        write(() -> {
             for (String table : List.of("frame_concept", "frame_rule")) {
                 try (PreparedStatement d = db.prepareStatement("DELETE FROM " + table + " WHERE book = ? AND number = ?")) {
                     d.setString(1, book);
@@ -694,14 +663,7 @@ public final class BookStore implements AutoCloseable {
                 c.executeBatch();
                 r.executeBatch();
             }
-            changed();
-            db.commit();
-        } catch (SQLException e) {
-            db.rollback();
-            throw e;
-        } finally {
-            db.setAutoCommit(true);
-        }
+        });
     }
 
     /**
@@ -813,8 +775,7 @@ public final class BookStore implements AutoCloseable {
      * @throws SQLException if a database access error occurs
      */
     public synchronized void saveEntities(String book, String level, List<Entity> entities) throws SQLException {
-        db.setAutoCommit(false);
-        try {
+        write(() -> {
             try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_entity_item WHERE book = ? AND id IN "
                     + "(SELECT id FROM concept_entity WHERE book = ? AND level = ?)")) {
                 d.setString(1, book);
@@ -841,14 +802,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 p.executeBatch();
             }
-            changed();
-            db.commit();
-        } catch (SQLException e) {
-            db.rollback();
-            throw e;
-        } finally {
-            db.setAutoCommit(true);
-        }
+        });
     }
 
     /**
@@ -890,8 +844,7 @@ public final class BookStore implements AutoCloseable {
      * <p>One instance may serve several workflows or threads at once.</p>
      */
     public synchronized void saveEntityItems(String book, String id, List<FrameItem> items) throws SQLException {
-        db.setAutoCommit(false);
-        try {
+        write(() -> {
             try (PreparedStatement d = db.prepareStatement("DELETE FROM concept_entity_item WHERE book = ? AND id = ?")) {
                 d.setString(1, book);
                 d.setString(2, id);
@@ -908,14 +861,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 p.executeBatch();
             }
-            changed();
-            db.commit();
-        } catch (SQLException e) {
-            db.rollback();
-            throw e;
-        } finally {
-            db.setAutoCommit(true);
-        }
+        });
     }
 
     /**
@@ -1083,8 +1029,7 @@ public final class BookStore implements AutoCloseable {
      * @throws SQLException if a database access error occurs
      */
     public synchronized void saveFrameRelations(String book, List<FrameRelation> rels) throws SQLException {
-        db.setAutoCommit(false);
-        try {
+        write(() -> {
             try (PreparedStatement d = db.prepareStatement("DELETE FROM frame_relation WHERE book = ?")) {
                 d.setString(1, book);
                 d.executeUpdate();
@@ -1100,14 +1045,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 p.executeBatch();
             }
-            changed();
-            db.commit();
-        } catch (SQLException e) {
-            db.rollback();
-            throw e;
-        } finally {
-            db.setAutoCommit(true);
-        }
+        });
     }
 
     /**
@@ -1148,8 +1086,7 @@ public final class BookStore implements AutoCloseable {
      * @param items the list of questions and the rules that answer them
      */
     public synchronized void saveRegistryItems(String id, List<FrameItem> items) throws SQLException {
-        db.setAutoCommit(false);
-        try {
+        write(() -> {
             try (PreparedStatement d = db.prepareStatement("DELETE FROM frame_registry_item WHERE id = ?")) {
                 d.setString(1, id);
                 d.executeUpdate();
@@ -1164,14 +1101,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 p.executeBatch();
             }
-            changed();
-            db.commit();
-        } catch (SQLException e) {
-            db.rollback();
-            throw e;
-        } finally {
-            db.setAutoCommit(true);
-        }
+        });
     }
 
     /**
@@ -1213,8 +1143,7 @@ public final class BookStore implements AutoCloseable {
      * @param items the list of items to store, each containing a question and the rules that answer it
      */
     public synchronized void saveFrameItems(String book, String number, String concept, List<FrameItem> items) throws SQLException {
-        db.setAutoCommit(false);
-        try {
+        write(() -> {
             try (PreparedStatement d = db.prepareStatement("DELETE FROM frame_item WHERE book = ? AND number = ? AND concept = ?")) {
                 d.setString(1, book);
                 d.setString(2, number);
@@ -1233,14 +1162,7 @@ public final class BookStore implements AutoCloseable {
                 }
                 p.executeBatch();
             }
-            changed();
-            db.commit();
-        } catch (SQLException e) {
-            db.rollback();
-            throw e;
-        } finally {
-            db.setAutoCommit(true);
-        }
+        });
     }
 
     /**
@@ -1793,24 +1715,18 @@ public final class BookStore implements AutoCloseable {
      * same order as they are returned by {@link #relations(String)}
      */
     public synchronized void saveReview(String book, String number, List<String> verdicts) throws SQLException {
-        db.setAutoCommit(false);
-        try (PreparedStatement u = db.prepareStatement("UPDATE section_relation SET review = ? WHERE book = ? AND number = ? AND ordinal = ?")) {
-            for (int n = 0; n < verdicts.size(); n++) {
-                u.setString(1, verdicts.get(n));
-                u.setString(2, book);
-                u.setString(3, number);
-                u.setInt(4, n);
-                u.addBatch();
+        write(() -> {
+            try (PreparedStatement u = db.prepareStatement("UPDATE section_relation SET review = ? WHERE book = ? AND number = ? AND ordinal = ?")) {
+                for (int n = 0; n < verdicts.size(); n++) {
+                    u.setString(1, verdicts.get(n));
+                    u.setString(2, book);
+                    u.setString(3, number);
+                    u.setInt(4, n);
+                    u.addBatch();
+                }
+                u.executeBatch();
             }
-            u.executeBatch();
-            changed();
-            db.commit();
-        } catch (SQLException e) {
-            db.rollback();
-            throw e;
-        } finally {
-            db.setAutoCommit(true);
-        }
+        });
     }
 
     /**
@@ -1861,25 +1777,19 @@ public final class BookStore implements AutoCloseable {
      * @throws SQLException if a database error occurs
      */
     public synchronized void saveJudgement(String book, String number, List<JudgedConcept> judged) throws SQLException {
-        db.setAutoCommit(false);
-        try (PreparedStatement u = db.prepareStatement("UPDATE section_concept SET kept = ?, reason = ? WHERE book = ? AND number = ? AND ordinal = ?")) {
-            for (int n = 0; n < judged.size(); n++) {
-                u.setObject(1, judged.get(n).kept());
-                u.setString(2, judged.get(n).reason());
-                u.setString(3, book);
-                u.setString(4, number);
-                u.setInt(5, n);
-                u.addBatch();
+        write(() -> {
+            try (PreparedStatement u = db.prepareStatement("UPDATE section_concept SET kept = ?, reason = ? WHERE book = ? AND number = ? AND ordinal = ?")) {
+                for (int n = 0; n < judged.size(); n++) {
+                    u.setObject(1, judged.get(n).kept());
+                    u.setString(2, judged.get(n).reason());
+                    u.setString(3, book);
+                    u.setString(4, number);
+                    u.setInt(5, n);
+                    u.addBatch();
+                }
+                u.executeBatch();
             }
-            u.executeBatch();
-            changed();
-            db.commit();
-        } catch (SQLException e) {
-            db.rollback();
-            throw e;
-        } finally {
-            db.setAutoCommit(true);
-        }
+        });
     }
 
     /**
