@@ -3,6 +3,8 @@ package com.scivicslab.turingworkflow.plugins.inventory;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -24,6 +26,8 @@ import com.scivicslab.pojoactor.action.ActionResult;
 import com.scivicslab.pojoactor.core.ManagedThreadPool;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
+import com.scivicslab.turingworkflow.workflow.Interpreter;
+import com.scivicslab.turingworkflow.workflow.InterpreterIIAR;
 
 /**
  * Which thread runs {@code NodeGroupActor}'s {@code apply} children, which thread waits for them,
@@ -95,6 +99,40 @@ class NodeGroupApplyThreadsTest {
         ActionResult apply() {
             return ref.callByActionName("apply", APPLY_ALL);
         }
+    }
+
+    @Test
+    @DisplayName("a workflow step with no execution key: the children run in parallel on pool real threads")
+    void plainWorkflowStepRunsChildrenInParallel() {
+        system = new IIActorSystem("group-apply-step", 2);
+        Group group = new Group("group", 2, new CyclicBarrier(2));
+        Interpreter main = new Interpreter.Builder().loggerName("main").team(system).build();
+        InterpreterIIAR mainRef = new InterpreterIIAR("main", main, system);
+        main.setSelfActorRef(mainRef);
+        system.addIIActor(mainRef);
+        main.readYaml(new ByteArrayInputStream("""
+            name: group-apply-step
+            steps:
+              - states: ["0", "end"]
+                actions:
+                  - actor: group
+                    method: apply
+                    arguments:
+                      actor: "*"
+                      method: work
+            """.getBytes(StandardCharsets.UTF_8)));
+
+        // The loop runs on this test's thread, which is not a pool real thread, as RunCLI's does.
+        ActionResult result = assertTimeoutPreemptively(LIMIT, () -> main.runUntilEnd(5));
+
+        assertThat(result.isSuccess()).as(result.getResult()).isTrue();
+        Set<Thread> threads = new HashSet<>();
+        for (ChildRun run : group.runs) {
+            assertThat(run.onPoolRealThread()).as("%s ran on %s", run.child(), run.thread()).isTrue();
+            threads.add(run.thread());
+        }
+        assertThat(threads).hasSize(2);
+        assertThat(group.mostAtOnce.get()).as("both children in flight at once").isEqualTo(2);
     }
 
     @Test

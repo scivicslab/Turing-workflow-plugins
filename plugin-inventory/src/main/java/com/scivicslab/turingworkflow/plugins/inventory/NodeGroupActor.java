@@ -478,7 +478,7 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      * @return an action result indicating whether all matched actors succeeded, or a failure message detailing which
      * nodes failed and why.
      */
-    @Action(value = "apply", argsType = ApplyArgs.class)
+    @Action(value = "apply", argsType = ApplyArgs.class, orchestrates = true)
     public ActionResult applyAction(ApplyArgs args) {
         return apply(args.actor(), args.method(), args.arguments());
     }
@@ -747,10 +747,11 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     /**
      * Applies an action to all child actors matching a wildcard pattern.
      *
-     * <p>Each child's work runs on the ManagedThreadPool's real threads, never on commonPool. Called
-     * on a thread that is not one of the pool's real threads, the children run in parallel and the
-     * calling thread waits; called on one of the pool's real threads, which is where a workflow
-     * step reaches it, they run on that real thread one after another.</p>
+     * <p>Each child's work runs on the ManagedThreadPool's real threads, never on commonPool. The
+     * action orchestrates, so a workflow step with no {@code execution:} key runs it on the calling
+     * interpreter's mailbox virtual thread: the children run in parallel and that virtual thread
+     * waits. Called on one of the pool's real threads, they run on that real thread one after
+     * another.</p>
      *
      * Returns an action result that is a success if all matched child actors executed the method successfully, or a
      * failure containing a list of specific errors for each failed actor. If no actors match the pattern, it returns a
@@ -797,9 +798,10 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
             // ask(action, pool); nothing here runs on commonPool. Called on a thread that is not
             // one of the pool's real threads (this actor's mailbox virtual thread, say), the
             // children run in parallel on the pool's real threads and this thread waits for them.
-            // Called on one of the pool's real threads, as a workflow step reaches it, ask runs
-            // each child right here, one after another (ActorRef's inline rule): no parallelism,
-            // but no pool real thread waits for work queued behind itself.
+            // A workflow step reaches it on the calling interpreter's mailbox virtual thread (apply
+            // orchestrates). Called on one of the pool's real threads instead, ask runs each child
+            // right here, one after another (ActorRef's inline rule): no parallelism, but no pool
+            // real thread waits for work queued behind itself.
             ExecutorService pool = this.system().getManagedThreadPool();
             List<CompletableFuture<Void>> futures = new ArrayList<>();
 
