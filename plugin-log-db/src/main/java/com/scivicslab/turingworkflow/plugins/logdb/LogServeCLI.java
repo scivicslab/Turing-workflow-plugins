@@ -19,6 +19,7 @@ package com.scivicslab.turingworkflow.plugins.logdb;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -53,10 +54,23 @@ import com.sun.net.httpserver.HttpServer;
  * <p>The H2 TCP server (default port 29090) lets readers such as {@code log-search --server} connect to the same
  * database concurrently while it is being written.</p>
  *
+ * <p><b>Who can reach it.</b> Both servers listen on {@code 127.0.0.1} unless {@code --bind <address>} names another
+ * address, so by default only this machine can connect. The database has an empty password and the viewer has no
+ * login, and neither has TLS: with another address, such as {@code 0.0.0.0} for every interface, any host that
+ * reaches the HTTP port reads every logged line, and any host that reaches the H2 TCP port runs SQL, and with
+ * {@code CREATE ALIAS} Java code, as the user running this command. A server started with such an address writes a
+ * warning saying so. H2 takes its bind address once, when its classes are loaded, so the TCP server is started
+ * only when H2 has not been loaded in this JVM with another address; run the command in a JVM of its own.</p>
+ *
  * @author devteam@scivicslab.com
  * @since 1.5.0
  */
 public class LogServeCLI {
+
+    /** The address log-serve listens on unless {@code --bind} names another: this machine only. */
+    static final String DEFAULT_BIND = "127.0.0.1";
+
+    private static final String H2_BIND_PROPERTY = "h2.bindAddress";
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX");
@@ -89,6 +103,13 @@ public class LogServeCLI {
                 .desc("H2 TCP server port for shared database access (default: 29090)")
                 .build());
         opts.addOption(Option.builder()
+                .longOpt("bind")
+                .hasArg(true).argName("address")
+                .desc("Address the HTTP viewer and the H2 TCP server listen on (default: 127.0.0.1, this machine only). "
+                        + "Another address, such as 0.0.0.0 for every interface, lets other hosts read every log line and "
+                        + "run SQL and Java as the user running this command: there is no TLS and no authentication")
+                .build());
+        opts.addOption(Option.builder()
                 .longOpt("no-tcp")
                 .desc("Do not start the H2 TCP server (HTTP viewer only)")
                 .build());
@@ -110,12 +131,27 @@ public class LogServeCLI {
         int httpPort = Integer.parseInt(cl.getOptionValue("http-port", "29091"));
         int tcpPort = Integer.parseInt(cl.getOptionValue("tcp-port", "29090"));
         boolean noTcp = cl.hasOption("no-tcp");
+        String bind = cl.getOptionValue("bind", DEFAULT_BIND);
+        InetAddress bindAddress;
+        try {
+            bindAddress = InetAddress.getByName(bind);
+        } catch (java.net.UnknownHostException e) {
+            System.err.println("Error: cannot resolve --bind " + bind + ": " + e.getMessage());
+            System.exit(1);
+            return;
+        }
+        if (!bindAddress.isLoopbackAddress()) {
+            System.err.println("Warning: log-serve listens on " + bind + ", which other hosts can reach. There is no TLS and"
+                    + " no authentication: anyone who reaches the HTTP port can read every logged line, and anyone who"
+                    + " reaches the H2 TCP port can run SQL and Java as the user running log-serve. Use the default"
+                    + " (127.0.0.1) unless the readers are hosts on a network only they can reach.");
+        }
 
-        Server tcpServer = startTcpServer(noTcp, tcpPort);
+        Server tcpServer = startTcpServer(noTcp, tcpPort, bind, bindAddress.isLoopbackAddress());
 
         HttpServer http;
         try {
-            http = HttpServer.create(new InetSocketAddress(httpPort), 0);
+            http = HttpServer.create(new InetSocketAddress(bindAddress, httpPort), 0);
         } catch (IOException e) {
             System.err.println("Error: failed to bind HTTP port " + httpPort + ": " + e.getMessage());
             if (tcpServer != null) {
@@ -131,7 +167,7 @@ public class LogServeCLI {
         http.start();
 
         System.out.println("Log database: " + dbPath);
-        System.out.println("Log viewer:   http://localhost:" + httpPort + "/");
+        System.out.println("Log viewer:   http://" + (bindAddress.isAnyLocalAddress() ? "localhost" : bind) + ":" + httpPort + "/");
         System.out.println("Press Ctrl-C to stop.");
 
         CountDownLatch latch = new CountDownLatch(1);
@@ -150,14 +186,36 @@ public class LogServeCLI {
         }
     }
 
-    private Server startTcpServer(boolean noTcp, int tcpPort) {
+    /**
+     * Starts the H2 TCP server on {@code bind}.
+     *
+     * <p>H2 takes the address it listens on from the system property {@code h2.bindAddress}, and reads it once,
+     * when its classes are loaded. The property is set here before the first use of H2 by this command. If H2 was
+     * loaded earlier in this JVM with another address, the server is not started: listening on more than was
+     * asked for is the failure this guards against. {@code -tcpAllowOthers} is passed only for an address that
+     * is not the loopback one.</p>
+     */
+    private Server startTcpServer(boolean noTcp, int tcpPort, String bind, boolean loopback) {
         if (noTcp) {
             return null;
         }
         try {
-            Server server = Server.createTcpServer(
-                    "-tcpPort", String.valueOf(tcpPort), "-tcpAllowOthers").start();
-            System.out.println("H2 TCP server started on port " + tcpPort);
+            if (System.getProperty(H2_BIND_PROPERTY) == null) {
+                System.setProperty(H2_BIND_PROPERTY, bind);
+            }
+            String h2Bind = org.h2.engine.SysProperties.BIND_ADDRESS;
+            if (!bind.equals(h2Bind)) {
+                System.err.println("Warning: the H2 TCP server is not started: H2 listens on " + h2Bind
+                        + " (" + H2_BIND_PROPERTY + ") and --bind asks for " + bind + ". Start log-serve in a JVM of"
+                        + " its own, or set -D" + H2_BIND_PROPERTY + "=" + bind + ".");
+                return null;
+            }
+            List<String> args = new java.util.ArrayList<>(List.of("-tcpPort", String.valueOf(tcpPort)));
+            if (!loopback) {
+                args.add("-tcpAllowOthers");
+            }
+            Server server = Server.createTcpServer(args.toArray(new String[0])).start();
+            System.out.println("H2 TCP server started on " + bind + ":" + tcpPort);
             return server;
         } catch (Exception e) {
             System.err.println("Warning: failed to start H2 TCP server on port "
