@@ -169,12 +169,12 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
 
             LogLevel level = LogLevel.valueOf(levelStr);
 
-            this.tell(store -> store.log(sessionId, nodeId, level, message), dbExecutor).get();
+            this.tell(store -> stored(() -> store.logOrThrow(sessionId, nodeId, null, level, message)), dbExecutor).get();
 
             return new ActionResult(true, "Logged");
         } catch (Exception e) {
             logger.log(Level.SEVERE, "Error in log", e);
-            return new ActionResult(false, "Error: " + e.getMessage());
+            return new ActionResult(false, "Error: " + reasonOf(e));
         }
     }
 
@@ -211,13 +211,13 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
             long durationMs = args.durationMs();
             String output = args.output();
 
-            this.tell(store -> store.logAction(sessionId, nodeId, label, action, exitCode, durationMs, output),
+            this.tell(store -> stored(() -> store.logActionOrThrow(sessionId, nodeId, label, action, exitCode, durationMs, output)),
                       dbExecutor).get();
 
             return new ActionResult(true, "Action logged");
         } catch (Exception e) {
             logger.log(Level.SEVERE, "Error in logAction", e);
-            return new ActionResult(false, "Error: " + e.getMessage());
+            return new ActionResult(false, "Error: " + reasonOf(e));
         }
     }
 
@@ -305,12 +305,12 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
             long sessionId = args.sessionId();
             String nodeId = args.nodeId();
 
-            this.tell(store -> store.markNodeSuccess(sessionId, nodeId), dbExecutor).get();
+            this.tell(store -> stored(() -> store.markNodeSuccessOrThrow(sessionId, nodeId)), dbExecutor).get();
 
             return new ActionResult(true, "Node marked as success");
         } catch (Exception e) {
             logger.log(Level.SEVERE, "Error in markNodeSuccess", e);
-            return new ActionResult(false, "Error: " + e.getMessage());
+            return new ActionResult(false, "Error: " + reasonOf(e));
         }
     }
 
@@ -337,12 +337,12 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
             String nodeId = args.nodeId();
             String reason = args.reason();
 
-            this.tell(store -> store.markNodeFailed(sessionId, nodeId, reason), dbExecutor).get();
+            this.tell(store -> stored(() -> store.markNodeFailedOrThrow(sessionId, nodeId, reason)), dbExecutor).get();
 
             return new ActionResult(true, "Node marked as failed");
         } catch (Exception e) {
             logger.log(Level.SEVERE, "Error in markNodeFailed", e);
-            return new ActionResult(false, "Error: " + e.getMessage());
+            return new ActionResult(false, "Error: " + reasonOf(e));
         }
     }
 
@@ -353,5 +353,37 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
      */
     public ExecutorService getDbExecutor() {
         return dbExecutor;
+    }
+
+    /** A write that throws {@link java.sql.SQLException} when the store refuses it. */
+    private interface Write {
+        void run() throws java.sql.SQLException;
+    }
+
+    /**
+     * Runs {@code write} inside a message to the store; a refused write ends the message with a {@link
+     * StoreRefusedWrite}, so that the waiting action sees it.
+     */
+    private static void stored(Write write) {
+        try {
+            write.run();
+        } catch (java.sql.SQLException e) {
+            throw new StoreRefusedWrite(e);
+        }
+    }
+
+    /** Returns the reason of a failed write: the root exception's class and message. */
+    private static String reasonOf(Exception e) {
+        Throwable root = e;
+        while (root.getCause() != null && root.getCause() != root) root = root.getCause();
+        return (root instanceof java.sql.SQLException ? "could not write to the log database: " : "")
+                + root.getClass().getName() + (root.getMessage() == null ? "" : ": " + root.getMessage());
+    }
+
+    /** A write the store refused, carried out of the store's message. */
+    private static final class StoreRefusedWrite extends RuntimeException {
+        StoreRefusedWrite(java.sql.SQLException cause) {
+            super(cause);
+        }
     }
 }

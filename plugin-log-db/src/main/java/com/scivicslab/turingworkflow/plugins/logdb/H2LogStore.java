@@ -359,6 +359,36 @@ public class H2LogStore implements DistributedLogStore {
     }
 
     @Override
+    public void logOrThrow(long sessionId, String nodeId, String label, LogLevel level, String message) throws SQLException {
+        try {
+            run(new LogTask.InsertLog(sessionId, nodeId, label, null, level, message, null, null));
+        } finally {
+            writeToTextLog(nodeId, label, level, message);
+        }
+    }
+
+    @Override
+    public void logActionOrThrow(long sessionId, String nodeId, String label,
+                                 String actionName, int exitCode, long durationMs, String output) throws SQLException {
+        LogLevel level = parseLogLevelFromLabel(label, exitCode);
+        try {
+            run(new LogTask.InsertLog(sessionId, nodeId, label, actionName, level, output, exitCode, durationMs));
+        } finally {
+            writeToTextLog(nodeId, label, level, output);
+        }
+    }
+
+    @Override
+    public void markNodeSuccessOrThrow(long sessionId, String nodeId) throws SQLException {
+        run(new LogTask.UpdateNodeResult(sessionId, nodeId, "SUCCESS", null));
+    }
+
+    @Override
+    public void markNodeFailedOrThrow(long sessionId, String nodeId, String reason) throws SQLException {
+        run(new LogTask.UpdateNodeResult(sessionId, nodeId, "FAILED", reason));
+    }
+
+    @Override
     public void endSession(long sessionId, SessionStatus status) {
         try (PreparedStatement ps = writeConnection.prepareStatement(
                 "UPDATE sessions SET ended_at = CURRENT_TIMESTAMP, status = ? WHERE id = ?")) {

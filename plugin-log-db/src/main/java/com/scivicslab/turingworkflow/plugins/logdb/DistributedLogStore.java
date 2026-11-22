@@ -196,6 +196,49 @@ public interface DistributedLogStore extends AutoCloseable {
      */
     void markNodeFailed(long sessionId, String nodeId, String reason);
 
+    // The four writes below are the ones above for a caller that waits and must know whether the entry was stored,
+    // such as the workflow actions of LogStoreActor. The methods above stay fire-and-forget: a store may keep going
+    // when one entry cannot be written. A store that cannot tell keeps the defaults, which call the methods above.
+
+    /**
+     * Records a log entry as {@link #log(long, String, String, LogLevel, String)} does, and throws when the store
+     * refuses it.
+     *
+     * @throws java.sql.SQLException if the entry was not stored
+     */
+    default void logOrThrow(long sessionId, String nodeId, String label, LogLevel level, String message)
+            throws java.sql.SQLException {
+        log(sessionId, nodeId, label, level, message);
+    }
+
+    /**
+     * Records an action's outcome as {@link #logAction} does, and throws when the store refuses it.
+     *
+     * @throws java.sql.SQLException if the entry was not stored
+     */
+    default void logActionOrThrow(long sessionId, String nodeId, String label,
+                                  String actionName, int exitCode, long durationMs, String output) throws java.sql.SQLException {
+        logAction(sessionId, nodeId, label, actionName, exitCode, durationMs, output);
+    }
+
+    /**
+     * Records a node's success as {@link #markNodeSuccess} does, and throws when the store refuses it.
+     *
+     * @throws java.sql.SQLException if the result was not stored
+     */
+    default void markNodeSuccessOrThrow(long sessionId, String nodeId) throws java.sql.SQLException {
+        markNodeSuccess(sessionId, nodeId);
+    }
+
+    /**
+     * Records a node's failure as {@link #markNodeFailed} does, and throws when the store refuses it.
+     *
+     * @throws java.sql.SQLException if the result was not stored
+     */
+    default void markNodeFailedOrThrow(long sessionId, String nodeId, String reason) throws java.sql.SQLException {
+        markNodeFailed(sessionId, nodeId, reason);
+    }
+
     /**
      * Ends a workflow execution session with a final status.
      *
