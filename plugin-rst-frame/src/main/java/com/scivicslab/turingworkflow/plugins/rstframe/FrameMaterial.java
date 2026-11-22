@@ -127,7 +127,8 @@ public final class FrameMaterial {
                 + "behavior   what the concept does, or what a program can do with it: its operations, methods, uses (\"The substring method extracts a part of a string.\")\n"
                 + "Write one line for each, as \"concept | property | sentence numbers\" or \"concept | behavior | sentence numbers\", "
                 + "for example \"String | property | 1, 2\". Use the concepts exactly as listed. Leave out a sentence that only "
-                + "mentions a concept, or that gives an example, a comparison or a remark. Write nothing else.";
+                + "mentions a concept, or that gives an example, a comparison or a remark. Write NONE when no sentence states a "
+                + "property or a behavior of any of them. Write nothing else.";
     }
 
     /**
@@ -208,7 +209,10 @@ public final class FrameMaterial {
                         BookStore.SectionRules r = store.sectionRules(book, number);
                         List<ConceptImportance.Unit> units = ConceptImportance.units(r.rules(), r.code());
                         List<String> names = new ArrayList<>(e.getValue().keySet());
-                        Map<String, List<BookStore.FrameRule>> got = read(writer.apply(question(nodes.get(number), units, e.getValue())), names, units);
+                        String reply = writer.apply(question(nodes.get(number), units, e.getValue()));
+                        Map<String, List<BookStore.FrameRule>> got = read(reply, names, units);
+                        if (got.values().stream().allMatch(List::isEmpty) && !Replies.isNone(reply))
+                            throw new IllegalStateException("the reply gives no rule to any concept and is not NONE");
                         List<BookStore.FrameConcept> list = new ArrayList<>();
                         for (String c : names) list.add(new BookStore.FrameConcept(c, got.get(c), null, e.getValue().get(c)));
                         store.saveFrameConcepts(book, number, list);

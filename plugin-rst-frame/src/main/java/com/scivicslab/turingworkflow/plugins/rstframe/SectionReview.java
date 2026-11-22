@@ -113,6 +113,18 @@ public final class SectionReview {
      * @param count the number of relations to process
      * @return a list of {@code count} strings, each being a verdict or {@code keep}
      */
+    /** Returns whether the reply has at least one line giving relation 1..count one of the verdicts. */
+    static boolean givesAVerdict(String reply, int count) {
+        Matcher m = Pattern.compile("(?im)^\\W*R?(\\d+)\\s*[|:.)\\-]+\\s*([a-z][a-z _-]*)").matcher(reply);
+        while (m.find()) {
+            int n = Integer.parseInt(m.group(1));
+            String v = m.group(2).strip().toLowerCase(Locale.ROOT).replace(' ', '-').replace('_', '-');
+            if (v.startsWith("part-of")) v = BookStore.Relation.PART_OF;
+            if (n >= 1 && n <= count && VERDICTS.contains(v)) return true;
+        }
+        return false;
+    }
+
     public static List<String> read(String reply, int count) {
         List<String> out = new ArrayList<>();
         for (int i = 0; i < count; i++) out.add(BookStore.Relation.KEEP);
@@ -176,7 +188,10 @@ public final class SectionReview {
                                 .map(BookStore.JudgedConcept::concept).toList();
                         BookStore.SectionRules r = store.sectionRules(book, number);
                         List<ConceptImportance.Unit> units = ConceptImportance.units(r.rules(), r.code());
-                        List<String> verdicts = read(writer.apply(question(nodes.get(number), units, concepts, rel)), rel.size());
+                        String reply = writer.apply(question(nodes.get(number), units, concepts, rel));
+                        // read() leaves a relation with no verdict kept; a reply with no verdict at all is not a review
+                        if (!givesAVerdict(reply, rel.size())) throw new IllegalStateException("the reply gives no verdict on any relation");
+                        List<String> verdicts = read(reply, rel.size());
                         store.saveReview(book, number, verdicts);
                         for (String v : verdicts) tally.computeIfAbsent(v, k -> new AtomicInteger()).incrementAndGet();
                         log.accept("done " + done.incrementAndGet() + "/" + todo.size() + " " + number + ": " + String.join(", ", verdicts));

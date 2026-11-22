@@ -148,7 +148,7 @@ public final class ConceptProperties {
                 + "b4/1 | has | letters, digits, currency symbols and connecting punctuation as its characters\n"
                 + "b4/2 | has | a first character that is not a digit\n"
                 + "b5/1 | does | tell upper case and lower case apart\n"
-                + "Write nothing at all when no sentence states a property. Write nothing else.";
+                + "Write NONE when no sentence states a property. Write nothing else.";
     }
 
     /**
@@ -225,7 +225,10 @@ public final class ConceptProperties {
                             List<String> blocks = g.blocks().stream().map(SectionGroups.Member::block).distinct().toList();
                             List<Sentence> ss = sentences(r.rules(), blocks);
                             if (ss.isEmpty()) continue;
-                            props.addAll(read(writer.apply(question(nodes.get(number), g, ss)), g, ss));
+                            String reply = writer.apply(question(nodes.get(number), g, ss));
+                            List<Property> got = read(reply, g, ss);
+                            if (got.isEmpty() && !Replies.isNone(reply)) throw new IllegalStateException("the reply states no property and is not NONE");
+                            props.addAll(got);
                         }
                         store.saveProperties(book, number, props);
                         for (Property p : props) tally.computeIfAbsent(p.kind(), k -> new AtomicInteger()).incrementAndGet();

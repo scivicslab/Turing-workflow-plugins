@@ -391,12 +391,22 @@ public final class FrameRegistry {
                 String nm = GeneralFrames.norm(c.at().concept());
                 for (Frame f0 : cand) {
                     if (f0.concepts.stream().noneMatch(x -> GeneralFrames.norm(x).equals(nm))) continue;
-                    if (writer.apply(sameQuestion(c, f0)).strip().toLowerCase(Locale.ROOT).replaceAll("[^a-z]", "").startsWith("same")) {
+                    String said = writer.apply(sameQuestion(c, f0)).strip().toLowerCase(Locale.ROOT).replaceAll("[^a-z]", "");
+                    if (said.startsWith("same")) {
                         m = new Match(f0.id, null, null);
                         break;
                     }
+                    // anything but "different" is no answer, not a "different"
+                    if (!said.startsWith("different")) throw new IllegalStateException("the reply says neither same nor different");
                 }
-                if (m == null) m = cand.isEmpty() ? new Match(null, null, null) : readMatch(writer.apply(matchQuestion(c, cand)), cand);
+                if (m == null && !cand.isEmpty()) {
+                    String reply = writer.apply(matchQuestion(c, cand));
+                    // readMatch reads a reply it cannot place as "new"; a reply with none of the three answers is no answer
+                    if (!Pattern.compile("(?im)^\\W*(match|kind|new)\\b").matcher(reply).find())
+                        throw new IllegalStateException("the reply answers none of match, kind or new");
+                    m = readMatch(reply, cand);
+                }
+                if (m == null) m = new Match(null, null, null);
                 Frame f;
                 if (m.id() != null) {
                     // the name stays while frames are placed; nameAll names each frame from all its concrete frames at the end

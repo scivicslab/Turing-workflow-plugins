@@ -409,7 +409,11 @@ public final class SectionGroups {
                             return;
                         }
                         if (groups.isEmpty()) throw new IllegalStateException("the reply makes no group of the blocks");
-                        groups = readNames(writer.apply(nameQuestion(node, e.getValue(), groups)), groups);
+                        String names = writer.apply(nameQuestion(node, e.getValue(), groups));
+                        // readNames keeps a unit it is not told about with no concept; a reply naming no unit names nothing
+                        if (!Pattern.compile("(?im)^\\W*g\\d+\\W*:\\s*\\S").matcher(names).find())
+                            throw new IllegalStateException("the reply names the concept of no unit");
+                        groups = readNames(names, groups);
                         store.saveGroups(book, number, groups);
                         StringBuilder line = new StringBuilder();
                         for (Group g : groups) {

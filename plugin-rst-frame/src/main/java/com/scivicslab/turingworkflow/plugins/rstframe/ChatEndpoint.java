@@ -86,12 +86,15 @@ public final class ChatEndpoint implements Function<String, String> {
                 LimitedExchange.Reply r = LimitedExchange.send(HTTP, HttpRequest.newBuilder(URI.create(url))
                         .header("Content-Type", "application/json").header("X-Job-Priority", "background")
                         .POST(HttpRequest.BodyPublishers.ofString(body)).build(), total, idle, what);
-                String text = r.status() == 200 ? text(r.body()) : null;
+                String text = r.status() == 200 ? text(r.body(), maxTokens) : null;
                 if (text != null) return text;
                 last = new IllegalStateException(what + ": HTTP " + r.status() + ": " + r.body().substring(0, Math.min(300, r.body().length())));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new IllegalStateException(what + ": interrupted", e);
+            } catch (RejectedReply e) {
+                // the model answered, but not usably: asking again the same way gives the same kind of answer
+                throw new IllegalStateException(what + ": " + e.getMessage(), e);
             } catch (Exception e) {
                 last = new IllegalStateException(e.getMessage(), e);
             }
@@ -109,19 +112,35 @@ public final class ChatEndpoint implements Function<String, String> {
      * Extracts the text content from a JSON response body.
      *
      * @param body the JSON string from the chat-completions endpoint
-     * @return the text of the first choice's message, or {@code null} if the body contains no choices, no message, no
-     * content, or is not a valid JSON object
+     * @param maxTokens the limit the request was sent with, named when the reply was cut off at it
+     * @return the text of the first choice's message, or {@code null} if the body is not a chat-completions answer
+     * (not JSON, no choices, no message), so the request is sent again
+     * @throws RejectedReply if the model answered but the answer cannot be used: it stopped at the token limit
+     * ({@code finish_reason} {@code length}), or its text is empty or blank
      */
-    static String text(String body) {
+    static String text(String body, int maxTokens) {
+        JSONObject choice;
         try {
-            JSONObject o = new JSONObject(body);
-            JSONArray choices = o.optJSONArray("choices");
+            JSONArray choices = new JSONObject(body).optJSONArray("choices");
             if (choices == null || choices.isEmpty()) return null;
-            JSONObject message = choices.getJSONObject(0).optJSONObject("message");
-            if (message == null || message.isNull("content")) return null;
-            return message.getString("content");
+            choice = choices.getJSONObject(0);
+            if (choice.optJSONObject("message") == null) return null;
         } catch (Exception e) {
             return null;
+        }
+        if ("length".equals(choice.optString("finish_reason", null))) {
+            throw new RejectedReply("reply cut off at max_tokens=" + maxTokens);
+        }
+        JSONObject message = choice.getJSONObject("message");
+        String content = message.isNull("content") ? null : message.optString("content", null);
+        if (content == null || content.isBlank()) throw new RejectedReply("empty reply");
+        return content;
+    }
+
+    /** An answer of the model that cannot be used; it is not asked again within the call. */
+    static final class RejectedReply extends RuntimeException {
+        RejectedReply(String message) {
+            super(message);
         }
     }
 }

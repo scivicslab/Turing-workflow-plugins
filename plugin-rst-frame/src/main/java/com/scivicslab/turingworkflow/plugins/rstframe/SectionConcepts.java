@@ -78,7 +78,7 @@ public final class SectionConcepts {
                 + "\"integer literal\" or \"unsigned integer\", not \"Lack of unsigned integer types in Java\". A concept is the thing "
                 + "itself, not a statement about it. After each term write \" | \" and the numbers of the sentences that explain it, "
                 + "whatever words they use, for example \"integer literal | 3, 4\". Write one term per line, in English, the most "
-                + "central first. Write nothing else.";
+                + "central first. Write NONE when the section explains no term. Write nothing else.";
     }
 
     /**
@@ -185,8 +185,16 @@ public final class SectionConcepts {
                     try {
                         BookStore.SectionRules r = store.sectionRules(book, s.number());
                         List<ConceptImportance.Unit> units = ConceptImportance.units(r.rules(), r.code());
-                        List<BookStore.ListedConcept> concepts = units.isEmpty() ? List.of()
-                                : readListed(writer.apply(question(nodes.get(s.number()), units)), units.size());
+                        List<BookStore.ListedConcept> concepts = List.of();
+                        if (!units.isEmpty()) {
+                            String reply = writer.apply(question(nodes.get(s.number()), units));
+                            if (!Replies.isNone(reply)) {
+                                concepts = readListed(reply, units.size());
+                                // a line without " | sentences" is kept but asked again; a reply of only such lines lists nothing
+                                if (concepts.stream().noneMatch(c -> c.sentences() != null))
+                                    throw new IllegalStateException("the reply lists no term with its sentences and is not NONE");
+                            }
+                        }
                         store.saveListedConcepts(book, s.number(), concepts);
                         log.accept("done " + listed.incrementAndGet() + "/" + todo.size() + " " + s.number() + ": "
                                 + String.join("; ", concepts.stream().map(c -> c.concept() + " " + c.sentences()).toList()));

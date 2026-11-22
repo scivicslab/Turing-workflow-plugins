@@ -197,7 +197,11 @@ public final class GeneralFrames {
                 fs.add(pool.submit(() -> {
                     List<BookStore.Occurrence> occ = byName.get(n);
                     try {
-                        List<List<Integer>> g = readGroups(writer.apply(identifyQuestion(n, occ, itemsOf)), occ.size());
+                        String reply = writer.apply(identifyQuestion(n, occ, itemsOf));
+                        // readGroups makes every appearance it is not told about a concept of its own, so a reply with
+                        // no group line would read as "all different"
+                        requireGroupLine(reply);
+                        List<List<Integer>> g = readGroups(reply, occ.size());
                         groups.put(n, g);
                         log.accept("done " + done.incrementAndGet() + "/" + asked.size() + " " + n + ": " + occ.size() + " appearance(s), "
                                 + g.size() + " concept(s)");
@@ -525,5 +529,10 @@ public final class GeneralFrames {
         store.saveEntities(book, BookStore.Entity.GENERAL, generals);
         log.accept(generals.size() + " generalized concept(s) found by the concept tree");
         return askEach(store, book, asks, writer, parallel, log);
+    }
+
+    /** Throws when the reply to an identify question has no line in the form "G: numbers". */
+    static void requireGroupLine(String reply) {
+        if (!Pattern.compile("(?im)^\\W*G\\W*\\d").matcher(reply).find()) throw new IllegalStateException("the reply makes no group of the appearances");
     }
 }

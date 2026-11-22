@@ -75,7 +75,7 @@ public final class SectionRelations {
                 + "Do not force a relation into the first four when it is none of them; write other.\n"
                 + "After each line write \" | \" and the numbers of the sentences that say it, for example "
                 + "\"String literal | is-a | String | 5, 8\". Use only the concepts listed, written exactly as listed. "
-                + "Leave out a pair the section does not relate. Write nothing else.";
+                + "Leave out a pair the section does not relate; when it relates none of them, write NONE. Write nothing else.";
     }
 
     /**
@@ -176,7 +176,9 @@ public final class SectionRelations {
                                 .map(BookStore.JudgedConcept::concept).toList();
                         BookStore.SectionRules r = store.sectionRules(book, number);
                         List<ConceptImportance.Unit> units = ConceptImportance.units(r.rules(), r.code());
-                        List<BookStore.Relation> rel = read(writer.apply(question(nodes.get(number), units, concepts)), concepts, units.size());
+                        String reply = writer.apply(question(nodes.get(number), units, concepts));
+                        List<BookStore.Relation> rel = read(reply, concepts, units.size());
+                        if (rel.isEmpty() && !Replies.isNone(reply)) throw new IllegalStateException("the reply states no relation and is not NONE");
                         store.saveRelations(book, number, rel);
                         found.addAndGet(rel.size());
                         log.accept("done " + asked.incrementAndGet() + "/" + todo.size() + " " + number + ": "

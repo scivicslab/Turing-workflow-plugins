@@ -214,7 +214,7 @@ public final class SimilarConcepts {
                 + "an example of it, or only mentioned with it is not of the same kind. For each one of the same kind, write its "
                 + "name, \" | \", and the more general concept the two share, in a few words. For example\n"
                 + "c2 | integer type\nc5 | loop\n"
-                + "Write \"none\" when none is of the same kind. Write nothing else.";
+                + "Write NONE when none is of the same kind. Write nothing else.";
     }
 
     /**
@@ -296,7 +296,7 @@ public final class SimilarConcepts {
                         List<Unit> cands = nearest(u, units, current, CANDIDATES);
                         String reply = cands.isEmpty() ? "none" : writer.apply(question(u, cands));
                         List<Similar> sim = read(reply, u, cands);
-                        if (sim.isEmpty() && !reply.toLowerCase(java.util.Locale.ROOT).contains("none")) throw new IllegalStateException("the reply names no candidate and does not say none");
+                        checkAnswered(sim, reply);
                         store.saveSimilar(CRITERION, u, sim);
                         pairs.addAndGet(sim.size());
                         int n = done.incrementAndGet();
@@ -313,5 +313,10 @@ public final class SimilarConcepts {
             pool.shutdown();
         }
         return failures.outcome(todo.size(), done.get() + " unit(s) judged under " + CRITERION + ": " + pairs.get() + " similar pair(s), " + failed.get() + " failed");
+    }
+
+    /** Throws when the reply named no candidate and is not the token NONE. */
+    static void checkAnswered(List<Similar> similar, String reply) {
+        if (similar.isEmpty() && !Replies.isNone(reply)) throw new IllegalStateException("the reply names no candidate and is not NONE");
     }
 }
