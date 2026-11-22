@@ -18,6 +18,13 @@
 package com.scivicslab.turingworkflow.plugins.vault;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Fetches secrets from HashiCorp Vault by executing {@code kubectl exec} into a specific Kubernetes pod.
@@ -35,8 +42,20 @@ import java.io.IOException;
  *
  * <p>An action fails if the {@code kubectl} command returns a non-zero exit code or if the execution fails, returning
  * a failure result with the error message.
+ *
+ * <p>Setting: the system property {@value #TIMEOUT_PROPERTY} (default {@value #DEFAULT_TIMEOUT_SECONDS}) is how many
+ * seconds one {@code kubectl exec} may run before it is killed and the call fails.
  */
 public class KubectlVaultBackend implements VaultBackend {
+
+    /** System property: seconds one {@code kubectl exec} may run. */
+    public static final String TIMEOUT_PROPERTY = "turingworkflow.vault.kubectlTimeoutSeconds";
+
+    /** Default of {@value #TIMEOUT_PROPERTY}. */
+    public static final long DEFAULT_TIMEOUT_SECONDS = 60;
+
+    /** How long the output readers may still take after the process has exited. */
+    private static final long READER_GRACE_SECONDS = 5;
 
     private final String namespace;
     private final String pod;
@@ -48,19 +67,73 @@ public class KubectlVaultBackend implements VaultBackend {
 
     @Override
     public String get(String path, String fieldName) throws VaultException {
+        return secretPrintedBy(List.of(
+                "kubectl", "exec", "-n", namespace, pod,
+                "--", "vault", "kv", "get", "-field=" + fieldName, path));
+    }
+
+    /**
+     * Returns what the command printed on stdout, trimmed; stderr is read apart and never becomes part of the value.
+     *
+     * <p>The command may run for {@value #TIMEOUT_PROPERTY} seconds; past that it and the processes it started are
+     * killed. A non-zero exit fails with the exit code and stderr; the stdout, which may hold the secret, is never put
+     * in a failure message.</p>
+     *
+     * @param command the command line, normally {@code kubectl exec ... vault kv get -field=<f> <path>}
+     * @throws VaultException if the command cannot start, does not finish in time, or exits non-zero
+     */
+    static String secretPrintedBy(List<String> command) throws VaultException {
+        long limit = SystemPropertyLimit.read(TIMEOUT_PROPERTY, DEFAULT_TIMEOUT_SECONDS);
+        Process process;
         try {
-            ProcessBuilder pb = new ProcessBuilder(
-                    "kubectl", "exec", "-n", namespace, pod,
-                    "--", "vault", "kv", "get", "-field=" + fieldName, path);
-            pb.redirectErrorStream(true);
-            Process process = pb.start();
-            String output = new String(process.getInputStream().readAllBytes()).trim();
-            int exitCode = process.waitFor();
-            if (exitCode != 0)
-                throw new VaultException("kubectl exec failed (exit " + exitCode + "): " + output);
-            return output;
-        } catch (IOException | InterruptedException e) {
+            process = new ProcessBuilder(command).start();
+            process.getOutputStream().close();
+        } catch (IOException e) {
             throw new VaultException("kubectl exec error: " + e.getMessage(), e);
         }
+        CompletableFuture<String> stdout = readAll(process.getInputStream());
+        CompletableFuture<String> stderr = readAll(process.getErrorStream());
+        try {
+            if (!process.waitFor(limit, TimeUnit.SECONDS)) {
+                kill(process);
+                throw new VaultException("kubectl exec in " + describe(command) + " did not finish within " + limit
+                        + " s and was killed (" + TIMEOUT_PROPERTY + ")");
+            }
+            int exitCode = process.exitValue();
+            String errors = stderr.get(READER_GRACE_SECONDS, TimeUnit.SECONDS).trim();
+            if (exitCode != 0)
+                throw new VaultException("kubectl exec failed (exit " + exitCode + "): " + errors);
+            return stdout.get(READER_GRACE_SECONDS, TimeUnit.SECONDS).trim();
+        } catch (InterruptedException e) {
+            kill(process);
+            Thread.currentThread().interrupt();
+            throw new VaultException("kubectl exec interrupted", e);
+        } catch (ExecutionException | TimeoutException e) {
+            kill(process);
+            throw new VaultException("kubectl exec output could not be read: " + e, e);
+        }
+    }
+
+    /** Names the pod the command execs into, or the program when the command is not a kubectl exec. */
+    private static String describe(List<String> command) {
+        int separator = command.indexOf("--");
+        return separator > 0 ? "pod " + command.get(separator - 1) : command.get(0);
+    }
+
+    private static CompletableFuture<String> readAll(InputStream in) {
+        CompletableFuture<String> text = new CompletableFuture<>();
+        Thread.ofVirtual().start(() -> {
+            try (in) {
+                text.complete(new String(in.readAllBytes(), StandardCharsets.UTF_8));
+            } catch (IOException e) {
+                text.completeExceptionally(e);
+            }
+        });
+        return text;
+    }
+
+    private static void kill(Process process) {
+        process.descendants().forEach(ProcessHandle::destroyForcibly);
+        process.destroyForcibly();
     }
 }

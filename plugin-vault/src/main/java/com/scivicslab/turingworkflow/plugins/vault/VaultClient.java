@@ -22,10 +22,16 @@ import org.yaml.snakeyaml.Yaml;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Communicates with the HashiCorp Vault HTTP API to retrieve secrets from KV v2 engines.
@@ -41,21 +47,38 @@ import java.util.Map;
  */
 public class VaultClient {
 
+    /** System property: seconds the TCP connect to the Vault server may take. */
+    public static final String CONNECT_TIMEOUT_PROPERTY = "turingworkflow.vault.connectTimeoutSeconds";
+
+    /** System property: seconds one request may take from sending to the end of the response body. */
+    public static final String REQUEST_TIMEOUT_PROPERTY = "turingworkflow.vault.requestTimeoutSeconds";
+
+    /** Default of {@value #CONNECT_TIMEOUT_PROPERTY}. */
+    public static final long DEFAULT_CONNECT_TIMEOUT_SECONDS = 10;
+
+    /** Default of {@value #REQUEST_TIMEOUT_PROPERTY}. */
+    public static final long DEFAULT_REQUEST_TIMEOUT_SECONDS = 60;
+
     /** The Vault connection configuration, consisting of the server address and the access token. */
     private final VaultConfig config;
 
-    /** The HTTP client used to send requests to the Vault API, with a 10-second connection timeout. */
+    /** The HTTP client used to send requests to the Vault API. */
     private final HttpClient httpClient;
 
     /**
      * Initializes a new VaultClient that communicates with a HashiCorp Vault server using the provided configuration.
+     *
+     * <p>Settings, read from system properties: {@value #CONNECT_TIMEOUT_PROPERTY} (default {@value
+     * #DEFAULT_CONNECT_TIMEOUT_SECONDS}), read here, and {@value #REQUEST_TIMEOUT_PROPERTY} (default {@value
+     * #DEFAULT_REQUEST_TIMEOUT_SECONDS}), read on each request: past it the request is cancelled and fails.</p>
      *
      * @param config the address and token used for Vault API requests
      */
     public VaultClient(VaultConfig config) {
         this.config = config;
         this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
+                .connectTimeout(Duration.ofSeconds(
+                        SystemPropertyLimit.read(CONNECT_TIMEOUT_PROPERTY, DEFAULT_CONNECT_TIMEOUT_SECONDS)))
                 .build();
     }
 
@@ -87,17 +110,32 @@ public class VaultClient {
     }
 
     private String fetch(String path) throws VaultException {
+        String url = config.getAddress() + "/v1/" + path;
+        long limit = SystemPropertyLimit.read(REQUEST_TIMEOUT_PROPERTY, DEFAULT_REQUEST_TIMEOUT_SECONDS);
         try {
-            String url = config.getAddress() + "/v1/" + path;
-
+            // HttpRequest.timeout ends the wait for the response headers only; the future bounds the body as well
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .header("X-Vault-Token", config.getToken())
+                    .timeout(Duration.ofSeconds(limit))
                     .GET()
                     .build();
 
-            HttpResponse<String> response = httpClient.send(request,
+            CompletableFuture<HttpResponse<String>> pending = httpClient.sendAsync(request,
                     HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response;
+            try {
+                response = pending.get(limit, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                pending.cancel(true);
+                throw new HttpTimeoutException("timed out");
+            } catch (ExecutionException e) {
+                if (e.getCause() instanceof IOException io) throw io;
+                throw new IOException(e.getCause());
+            } catch (InterruptedException e) {
+                pending.cancel(true);
+                throw e;
+            }
 
             if (response.statusCode() == 404) {
                 throw new VaultException("Secret not found at path: " + path);
@@ -110,7 +148,17 @@ public class VaultClient {
 
             return response.body();
 
-        } catch (IOException | InterruptedException e) {
+        } catch (HttpConnectTimeoutException e) {
+            throw new VaultException("Vault at " + config.getAddress() + " did not accept the connection within "
+                    + SystemPropertyLimit.read(CONNECT_TIMEOUT_PROPERTY, DEFAULT_CONNECT_TIMEOUT_SECONDS) + " s ("
+                    + CONNECT_TIMEOUT_PROPERTY + ")", e);
+        } catch (HttpTimeoutException e) {
+            throw new VaultException("Vault request to " + url + " did not finish within " + limit + " s ("
+                    + REQUEST_TIMEOUT_PROPERTY + ")", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new VaultException("Failed to read secret from Vault: interrupted", e);
+        } catch (IOException e) {
             throw new VaultException("Failed to read secret from Vault: " + e.getMessage(), e);
         }
     }
