@@ -16,6 +16,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -40,8 +42,36 @@ class NodeInterpreterGitTest {
     private Path list;
     private NodeInterpreter interpreter;
 
+    /** Whether {@code git} runs on this machine; checked once, then each test is skipped when it does not. */
+    private static boolean gitAvailable;
+
+    @BeforeAll
+    static void lookForGit() {
+        gitAvailable = gitAvailable();
+    }
+
+    /** Returns whether {@code git --version} runs and exits 0 within 30 s. */
+    private static boolean gitAvailable() {
+        try {
+            Process p = new ProcessBuilder("git", "--version").redirectErrorStream(true).start();
+            p.getInputStream().readAllBytes();
+            if (!p.waitFor(30, TimeUnit.SECONDS)) {
+                p.destroyForcibly();
+                return false;
+            }
+            return p.exitValue() == 0;
+        } catch (IOException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
     @BeforeEach
     void makeRepository() throws Exception {
+        // per test rather than per class, so a build without git reports both tests as skipped
+        Assumptions.assumeTrue(gitAvailable, "git is not installed; NodeInterpreterGitTest needs it");
         doc = tmp.resolve("doc");
         Files.createDirectories(doc);
         git(doc, "init", "-q");
