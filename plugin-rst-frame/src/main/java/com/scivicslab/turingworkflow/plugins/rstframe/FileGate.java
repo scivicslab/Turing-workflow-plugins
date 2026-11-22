@@ -119,7 +119,12 @@ public interface FileGate {
      * If the actor named {@value #ACTOR} is not registered in {@code system}, or if its object is not a {@link
      * FileGate}, returns a gate that refuses nothing via {@link #open()}.
      *
+     * <p>If the actor is registered but cannot be asked whether its object is a {@link FileGate}, throws a {@link
+     * SecurityException}: a gate that was configured must not silently turn into one that allows everything.</p>
+     *
      * @param system the actor system to search for the {@value #ACTOR} actor
+     * @throws SecurityException if the {@value #ACTOR} actor exists but the check fails or is interrupted; the
+     *         interrupt flag is kept
      */
     @SuppressWarnings("unchecked")
     static FileGate of(IIActorSystem system) {
@@ -128,8 +133,11 @@ public interface FileGate {
         boolean isGate;
         try {
             isGate = ref.ask(o -> o instanceof FileGate).get();
-        } catch (InterruptedException | ExecutionException e) {
-            isGate = false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SecurityException("interrupted while asking the '" + ACTOR + "' actor whether it is a FileGate", e);
+        } catch (ExecutionException e) {
+            throw new SecurityException("cannot ask the '" + ACTOR + "' actor whether it is a FileGate: " + e.getCause(), e);
         }
         if (!isGate) return open();
         return new FileGate() {
