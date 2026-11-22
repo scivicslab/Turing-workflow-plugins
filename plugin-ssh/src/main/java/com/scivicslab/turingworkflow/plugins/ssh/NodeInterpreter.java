@@ -75,6 +75,16 @@ public class NodeInterpreter extends Interpreter {
 
     private static final Logger logger = Logger.getLogger(NodeInterpreter.class.getName());
 
+    /**
+     * System property: seconds one git command run by {@code detectDocumentChanges} ({@code git fetch}, {@code git
+     * rev-parse}) may take before it is killed and the document is reported as {@code [UNKNOWN]}, which counts as
+     * changed. Default {@value #DEFAULT_GIT_TIMEOUT_SECONDS}.
+     */
+    public static final String GIT_TIMEOUT_PROPERTY = "turingworkflow.ssh.gitTimeoutSeconds";
+
+    /** Default of {@value #GIT_TIMEOUT_PROPERTY}. */
+    public static final long DEFAULT_GIT_TIMEOUT_SECONDS = 300;
+
     /** The {@link Node} instance that performs the actual SSH operations and command execution. */
     private final Node node;
 
@@ -499,12 +509,16 @@ public class NodeInterpreter extends Interpreter {
      */
     private String checkGitStatus(Path docPath) {
         try {
-            // git fetch
-            ProcessBuilder fetchPb = new ProcessBuilder("git", "fetch", "origin");
-            fetchPb.directory(docPath.toFile());
-            fetchPb.redirectErrorStream(true);
-            Process fetchProcess = fetchPb.start();
-            fetchProcess.waitFor();
+            // A fetch that failed or did not finish leaves origin/* stale, so the comparison below would mean nothing
+            ProcessWithLimit.Outcome fetch = runGit(docPath, "git", "fetch", "origin");
+            if (!fetch.finished()) {
+                return "[UNKNOWN] (git fetch in " + docPath + " did not finish within " + gitLimitSeconds()
+                        + " s and was killed (" + GIT_TIMEOUT_PROPERTY + "))";
+            }
+            if (fetch.exitCode() != 0) {
+                return "[UNKNOWN] (git fetch in " + docPath + " failed with exit " + fetch.exitCode() + ": "
+                        + fetch.stderr() + ")";
+            }
 
             // Get local HEAD
             String local = runGitCommand(docPath, "git", "rev-parse", "HEAD");
@@ -543,19 +557,33 @@ public class NodeInterpreter extends Interpreter {
      */
     private String runGitCommand(Path workDir, String... command) {
         try {
-            ProcessBuilder pb = new ProcessBuilder(command);
-            pb.directory(workDir.toFile());
-            pb.redirectErrorStream(true);
-            Process process = pb.start();
-
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line = reader.readLine();
-                process.waitFor();
-                return line != null ? line.trim() : "unknown";
+            ProcessWithLimit.Outcome outcome = runGit(workDir, command);
+            if (!outcome.finished() || outcome.exitCode() != 0 || outcome.stdout().isEmpty()) {
+                return "unknown";
             }
-        } catch (Exception e) {
+            return outcome.stdout().lines().findFirst().orElse("unknown").trim();
+        } catch (IOException e) {
+            return "unknown";
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             return "unknown";
         }
+    }
+
+    /**
+     * Returns the outcome of a git command run in {@code workDir}, which may run for {@value #GIT_TIMEOUT_PROPERTY}
+     * seconds before it is killed; its stdout and stderr are read while it runs.
+     */
+    private static ProcessWithLimit.Outcome runGit(Path workDir, String... command)
+            throws IOException, InterruptedException {
+        Process process = new ProcessBuilder(command).directory(workDir.toFile()).start();
+        // git never reads stdin here; closing it stops a credential prompt from waiting for input
+        process.getOutputStream().close();
+        return ProcessWithLimit.waitFor(process, gitLimitSeconds(), null, null);
+    }
+
+    private static long gitLimitSeconds() {
+        return SystemPropertyLimit.read(GIT_TIMEOUT_PROPERTY, DEFAULT_GIT_TIMEOUT_SECONDS);
     }
 
     /**
