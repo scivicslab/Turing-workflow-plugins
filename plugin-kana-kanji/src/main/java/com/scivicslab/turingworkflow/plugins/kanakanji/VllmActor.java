@@ -60,6 +60,31 @@ public class VllmActor extends IIActorRef<VllmClient> {
      */
     public record TextArgs(@NotNull String text) {}
 
+    /**
+     * The time limits of each request to the vLLM server; an omitted value keeps the current one.
+     *
+     * @param totalSeconds seconds one request may take in all, queue wait and body included; default 600
+     * @param idleSeconds seconds the response body may stall once it has begun; default 60
+     */
+    public record TimeLimitsArgs(Integer totalSeconds, Integer idleSeconds) {}
+
+    /**
+     * Sets the time limits of each request to the vLLM server.
+     *
+     * <pre>{@code
+     * - actor: vllm
+     *   method: setTimeLimits
+     *   arguments: {totalSeconds: 1200, idleSeconds: 60}
+     * }</pre>
+     *
+     * @param args the limits; omitted ones keep their values
+     * @return a success naming the limits in force, or a failure if a value is not positive
+     */
+    @Action(value = "setTimeLimits", argsType = TimeLimitsArgs.class)
+    public ActionResult setTimeLimits(TimeLimitsArgs args) {
+        return pojo().setTimeLimits(args.totalSeconds(), args.idleSeconds());
+    }
+
     @Action(value = "setUrl", argsType = UrlArgs.class)
     public ActionResult setUrl(UrlArgs args) {
         return pojo().setUrl(args.url());

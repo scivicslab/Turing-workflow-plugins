@@ -3,7 +3,6 @@ package com.scivicslab.turingworkflow.plugins.rstframe;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.function.Function;
 
@@ -27,11 +26,30 @@ import org.json.JSONObject;
  *
  * <p>One instance may serve several workflows or threads at once.
  *
+ * <p>Time limits, read from system properties on each call and applied to each attempt: {@value
+ * #TOTAL_TIMEOUT_PROPERTY} (default {@value #DEFAULT_TOTAL_TIMEOUT_SECONDS}) bounds an attempt from sending the request
+ * to the last byte of the body, queue wait and generation included; {@value #IDLE_TIMEOUT_PROPERTY} (default {@value
+ * #DEFAULT_IDLE_TIMEOUT_SECONDS}) ends an attempt whose body stops for that long after it began. An attempt that hits
+ * a limit is retried like any other failure, so a call that never gets an answer takes at most 4 total limits plus the
+ * 50 s of sleeps between attempts.
+ *
  * <pre>{@code
  * chat_endpoint.apply("What is the main concept of this section?")
  * }</pre>
  */
 public final class ChatEndpoint implements Function<String, String> {
+
+    /** System property: seconds one attempt may take in all, queue wait and reading the body included. */
+    public static final String TOTAL_TIMEOUT_PROPERTY = "turingworkflow.rstframe.chatTotalTimeoutSeconds";
+
+    /** System property: seconds the response body may stall once its first byte has arrived. */
+    public static final String IDLE_TIMEOUT_PROPERTY = "turingworkflow.rstframe.chatIdleTimeoutSeconds";
+
+    /** Default of {@value #TOTAL_TIMEOUT_PROPERTY}. */
+    public static final long DEFAULT_TOTAL_TIMEOUT_SECONDS = 600;
+
+    /** Default of {@value #IDLE_TIMEOUT_PROPERTY}. */
+    public static final long DEFAULT_IDLE_TIMEOUT_SECONDS = 60;
 
     private static final HttpClient HTTP = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(20)).build();
@@ -58,16 +76,22 @@ public final class ChatEndpoint implements Function<String, String> {
     public String apply(String question) {
         String body = new JSONObject().put("model", model).put("max_tokens", maxTokens).put("temperature", 0)
                 .put("messages", new JSONArray().put(new JSONObject().put("role", "user").put("content", question))).toString();
+        // the limits hold per attempt: a request that hits one is retried like any other failed attempt
+        long total = SystemPropertyLimit.read(TOTAL_TIMEOUT_PROPERTY, DEFAULT_TOTAL_TIMEOUT_SECONDS);
+        long idle = SystemPropertyLimit.read(IDLE_TIMEOUT_PROPERTY, DEFAULT_IDLE_TIMEOUT_SECONDS);
+        String what = "POST " + url + " (model " + model + ")";
         RuntimeException last = null;
         for (int attempt = 0; attempt < 4; attempt++) {
             try {
-                HttpResponse<String> r = HTTP.send(HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofMinutes(10))
+                LimitedExchange.Reply r = LimitedExchange.send(HTTP, HttpRequest.newBuilder(URI.create(url))
                         .header("Content-Type", "application/json").header("X-Job-Priority", "background")
-                        .POST(HttpRequest.BodyPublishers.ofString(body)).build(),
-                        HttpResponse.BodyHandlers.ofString());
-                String text = r.statusCode() == 200 ? text(r.body()) : null;
+                        .POST(HttpRequest.BodyPublishers.ofString(body)).build(), total, idle, what);
+                String text = r.status() == 200 ? text(r.body()) : null;
                 if (text != null) return text;
-                last = new IllegalStateException("HTTP " + r.statusCode() + ": " + r.body().substring(0, Math.min(300, r.body().length())));
+                last = new IllegalStateException(what + ": HTTP " + r.status() + ": " + r.body().substring(0, Math.min(300, r.body().length())));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(what + ": interrupted", e);
             } catch (Exception e) {
                 last = new IllegalStateException(e.getMessage(), e);
             }

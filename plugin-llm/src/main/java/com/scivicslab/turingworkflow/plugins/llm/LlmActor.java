@@ -68,6 +68,31 @@ public class LlmActor extends IIActorRef<LlmClient> {
      */
     public record EnableThinkingArgs(@NotNull Boolean enabled) {}
 
+    /**
+     * The time limits of {@code callOpenAi}; an omitted value keeps the current one.
+     *
+     * @param totalSeconds seconds one request may take in all, queue wait and body included; default 300
+     * @param idleSeconds seconds the response body may stall once it has begun; default 60
+     */
+    public record TimeLimitsArgs(Integer totalSeconds, Integer idleSeconds) {}
+
+    /**
+     * Sets the time limits of {@code callOpenAi}.
+     *
+     * <pre>{@code
+     * - actor: llm
+     *   method: setTimeLimits
+     *   arguments: {totalSeconds: 600, idleSeconds: 60}
+     * }</pre>
+     *
+     * @param args the limits; omitted ones keep their values
+     * @return a success naming the limits in force, or a failure if a value is not positive
+     */
+    @Action(value = "setTimeLimits", argsType = TimeLimitsArgs.class)
+    public ActionResult setTimeLimits(TimeLimitsArgs args) {
+        return pojo().setTimeLimits(args.totalSeconds(), args.idleSeconds());
+    }
+
     @Action(value = "setDirectUrl", argsType = UrlArgs.class)
     public ActionResult setDirectUrl(UrlArgs args) {
         return pojo().setDirectUrl(args.url());

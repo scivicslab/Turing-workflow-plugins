@@ -52,6 +52,18 @@ public class LlmClient {
     /** Enables or disables extended thinking for Qwen3-family models. */
     private boolean enableThinking = false;
 
+    /** Default total limit of one {@code callOpenAi} request, in seconds. */
+    public static final int DEFAULT_TOTAL_SECONDS = 300;
+
+    /** Default idle limit of one {@code callOpenAi} response once its body has begun, in seconds. */
+    public static final int DEFAULT_IDLE_SECONDS = 60;
+
+    /** Seconds one {@code callOpenAi} request may take in all, waiting in a queue and reading the body included. */
+    private volatile int totalSeconds = DEFAULT_TOTAL_SECONDS;
+
+    /** Seconds the response body may stall once its first byte has arrived. */
+    private volatile int idleSeconds = DEFAULT_IDLE_SECONDS;
+
     /**
      * An optional listener that receives output messages such as status updates, LLM responses, and error
      * notifications.
@@ -179,9 +191,35 @@ public class LlmClient {
     }
 
     /**
+     * Sets the time limits of {@code callOpenAi}; a {@code null} keeps the current value.
+     *
+     * <p>{@code totalSeconds} (default {@value #DEFAULT_TOTAL_SECONDS}) bounds a whole request, from sending it to
+     * the end of the response body, so it also covers the time the request waits in a GPU broker queue and the time
+     * the model generates, during which a non-streaming endpoint sends nothing. {@code idleSeconds} (default {@value
+     * #DEFAULT_IDLE_SECONDS}) applies only after the first byte of the response body has arrived: a body that then
+     * stops for that long fails the call.</p>
+     *
+     * @param totalSeconds the total limit in seconds, or {@code null}
+     * @param idleSeconds the idle limit in seconds, or {@code null}
+     * @return a success naming the limits now in force, or a failure if a value is not positive
+     */
+    public ActionResult setTimeLimits(Integer totalSeconds, Integer idleSeconds) {
+        if ((totalSeconds != null && totalSeconds <= 0) || (idleSeconds != null && idleSeconds <= 0)) {
+            return new ActionResult(false, "setTimeLimits: limits must be positive seconds");
+        }
+        if (totalSeconds != null) this.totalSeconds = totalSeconds;
+        if (idleSeconds != null) this.idleSeconds = idleSeconds;
+        String msg = "callOpenAi limits: total " + this.totalSeconds + " s, idle " + this.idleSeconds + " s";
+        emit(msg);
+        return new ActionResult(true, msg);
+    }
+
+    /**
      * Sends a prompt to an OpenAI-compatible endpoint and returns the model's reply.
      *
-     * <p>Blocks for up to 5 minutes until the response is complete.</p>
+     * <p>Blocks until the response is complete, at most the total limit set by {@link #setTimeLimits} (default
+     * {@value #DEFAULT_TOTAL_SECONDS} s); a response body that stalls for the idle limit (default {@value
+     * #DEFAULT_IDLE_SECONDS} s) after it began also fails the call.</p>
      *
      * <p>Returns the model's text content as the message on success, or an error message if the URL is not set, the
      * prompt is blank, or the API returns an error.</p>
@@ -223,22 +261,7 @@ public class LlmClient {
             java.nio.file.Files.writeString(tempFile, body, StandardCharsets.UTF_8);
 
             // Use system curl for reliable HTTP (Java HttpClient has body-delivery issues on this host)
-            java.util.List<String> cmd = java.util.List.of(
-                    "curl", "-s", "-m", "300",
-                    "-X", "POST", openAiUrl,
-                    "-H", "Content-Type: application/json",
-                    "--data", "@" + tempFile.toString()
-            );
-            ProcessBuilder pb = new ProcessBuilder(cmd);
-            pb.redirectErrorStream(false);
-            Process process = pb.start();
-
-            String responseBody = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-            String stderr       = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
-            boolean finished    = process.waitFor(320, java.util.concurrent.TimeUnit.SECONDS);
-            if (!finished) { process.destroyForcibly(); throw new RuntimeException("curl timed out"); }
-            int exitCode = process.exitValue();
-            if (exitCode != 0) throw new RuntimeException("curl failed (exit " + exitCode + "): " + stderr.trim());
+            String responseBody = postWithCurl(tempFile, model);
 
             // Parse: choices[0].message.content
             org.json.JSONObject json = new org.json.JSONObject(responseBody);
@@ -267,6 +290,102 @@ public class LlmClient {
                 try { java.nio.file.Files.deleteIfExists(tempFile); } catch (Exception ignored) {}
             }
         }
+    }
+
+    /**
+     * Returns the response body of a POST of {@code bodyFile} to the OpenAI-compatible URL, sent with curl.
+     *
+     * <p>curl's {@code -m} enforces the total limit (exit code 28). The idle limit is watched here, because curl's
+     * {@code --speed-time} would also count the silent time before the first byte, while the request waits in a
+     * queue or the model generates. Either way curl is killed and the call fails with the URL, the model and the
+     * limit that was hit.</p>
+     */
+    private String postWithCurl(java.nio.file.Path bodyFile, String model) throws java.io.IOException, InterruptedException {
+        int total = this.totalSeconds;
+        int idle = this.idleSeconds;
+        String what = "POST " + openAiUrl + " (model " + model + ")";
+        Process process = new ProcessBuilder(
+                "curl", "-s", "-S", "-N", "-m", String.valueOf(total),
+                "-X", "POST", openAiUrl,
+                "-H", "Content-Type: application/json",
+                "--data", "@" + bodyFile).start();
+        process.getOutputStream().close();
+
+        java.io.ByteArrayOutputStream stdout = new java.io.ByteArrayOutputStream();
+        java.util.concurrent.atomic.AtomicLong lastByteAt = new java.util.concurrent.atomic.AtomicLong();
+        Thread stdoutReader = Thread.ofVirtual().start(() -> {
+            byte[] buffer = new byte[8192];
+            try (java.io.InputStream in = process.getInputStream()) {
+                int n;
+                while ((n = in.read(buffer)) > 0) {
+                    synchronized (stdout) { stdout.write(buffer, 0, n); }
+                    lastByteAt.set(System.nanoTime());
+                }
+            } catch (java.io.IOException e) {
+                // the stream closes when curl is killed
+            }
+        });
+        java.util.concurrent.CompletableFuture<String> stderr = new java.util.concurrent.CompletableFuture<>();
+        Thread.ofVirtual().start(() -> {
+            try (java.io.InputStream in = process.getErrorStream()) {
+                stderr.complete(new String(in.readAllBytes(), StandardCharsets.UTF_8));
+            } catch (java.io.IOException e) {
+                stderr.complete("");
+            }
+        });
+
+        // curl stops itself at the total limit; the deadline here is a backstop a few seconds later
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(total + 5L);
+        long idleNanos = java.util.concurrent.TimeUnit.SECONDS.toNanos(idle);
+        try {
+            while (true) {
+                long now = System.nanoTime();
+                long wait = deadline - now;
+                if (wait <= 0) {
+                    killCurl(process);
+                    throw new java.io.IOException(what + ": no complete response within " + total + " s (total limit)");
+                }
+                long last = lastByteAt.get();
+                // before the first byte only the total limit applies, but look again each second so the idle
+                // clock is noticed soon after the body begins
+                if (last == 0) wait = Math.min(wait, java.util.concurrent.TimeUnit.SECONDS.toNanos(1));
+                if (last != 0) {
+                    long idleLeft = last + idleNanos - now;
+                    if (idleLeft <= 0) {
+                        killCurl(process);
+                        throw new java.io.IOException(what + ": the response body stopped for " + idle
+                                + " s after it began (idle limit)");
+                    }
+                    wait = Math.min(wait, idleLeft);
+                }
+                if (process.waitFor(wait, java.util.concurrent.TimeUnit.NANOSECONDS)) break;
+            }
+        } catch (InterruptedException e) {
+            killCurl(process);
+            throw e;
+        }
+        stdoutReader.join(5000);
+        int exitCode = process.exitValue();
+        if (exitCode == 28) {
+            throw new java.io.IOException(what + ": no complete response within " + total + " s (total limit)");
+        }
+        if (exitCode != 0) {
+            String errors;
+            try {
+                errors = stderr.get(5, java.util.concurrent.TimeUnit.SECONDS).trim();
+            } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException e) {
+                errors = "";
+            }
+            throw new java.io.IOException(what + ": curl failed (exit " + exitCode + "): " + errors);
+        }
+        synchronized (stdout) {
+            return stdout.toString(StandardCharsets.UTF_8);
+        }
+    }
+
+    private static void killCurl(Process process) {
+        process.descendants().forEach(ProcessHandle::destroyForcibly);
+        process.destroyForcibly();
     }
 
     // ── Direct REST (chat-ui) ─────────────────────────────────────────────────

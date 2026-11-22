@@ -5,7 +5,6 @@ import com.scivicslab.pojoactor.action.ActionResult;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -33,7 +32,18 @@ import java.util.logging.Logger;
 public class VllmClient {
 
     private static final Logger logger = Logger.getLogger(VllmClient.class.getName());
-    private static final Duration TIMEOUT = Duration.ofMinutes(10);
+
+    /** Default total limit of one request, in seconds. */
+    public static final int DEFAULT_TOTAL_SECONDS = 600;
+
+    /** Default idle limit of one response once its body has begun, in seconds. */
+    public static final int DEFAULT_IDLE_SECONDS = 60;
+
+    /** Seconds one request may take in all, queue wait and reading the body included. */
+    private volatile int totalSeconds = DEFAULT_TOTAL_SECONDS;
+
+    /** Seconds the response body may stall once its first byte has arrived. */
+    private volatile int idleSeconds = DEFAULT_IDLE_SECONDS;
 
     private static final String SEGMENT_PROMPT = """
             /no_think
@@ -97,6 +107,27 @@ public class VllmClient {
         }
         this.vllmUrl = url;
         return new ActionResult(true, "URL set to " + this.vllmUrl);
+    }
+
+    /**
+     * Sets the time limits of each request to the vLLM server; a {@code null} keeps the current value.
+     *
+     * <p>{@code totalSeconds} (default {@value #DEFAULT_TOTAL_SECONDS}) bounds a whole request, from sending it to
+     * the end of the response body, so it also covers the time the request waits in the GPU broker's background queue
+     * and the generation, during which the server sends nothing. {@code idleSeconds} (default {@value
+     * #DEFAULT_IDLE_SECONDS}) applies only after the first byte of the response body has arrived.</p>
+     *
+     * @param totalSeconds the total limit in seconds, or {@code null}
+     * @param idleSeconds the idle limit in seconds, or {@code null}
+     * @return a success naming the limits now in force, or a failure if a value is not positive
+     */
+    public ActionResult setTimeLimits(Integer totalSeconds, Integer idleSeconds) {
+        if ((totalSeconds != null && totalSeconds <= 0) || (idleSeconds != null && idleSeconds <= 0)) {
+            return new ActionResult(false, "setTimeLimits: limits must be positive seconds");
+        }
+        if (totalSeconds != null) this.totalSeconds = totalSeconds;
+        if (idleSeconds != null) this.idleSeconds = idleSeconds;
+        return new ActionResult(true, "vLLM limits: total " + this.totalSeconds + " s, idle " + this.idleSeconds + " s");
     }
 
     public ActionResult setModel(String modelName) {
@@ -367,14 +398,15 @@ public class VllmClient {
                 // (the chat path defaults to foreground), and who is asking.
                 .header("X-Job-Priority", "background")
                 .header("X-Submitter-Id", "kana-kanji-pairs")
-                .timeout(TIMEOUT)
                 .POST(HttpRequest.BodyPublishers.ofString(body, java.nio.charset.StandardCharsets.UTF_8))
                 .build();
 
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        // the total limit covers the broker queue and the generation, which send nothing, and the body as well
+        LimitedExchange.Reply response = LimitedExchange.send(client, request, totalSeconds, idleSeconds,
+                "POST " + vllmUrl + " (model " + model + ")");
 
-        if (response.statusCode() != 200) {
-            throw new RuntimeException("HTTP " + response.statusCode() + ": " + response.body());
+        if (response.status() != 200) {
+            throw new RuntimeException("HTTP " + response.status() + ": " + response.body());
         }
 
         return extractContent(response.body());
