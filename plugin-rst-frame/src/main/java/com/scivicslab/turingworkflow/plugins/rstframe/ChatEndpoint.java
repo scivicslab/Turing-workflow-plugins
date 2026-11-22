@@ -5,6 +5,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.time.Duration;
 import java.util.function.Function;
+import java.util.concurrent.Executors;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -51,8 +52,11 @@ public final class ChatEndpoint implements Function<String, String> {
     /** Default of {@value #IDLE_TIMEOUT_PROPERTY}. */
     public static final long DEFAULT_IDLE_TIMEOUT_SECONDS = 60;
 
+    // The client's work runs on virtual threads: without an executor the JDK gives each HttpClient a
+    // pool of real threads of its own. The JDK still keeps one internal selector thread per client,
+    // which is the client's own I/O loop, not a pool we create.
     private static final HttpClient HTTP = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1)
-            .connectTimeout(Duration.ofSeconds(20)).build();
+            .connectTimeout(Duration.ofSeconds(20)).executor(Executors.newVirtualThreadPerTaskExecutor()).build();
 
     private final String url;
     private final String model;
