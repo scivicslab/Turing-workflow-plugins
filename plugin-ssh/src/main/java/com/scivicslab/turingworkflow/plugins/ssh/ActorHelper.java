@@ -24,6 +24,7 @@ import org.json.JSONObject;
 
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
+import com.scivicslab.turingworkflow.workflow.accumulator.MultiplexerAccumulatorIIAR;
 
 /**
  * Provides static utility methods for formatting output to the {@code outputMultiplexer}, parsing JSON arguments from
@@ -47,7 +48,7 @@ public final class ActorHelper {
      * @param formatted the text to be sent, which is split into individual lines
      */
     public static void sendToMultiplexer(IIActorSystem system, String sourceName, String formatted) {
-        IIActorRef<?> multiplexer = system.getIIActor("outputMultiplexer");
+        IIActorRef<?> multiplexer = system.getIIActor(MultiplexerAccumulatorIIAR.ACTOR_NAME);
         if (multiplexer == null) {
             return;
         }

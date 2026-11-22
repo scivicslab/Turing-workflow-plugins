@@ -24,6 +24,7 @@ import com.scivicslab.turingworkflow.workflow.ActorSystemAware;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 import com.scivicslab.turingworkflow.workflow.IIActorRefAware;
+import com.scivicslab.turingworkflow.workflow.accumulator.MultiplexerAccumulatorIIAR;
 
 import org.json.JSONObject;
 import org.yaml.snakeyaml.Yaml;
@@ -333,7 +334,7 @@ public class ReportBuilder implements CallableByActionName, ActorSystemAware, II
     private void reportToMultiplexer(String data) {
         if (system == null) return;
 
-        IIActorRef<?> multiplexer = system.getIIActor("outputMultiplexer");
+        IIActorRef<?> multiplexer = system.getIIActor(MultiplexerAccumulatorIIAR.ACTOR_NAME);
         if (multiplexer == null) return;
 
         JSONObject arg = new JSONObject();

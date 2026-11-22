@@ -34,6 +34,7 @@ import com.scivicslab.pojoactor.action.ActionResult;
 import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
+import com.scivicslab.turingworkflow.workflow.accumulator.MultiplexerAccumulatorIIAR;
 
 
 /**
@@ -714,7 +715,7 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      */
     private Node.OutputCallback createOutputCallback(String nodeName) {
         IIActorSystem sys = (IIActorSystem) this.system();
-        IIActorRef<?> multiplexer = sys.getIIActor("outputMultiplexer");
+        IIActorRef<?> multiplexer = sys.getIIActor(MultiplexerAccumulatorIIAR.ACTOR_NAME);
 
         if (multiplexer == null) {
             return null;
@@ -750,7 +751,7 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      */
     private void reportToAccumulator(Node.CommandResult result) {
         IIActorSystem sys = (IIActorSystem) this.system();
-        IIActorRef<?> multiplexer = sys.getIIActor("outputMultiplexer");
+        IIActorRef<?> multiplexer = sys.getIIActor(MultiplexerAccumulatorIIAR.ACTOR_NAME);
         if (multiplexer != null) {
             JSONObject reportArg = new JSONObject();
             reportArg.put("source", this.getName());
@@ -772,7 +773,7 @@ public class NodeActor extends IIActorRef<NodeInterpreter> {
      */
     private void reportOutputToMultiplexer(String nodeName, String message) {
         IIActorSystem sys = (IIActorSystem) this.system();
-        IIActorRef<?> multiplexer = sys.getIIActor("outputMultiplexer");
+        IIActorRef<?> multiplexer = sys.getIIActor(MultiplexerAccumulatorIIAR.ACTOR_NAME);
         if (multiplexer != null) {
             JSONObject reportArg = new JSONObject();
             reportArg.put("source", nodeName);

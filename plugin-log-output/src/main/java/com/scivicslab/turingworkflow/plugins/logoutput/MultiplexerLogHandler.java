@@ -27,6 +27,7 @@ import org.json.JSONObject;
 
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
+import com.scivicslab.turingworkflow.workflow.accumulator.MultiplexerAccumulatorIIAR;
 
 /**
  * Sends java.util.logging records to the {@code outputMultiplexer} actor so that system logs appear in the same
@@ -95,7 +96,7 @@ public class MultiplexerLogHandler extends Handler {
             return;
         }
 
-        IIActorRef<?> multiplexer = system.getIIActor("outputMultiplexer");
+        IIActorRef<?> multiplexer = system.getIIActor(MultiplexerAccumulatorIIAR.ACTOR_NAME);
         if (multiplexer == null) {
             return;
         }

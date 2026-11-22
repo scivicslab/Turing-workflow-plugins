@@ -24,6 +24,7 @@ import jakarta.validation.constraints.NotNull;
 import com.scivicslab.pojoactor.core.JsonState;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
+import com.scivicslab.turingworkflow.workflow.accumulator.MultiplexerAccumulatorIIAR;
 
 import org.json.JSONObject;
 import org.yaml.snakeyaml.Yaml;
@@ -243,7 +244,7 @@ public class ReportBuilderActor extends IIActorRef<ReportBuilder> {
         if (system() == null) return;
         IIActorSystem iiSystem = (IIActorSystem) system();
 
-        IIActorRef<?> multiplexer = iiSystem.getIIActor("outputMultiplexer");
+        IIActorRef<?> multiplexer = iiSystem.getIIActor(MultiplexerAccumulatorIIAR.ACTOR_NAME);
         if (multiplexer == null) return;
 
         JSONObject arg = new JSONObject();

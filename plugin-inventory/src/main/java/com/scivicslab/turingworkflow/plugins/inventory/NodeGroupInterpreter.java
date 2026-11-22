@@ -32,6 +32,7 @@ import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 import com.scivicslab.turingworkflow.workflow.Interpreter;
 import com.scivicslab.turingworkflow.workflow.Transition;
+import com.scivicslab.turingworkflow.workflow.accumulator.MultiplexerAccumulatorIIAR;
 
 /**
  * Executes workflows that orchestrate groups of nodes defined in an Ansible-style inventory.
@@ -281,7 +282,7 @@ public class NodeGroupInterpreter extends Interpreter {
         }
 
         // Send cowsay output to outputMultiplexer (loose coupling via ActorSystem)
-        IIActorRef<?> multiplexer = system.getIIActor("outputMultiplexer");
+        IIActorRef<?> multiplexer = system.getIIActor(MultiplexerAccumulatorIIAR.ACTOR_NAME);
         // Use actor name as source (consistent across all output)
         String actorName = selfActorRef != null ? selfActorRef.getName() : "unknown";
         if (multiplexer != null) {
