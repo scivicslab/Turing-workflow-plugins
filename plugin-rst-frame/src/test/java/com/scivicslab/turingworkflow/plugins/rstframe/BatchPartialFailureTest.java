@@ -101,6 +101,34 @@ class BatchPartialFailureTest {
     }
 
     @Test
+    void identifyAll_nameFailsAndAnotherNameStartsWithItAndHash_keepsOnlyTheFailedNamesConcepts(@TempDir Path dir) throws Exception {
+        try (BookStore store = BookStore.forWriting("jdbc:h2:" + dir.resolve("db/books") + ";AUTO_SERVER=TRUE")) {
+            List<BookStore.FrameRule> rules = List.of(new BookStore.FrameRule(BookStore.FrameRule.PROPERTY, "b1/1", "A rule."));
+            for (String number : List.of("6.1", "9.1")) {
+                store.saveFrameConcepts("core", number, List.of(new BookStore.FrameConcept("C", rules, true),
+                        new BookStore.FrameConcept("C#", rules, true)));
+            }
+            // an earlier run split "C" into c#1 and c#2, and kept "C#" as the one concept c#
+            store.saveEntities("core", BookStore.Entity.CONCEPT, List.of(
+                    new BookStore.Entity("c#1", "C", BookStore.Entity.CONCEPT, List.of(new BookStore.Occurrence("6.1", "C")), List.of()),
+                    new BookStore.Entity("c#2", "C", BookStore.Entity.CONCEPT, List.of(new BookStore.Occurrence("9.1", "C")), List.of()),
+                    new BookStore.Entity("c#", "C#", BookStore.Entity.CONCEPT,
+                            List.of(new BookStore.Occurrence("6.1", "C#"), new BookStore.Occurrence("9.1", "C#")), List.of())));
+
+            Exception failure = assertThrows(Exception.class, () -> GeneralFrames.identifyAll(store, "core", List.of(), q -> {
+                if (q.contains("\"c\"")) throw new IllegalStateException("model down");
+                return "G: 1, 2";
+            }, 2, line -> { }));
+
+            assertTrue(failure.getMessage().startsWith("1 of 2 failed: c: error: java.lang.IllegalStateException: model down"),
+                    failure.getMessage());
+            List<String> ids = store.entities("core").stream().map(BookStore.Entity::id).sorted().toList();
+            assertEquals(List.of("c#", "c#1", "c#2"), ids,
+                    "c keeps c#1 and c#2; c# is the judged name's new concept, stored once, not kept as c's");
+        }
+    }
+
+    @Test
     void conceptsAction_oneSectionFails_isFalseWithTheSectionAndReason(@TempDir Path dir) throws Exception {
         String db = bookWithTwoSections(dir);
         HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);

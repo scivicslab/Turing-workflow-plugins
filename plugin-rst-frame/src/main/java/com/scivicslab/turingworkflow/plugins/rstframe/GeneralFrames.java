@@ -227,11 +227,15 @@ public final class GeneralFrames {
                 if (members.size() > 1) shared++;
             }
         }
+        Set<String> saved = new java.util.HashSet<>();
+        for (BookStore.Entity e : entities) saved.add(e.id());
         Set<String> kept = new java.util.HashSet<>();
         for (BookStore.Entity earlier : store.entities(book)) {
-            if (!BookStore.Entity.CONCEPT.equals(earlier.level())) continue;
-            // ids are the name alone, or name#k when an earlier run split it; a name may itself hold '#' (C#)
-            if (notJudged.stream().anyMatch(n -> earlier.id().equals(n) || earlier.id().startsWith(n + "#"))) kept.add(earlier.id());
+            if (!BookStore.Entity.CONCEPT.equals(earlier.level()) || saved.contains(earlier.id())) continue;
+            // ids are the name alone, or name#k (k a number) when an earlier run split it; a name may itself hold '#',
+            // so "c#" is another name's id, not one of c's
+            if (notJudged.stream().anyMatch(n -> earlier.id().equals(n)
+                    || earlier.id().matches(java.util.regex.Pattern.quote(n) + "#\\d+"))) kept.add(earlier.id());
         }
         store.saveEntities(book, BookStore.Entity.CONCEPT, entities, kept);
         return failures.outcome(asked.size(), entities.size() + " concept(s) of " + book + ", " + shared + " of them in more than one section, "
