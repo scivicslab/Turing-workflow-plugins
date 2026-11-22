@@ -66,5 +66,12 @@
             <artifactId>assertj-core</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- A real SSH server for the host-key tests: they connect to it and see whether the connection is refused. -->
+        <dependency>
+            <groupId>org.apache.sshd</groupId>
+            <artifactId>sshd-core</artifactId>
+            <version>2.20.1</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>

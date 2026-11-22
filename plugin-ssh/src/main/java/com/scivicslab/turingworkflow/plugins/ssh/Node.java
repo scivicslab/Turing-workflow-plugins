@@ -21,6 +21,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.util.logging.Logger;
 
 import com.jcraft.jsch.ChannelExec;
 import com.jcraft.jsch.JSch;
@@ -703,6 +704,34 @@ public class Node {
         }
     }
 
+    private static final Logger logger = Logger.getLogger(Node.class.getName());
+
+    /**
+     * System property: when {@code true}, a host key that is not in {@code ~/.ssh/known_hosts} is accepted, and so is a
+     * connection when the file does not exist. Not set by default. With it set, nobody checks who answers: a program
+     * on the network path can answer as the host and receive the password and the commands.
+     */
+    public static final String ACCEPT_UNKNOWN_HOST_KEYS_PROPERTY = "turingworkflow.ssh.acceptUnknownHostKeys";
+
+    /**
+     * Sets how the session treats the host key: {@code StrictHostKeyChecking=yes}, so a key that is not in
+     * {@code ~/.ssh/known_hosts} (or any key, when there is no such file) is refused with {@code reject HostKey}; or,
+     * when {@value #ACCEPT_UNKNOWN_HOST_KEYS_PROPERTY} is {@code true}, {@code no}, with a warning each time.
+     *
+     * <p>A connection used to be let through whatever the key when there was no known_hosts file: the setting was
+     * {@code accept-new}, no record of the key was kept, and the next connection accepted the next key just the same
+     * (chat-86, HIGH 8).</p>
+     */
+    static void applyHostKeyPolicy(Session session) {
+        if (Boolean.getBoolean(ACCEPT_UNKNOWN_HOST_KEYS_PROPERTY)) {
+            session.setConfig("StrictHostKeyChecking", "no");
+            logger.warning("Host key checking is off (" + ACCEPT_UNKNOWN_HOST_KEYS_PROPERTY + "=true): any host key is"
+                    + " accepted for " + session.getHost() + ", so a man-in-the-middle can answer as that host.");
+        } else {
+            session.setConfig("StrictHostKeyChecking", "yes");
+        }
+    }
+
     /**
      * Establishes a new SSH connection to the node using the configured credentials and connection settings.
      *
@@ -743,13 +772,12 @@ public class Node {
             session.setPassword(password);
         }
 
-        // Use "ask" mode: accept if known_hosts exists, reject unknown hosts
-        // Users should populate known_hosts via: ssh-keyscan <host> >> ~/.ssh/known_hosts
-        if (knownHostsFile.exists()) {
-            session.setConfig("StrictHostKeyChecking", "yes");
-        } else {
-            // No known_hosts file — fall back to accept-new (add on first connect)
-            session.setConfig("StrictHostKeyChecking", "accept-new");
+        applyHostKeyPolicy(session);
+        if (!knownHostsFile.exists()) {
+            logger.warning("No " + knownHostsPath + ": every host key is unknown, so the connection to " + effectiveHostname
+                    + " is refused. Add the host's key with: ssh-keyscan -p " + effectivePort + " " + effectiveHostname
+                    + " >> " + knownHostsPath + "  (after checking the fingerprint), or set -D"
+                    + ACCEPT_UNKNOWN_HOST_KEYS_PROPERTY + "=true to accept any key, which a man-in-the-middle can use.");
         }
 
         return session;
@@ -893,13 +921,8 @@ public class Node {
         }
 
         jumpHostSession = jsch.getSession(jumpUser, jumpHost, jumpPort);
-        // Use same host key checking policy as main session
-        String knownHostsPath = System.getProperty("user.home") + "/.ssh/known_hosts";
-        if (new java.io.File(knownHostsPath).exists()) {
-            jumpHostSession.setConfig("StrictHostKeyChecking", "yes");
-        } else {
-            jumpHostSession.setConfig("StrictHostKeyChecking", "accept-new");
-        }
+        // Same host key policy as the main session
+        applyHostKeyPolicy(jumpHostSession);
         if (password != null && !password.isEmpty()) {
             jumpHostSession.setPassword(password);
         }
