@@ -638,34 +638,113 @@ public class NodeInterpreter extends Interpreter {
     /**
      * Performs a fresh git clone of all documents identified as changed in the current session.
      *
-     * Returns an action result that is a success with a message containing the number of cloned documents if at least
-     * one document was cloned or if no documents were marked as changed; it is a failure if the document list file is
-     * not found or if an I/O error occurs.
-     *
-     * If a document is in the changed list, it removes the existing directory at the specified path and executes a
-     * fresh git clone using the URL provided in the document list.
+     * <p>For each changed document of the list, it removes the existing directory at the document's path and clones
+     * the git URL given beside the path. Returns a success with the number of documents cloned when every changed
+     * document was cloned, or when none is marked as changed. Returns a failure when any changed document could not be
+     * cloned (no URL in the list, the old directory could not be removed, or {@code git clone} failed), with
+     * {@code "F of T failed: <document>: <reason>; ... . Cloned N documents"}; the documents cloned stay cloned. It is
+     * also a failure when {@code ~/works} cannot be made.</p>
      *
      * @param docListPath the path to the file containing the list of document paths and their corresponding git URLs,
      * where {@code ~} may be used to represent the home directory
-     *
-     * @return an action result indicating whether the cloning process completed, with a message stating the number of
-     * documents cloned
+     * @return an action result as described above
+     * @throws IOException if the document list cannot be read or a command cannot be run on the node
      */
     public ActionResult cloneChangedDocuments(String docListPath) throws IOException {
         if (changedDocuments.isEmpty()) {
             System.out.println("=== No documents to clone (all up to date) ===");
             return new ActionResult(true, "No documents to clone");
         }
-
-        String expandedPath = docListPath.replace("~", System.getProperty("user.home"));
-        Path listPath = Path.of(expandedPath);
-
-        // Ensure ~/works exists
-        node.executeCommand("mkdir -p ~/works");
+        String works = failureOf("mkdir -p ~/works");
+        if (works != null) return new ActionResult(false, works);
 
         System.out.println("=== Cloning changed documents ===");
-        int clonedCount = 0;
+        return forEachChangedDocument(docListPath, "Cloned", (path, gitUrl, docName) -> {
+            if (gitUrl == null || gitUrl.isEmpty()) {
+                System.out.println("=== No git URL specified for: " + path + " ===");
+                return "no git URL beside its path in " + docListPath;
+            }
+            System.out.println("=== Cloning: " + gitUrl + " -> " + path + " ===");
+            String removed = failureOf("rm -rf " + path);
+            return removed != null ? removed : failureOf("git clone " + gitUrl + " " + path, "git clone");
+        });
+    }
 
+    /**
+     * Runs {@code yarn install} and {@code yarn build} in the directories of documents identified as changed.
+     *
+     * <p>Returns a success with the number of documents built when every changed document was built, or when none is
+     * marked as changed; a failure naming each document whose build failed, with its exit code and stderr, as
+     * {@code "F of T failed: <document>: <reason>; ... . Built N documents"}.</p>
+     *
+     * @param docListPath the path to the file containing the list of document directories
+     * @return an action result as described above
+     * @throws IOException if the document list cannot be read or a command cannot be run on the node
+     */
+    public ActionResult buildChangedDocuments(String docListPath) throws IOException {
+        if (changedDocuments.isEmpty()) {
+            System.out.println("=== No documents to build (all up to date) ===");
+            return new ActionResult(true, "No documents to build");
+        }
+
+        System.out.println("=== Building changed documents ===");
+        return forEachChangedDocument(docListPath, "Built", (path, gitUrl, docName) -> {
+            System.out.println("=== Building: " + path + " ===");
+            return failureOf("cd " + path + " && yarn install && yarn build", "yarn install && yarn build");
+        });
+    }
+
+    /**
+     * Copies the built versions of changed documents to the {@code ~/public_html} directory on the remote node.
+     *
+     * <p>Returns a success with the number of documents copied when every changed document was copied, or when none
+     * is marked as changed; a failure naming each document whose old copy could not be removed or whose build could
+     * not be copied, as {@code "F of T failed: <document>: <reason>; ... . Deployed N documents"}. It is also a failure
+     * when {@code ~/public_html} cannot be made.</p>
+     *
+     * @param docListPath the path to the file listing the document directories, which may include {@code ~} for the
+     * home directory
+     * @return an action result as described above
+     * @throws IOException if the document list cannot be read or a command cannot be run on the node
+     */
+    public ActionResult deployChangedDocuments(String docListPath) throws IOException {
+        String publicHtml = failureOf("mkdir -p ~/public_html");
+        if (publicHtml != null) return new ActionResult(false, publicHtml);
+
+        if (changedDocuments.isEmpty()) {
+            System.out.println("=== No documents to copy (all up to date) ===");
+            node.executeCommand("ls -la ~/public_html/");
+            return new ActionResult(true, "No documents to copy");
+        }
+
+        System.out.println("=== Copying changed documents to public_html ===");
+        ActionResult result = forEachChangedDocument(docListPath, "Deployed", (path, gitUrl, docName) -> {
+            String destPath = "~/public_html/" + docName;
+            System.out.println("=== Copying " + docName + " to public_html ===");
+            String removed = failureOf("rm -rf " + destPath);
+            return removed != null ? removed : failureOf("cp -r " + path + "/build " + destPath);
+        });
+
+        System.out.println("=== public_html contents ===");
+        node.executeCommand("ls -la ~/public_html/");
+        return result;
+    }
+
+    /** One document's work: returns {@code null} when it was done, or why it was not. */
+    private interface DocumentWork {
+        String on(String path, String gitUrl, String docName) throws IOException;
+    }
+
+    /**
+     * Runs {@code work} on each document of the list that is marked as changed and returns the outcome: a success
+     * {@code "<verb> N documents"} when every one was done, otherwise a failure
+     * {@code "F of T failed: <document>: <reason>; ... . <verb> N documents"}, following {@code Interpreter.apply}.
+     */
+    private ActionResult forEachChangedDocument(String docListPath, String verb, DocumentWork work) throws IOException {
+        Path listPath = Path.of(docListPath.replace("~", System.getProperty("user.home")));
+        int tried = 0;
+        int done = 0;
+        java.util.List<String> failures = new java.util.ArrayList<>();
         try (BufferedReader reader = Files.newBufferedReader(listPath)) {
             String line;
             while ((line = reader.readLine()) != null) {
@@ -681,142 +760,30 @@ public class NodeInterpreter extends Interpreter {
                     System.out.println("  [SKIP] " + docName + " (unchanged)");
                     continue;
                 }
-
-                if (gitUrl != null && !gitUrl.isEmpty()) {
-                    // Remove old and clone fresh
-                    System.out.println("=== Cloning: " + gitUrl + " -> " + path + " ===");
-                    node.executeCommand("rm -rf " + path);
-                    Node.CommandResult result = node.executeCommand("git clone " + gitUrl + " " + path);
-                    if (result.getExitCode() == 0) {
-                        clonedCount++;
-                    } else {
-                        System.err.println("Clone failed: " + result.getStderr());
-                    }
+                tried++;
+                String why = work.on(path, gitUrl, docName);
+                if (why == null) {
+                    done++;
                 } else {
-                    System.out.println("=== No git URL specified for: " + path + " ===");
+                    System.err.println(verb + " failed for " + docName + ": " + why);
+                    failures.add(docName + ": " + why);
                 }
             }
         }
-
-        return new ActionResult(true, "Cloned " + clonedCount + " documents");
+        String summary = verb + " " + done + " documents";
+        if (failures.isEmpty()) return new ActionResult(true, summary);
+        return new ActionResult(false, failures.size() + " of " + tried + " failed: " + String.join("; ", failures) + ". " + summary);
     }
 
-    /**
-     * Runs {@code yarn install} and {@code yarn build} in the directories of documents identified as changed.
-     *
-     * <p>Returns an ActionResult that is a success if the build process for the documents was attempted, with a
-     * message containing the count of successfully built documents; it is not a success if an {@link IOException}
-     * occurs or if the document list cannot be read.</p>
-     *
-     * @param docListPath the path to the file containing the list of document directories
-     * @return an ActionResult where success is true and the message holds the number of built documents
-     * @throws IOException if the document list file cannot be read or accessed
-     */
-    public ActionResult buildChangedDocuments(String docListPath) throws IOException {
-        if (changedDocuments.isEmpty()) {
-            System.out.println("=== No documents to build (all up to date) ===");
-            return new ActionResult(true, "No documents to build");
-        }
-
-        String expandedPath = docListPath.replace("~", System.getProperty("user.home"));
-        Path listPath = Path.of(expandedPath);
-
-        System.out.println("=== Building changed documents ===");
-        int builtCount = 0;
-
-        try (BufferedReader reader = Files.newBufferedReader(listPath)) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                line = line.trim();
-                if (line.isEmpty() || line.startsWith("#")) continue;
-
-                String[] parts = line.split("\\s+", 2);
-                String path = parts[0];
-                String docName = Path.of(path).getFileName().toString();
-
-                if (!changedDocuments.contains(docName)) {
-                    System.out.println("  [SKIP] " + docName + " (unchanged)");
-                    continue;
-                }
-
-                System.out.println("=== Building: " + path + " ===");
-                Node.CommandResult result = node.executeCommand(
-                    "cd " + path + " && yarn install && yarn build"
-                );
-                if (result.getExitCode() == 0) {
-                    builtCount++;
-                } else {
-                    System.err.println("Build failed for " + docName + ": " + result.getStderr());
-                }
-            }
-        }
-
-        return new ActionResult(true, "Built " + builtCount + " documents");
+    /** Runs {@code command} on the node; returns {@code null} when it exits 0, or why it failed. */
+    private String failureOf(String command) throws IOException {
+        return failureOf(command, command);
     }
 
-    /**
-     * Copies the built versions of changed documents to the {@code ~/public_html} directory on the remote node.
-     *
-     * <p>Returns an ActionResult that is a success if the deployment process completes, with a message containing the
-     * number of documents copied. If no documents are marked as changed, it returns a success result stating that no
-     * documents were copied. If an I/O error occurs, it throws an IOException.</p>
-     *
-     * @param docListPath the path to the file listing the document directories, which may include {@code ~} for the
-     * home directory
-     *
-     * @return an ActionResult that is a success if the deployment process completes, with a message containing the
-     * number of documents copied; otherwise, a failure result with an error message
-     */
-    public ActionResult deployChangedDocuments(String docListPath) throws IOException {
-        // Ensure public_html exists
-        node.executeCommand("mkdir -p ~/public_html");
-
-        if (changedDocuments.isEmpty()) {
-            System.out.println("=== No documents to copy (all up to date) ===");
-            node.executeCommand("ls -la ~/public_html/");
-            return new ActionResult(true, "No documents to copy");
-        }
-
-        String expandedPath = docListPath.replace("~", System.getProperty("user.home"));
-        Path listPath = Path.of(expandedPath);
-
-        System.out.println("=== Copying changed documents to public_html ===");
-        int copiedCount = 0;
-
-        try (BufferedReader reader = Files.newBufferedReader(listPath)) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                line = line.trim();
-                if (line.isEmpty() || line.startsWith("#")) continue;
-
-                String[] parts = line.split("\\s+", 2);
-                String path = parts[0];
-                String docName = Path.of(path).getFileName().toString();
-
-                if (!changedDocuments.contains(docName)) {
-                    System.out.println("  [SKIP] " + docName + " (unchanged)");
-                    continue;
-                }
-
-                String buildPath = path + "/build";
-                String destPath = "~/public_html/" + docName;
-
-                System.out.println("=== Copying " + docName + " to public_html ===");
-                node.executeCommand("rm -rf " + destPath);
-                Node.CommandResult result = node.executeCommand(
-                    "cp -r " + buildPath + " " + destPath
-                );
-                if (result.getExitCode() == 0) {
-                    copiedCount++;
-                } else {
-                    System.err.println("Copy failed for " + docName + ": " + result.getStderr());
-                }
-            }
-        }
-
-        System.out.println("=== public_html contents ===");
-        node.executeCommand("ls -la ~/public_html/");
-
-        return new ActionResult(true, "Deployed " + copiedCount + " documents");
+    /** Runs {@code command} on the node; returns {@code null} when it exits 0, or {@code "<what> failed (exit N): <stderr>"}. */
+    private String failureOf(String command, String what) throws IOException {
+        Node.CommandResult result = node.executeCommand(command);
+        if (result.getExitCode() == 0) return null;
+        return what + " failed (exit " + result.getExitCode() + "): " + result.getStderr();
     }
 }
