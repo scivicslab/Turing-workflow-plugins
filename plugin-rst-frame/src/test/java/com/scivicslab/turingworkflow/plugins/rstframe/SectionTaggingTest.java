@@ -5,9 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -32,7 +32,8 @@ class SectionTaggingTest {
         String db = dir.resolve("db/books").toString();
         new BookStructure().readToc(db, "core", dir.resolve("book").toString());
         new BookStructure().cutSections(db, "core");
-        List<String> asked = new ArrayList<>();
+        // The writer is called from up to two items at once, so the list it fills must be thread-safe.
+        List<String> asked = new CopyOnWriteArrayList<>();
         try (BookStore store = BookStore.forWriting("jdbc:h2:" + db + ";AUTO_SERVER=TRUE")) {
             String summary = SectionTagging.tagAll(store, "core", List.of(), q -> { asked.add(q); return fair(q); }, 2, line -> { });
             assertEquals("2 section(s) of core made into rule files, 0 failed", summary);

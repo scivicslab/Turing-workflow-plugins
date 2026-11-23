@@ -7,8 +7,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -547,11 +545,11 @@ public final class FrameRegistry {
         AtomicInteger done = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
         BatchFailures failures = new BatchFailures();
-        ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
+        LimitedVirtualThreads threads = new LimitedVirtualThreads(parallel);
         try {
             List<Future<?>> fs = new ArrayList<>();
             for (BookStore.RegistryFrame r : several) {
-                fs.add(pool.submit(() -> {
+                fs.add(threads.submit(() -> {
                     try {
                         Matcher n = Pattern.compile("(?im)^\\W*name\\W*[:=]\\s*(.+)$").matcher(writer.apply(nameQuestion(r)));
                         if (!n.find()) throw new IllegalStateException("the reply names nothing");
@@ -567,7 +565,7 @@ public final class FrameRegistry {
             }
             for (Future<?> f : fs) f.get();
         } finally {
-            pool.shutdown();
+            threads.shutdown();
         }
         return failures.outcome(several.size(), done.get() + " generalized frame(s) named, " + failed.get() + " failed");
     }
@@ -617,11 +615,11 @@ public final class FrameRegistry {
         AtomicInteger items = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
         BatchFailures failures = new BatchFailures();
-        ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
+        LimitedVirtualThreads threads = new LimitedVirtualThreads(parallel);
         try {
             List<Future<?>> fs = new ArrayList<>();
             for (BookStore.RegistryFrame r : several) {
-                fs.add(pool.submit(() -> {
+                fs.add(threads.submit(() -> {
                     try {
                         List<GeneralFrames.Sentence> sentences = new ArrayList<>();
                         List<String> refs = new ArrayList<>();
@@ -656,7 +654,7 @@ public final class FrameRegistry {
             }
             for (Future<?> f : fs) f.get();
         } finally {
-            pool.shutdown();
+            threads.shutdown();
         }
         return failures.outcome(several.size(), done.get() + " generalized frame(s) given " + items.get() + " item(s), " + failed.get() + " failed");
     }

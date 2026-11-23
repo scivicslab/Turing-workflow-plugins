@@ -7,8 +7,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -199,11 +197,11 @@ public final class FrameMaterial {
         AtomicInteger collected = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
         BatchFailures failures = new BatchFailures();
-        ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
+        LimitedVirtualThreads threads = new LimitedVirtualThreads(parallel);
         try {
             List<Future<?>> fs = new ArrayList<>();
             for (Map.Entry<String, Map<String, List<String>>> e : todo.entrySet()) {
-                fs.add(pool.submit(() -> {
+                fs.add(threads.submit(() -> {
                     String number = e.getKey();
                     try {
                         BookStore.SectionRules r = store.sectionRules(book, number);
@@ -229,7 +227,7 @@ public final class FrameMaterial {
             }
             for (Future<?> f : fs) f.get();
         } finally {
-            pool.shutdown();
+            threads.shutdown();
         }
         return failures.outcome(todo.size(), asked.get() + " section(s) of " + book + " asked, " + collected.get() + " rule(s) collected, " + failed.get() + " failed");
     }

@@ -6,8 +6,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -392,12 +390,12 @@ public final class SectionGroups {
         AtomicInteger failed = new AtomicInteger();
         BatchFailures failures = new BatchFailures();
         Map<String, AtomicInteger> tally = new ConcurrentHashMap<>();
-        ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel));
+        LimitedVirtualThreads threads = new LimitedVirtualThreads(parallel);
         try {
             List<Future<?>> fs = new ArrayList<>();
             for (Map.Entry<String, List<Block>> e : todo.entrySet()) {
                 String number = e.getKey();
-                fs.add(pool.submit(() -> {
+                fs.add(threads.submit(() -> {
                     try {
                         BookOutline.Node node = nodes.get(number);
                         String reply = writer.apply(groupQuestion(node, e.getValue()));
@@ -431,7 +429,7 @@ public final class SectionGroups {
             }
             for (Future<?> f : fs) f.get();
         } finally {
-            pool.shutdown();
+            threads.shutdown();
         }
         return failures.outcome(todo.size(), done.get() + " section(s) of " + book + " split into groups: " + new java.util.TreeMap<>(tally) + ", " + failed.get() + " failed");
     }

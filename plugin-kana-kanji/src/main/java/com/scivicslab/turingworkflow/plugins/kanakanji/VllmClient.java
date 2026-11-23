@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.concurrent.Executors;
 
 /**
  * Calls a vLLM server via an OpenAI-compatible chat completions API to perform Japanese text segmentation and reading
@@ -389,9 +390,13 @@ public class VllmClient {
         logger.info("vLLM request URL: " + vllmUrl);
         logger.info("vLLM request body (first 500 chars): " + body.substring(0, Math.min(500, body.length())));
 
+        // The client's work runs on virtual threads: without an executor the JDK gives each HttpClient a
+        // pool of real threads of its own. The JDK still keeps one internal selector thread per client,
+        // which is the client's own I/O loop, not a pool we create.
         HttpClient client = HttpClient.newBuilder()
                 .version(java.net.http.HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(10))
+                .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .build();
 
         HttpRequest request = HttpRequest.newBuilder()

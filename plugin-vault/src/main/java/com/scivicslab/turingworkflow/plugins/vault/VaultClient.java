@@ -32,6 +32,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.Executors;
 
 /**
  * Communicates with the HashiCorp Vault HTTP API to retrieve secrets from KV v2 engines.
@@ -76,9 +77,13 @@ public class VaultClient {
      */
     public VaultClient(VaultConfig config) {
         this.config = config;
+        // The client's work runs on virtual threads: without an executor the JDK gives each HttpClient a
+        // pool of real threads of its own. The JDK still keeps one internal selector thread per client,
+        // which is the client's own I/O loop, not a pool we create.
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(
                         SystemPropertyLimit.read(CONNECT_TIMEOUT_PROPERTY, DEFAULT_CONNECT_TIMEOUT_SECONDS)))
+                .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .build();
     }
 
