@@ -53,7 +53,7 @@ final class ExampleWorkflowCheck {
     static List<String> problems(MatrixCode code) throws ClassNotFoundException {
         Map<String, Class<?>> actors = new HashMap<>();
         actors.put("interpreter", InterpreterIIAR.class);
-        actors.put("log", MultiplexerAccumulatorIIAR.class);
+        actors.put(MultiplexerAccumulatorIIAR.ACTOR_NAME, MultiplexerAccumulatorIIAR.class);
         List<String> problems = new ArrayList<>();
         for (Transition t : code.getTransitions()) {
             for (com.scivicslab.turingworkflow.workflow.Action a : t.getActions()) {

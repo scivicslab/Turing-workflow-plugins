@@ -35,6 +35,7 @@ import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 import com.scivicslab.turingworkflow.workflow.Interpreter;
 import com.scivicslab.turingworkflow.workflow.Transition;
 import com.scivicslab.turingworkflow.plugins.logoutput.WorkflowStreamingAccumulator;
+import com.scivicslab.turingworkflow.workflow.accumulator.MultiplexerAccumulatorIIAR;
 
 /**
  * Executes workflows that control remote nodes via SSH and manages document change detection and deployment.
@@ -265,7 +266,7 @@ public class NodeInterpreter extends Interpreter {
         }
 
         // Send cowsay output to outputMultiplexer (loose coupling via ActorSystem)
-        IIActorRef<?> multiplexer = system.getIIActor("outputMultiplexer");
+        IIActorRef<?> multiplexer = system.getIIActor(MultiplexerAccumulatorIIAR.ACTOR_NAME);
         if (multiplexer != null) {
             JSONObject arg = new JSONObject();
             // Use actor name as source (consistent across all output)
@@ -309,7 +310,7 @@ public class NodeInterpreter extends Interpreter {
                 (resultMsg.isEmpty() ? "" : " - " + resultMsg);
 
         // Send to outputMultiplexer
-        IIActorRef<?> multiplexer = system.getIIActor("outputMultiplexer");
+        IIActorRef<?> multiplexer = system.getIIActor(MultiplexerAccumulatorIIAR.ACTOR_NAME);
         if (multiplexer != null) {
             JSONObject arg = new JSONObject();
             arg.put("source", selfActorRef != null ? selfActorRef.getName() : "unknown");

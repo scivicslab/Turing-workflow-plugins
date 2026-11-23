@@ -17,6 +17,11 @@
 
 package com.scivicslab.turingworkflow.plugins.inventory;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +51,7 @@ import com.scivicslab.turingworkflow.plugins.ssh.ActorHelper;
 import com.scivicslab.turingworkflow.plugins.ssh.Node;
 import com.scivicslab.turingworkflow.plugins.ssh.NodeInterpreter;
 import com.scivicslab.turingworkflow.plugins.ssh.NodeActor;
+import com.scivicslab.turingworkflow.workflow.accumulator.MultiplexerAccumulatorIIAR;
 
 /**
  * An actor reference for {@link NodeGroupInterpreter} that orchestrates groups of infrastructure nodes and executes
@@ -58,12 +64,24 @@ import com.scivicslab.turingworkflow.plugins.ssh.NodeActor;
  * <li>{@code executeCommandOnAllNodes} runs a shell command on every child node.</li>
  * <li>{@code runWorkflow} loads and executes a workflow file on this node group.</li>
  * <li>{@code runUntilEnd} executes the current workflow until it reaches the "end" state.</li>
+ * <li>{@code loadInventory} reads the inventory file a workflow names, under the workflow's base directory.</li>
  * <li>{@code hasInventory} returns whether an inventory is currently loaded.</li>
  * <li>{@code hasAccumulator} returns whether an output multiplexer is registered.</li>
  * <li>{@code getAccumulatorSummary} returns the collected results from the output multiplexer.</li>
  * <li>{@code getSessionId} returns the current session ID.</li>
  * <li>{@code printJson} and {@code printYaml} output the current state as formatted JSON or YAML.</li>
  * </ul>
+ *
+ * <p>A workflow makes a node group itself with {@code loader.createChild}, which uses the
+ * {@code (String, IIActorSystem)} constructor, and then names its inventory file:
+ * <pre>{@code
+ * - actor: loader
+ *   method: createChild
+ *   arguments: ["jexl:self", "nodeGroup", "com.scivicslab.turingworkflow.plugins.inventory.NodeGroupActor"]
+ * - actor: nodeGroup
+ *   method: loadInventory
+ *   arguments: {path: inventory.ini}
+ * }</pre>
  *
  * <p>When {@code createNodeActors} is called, it establishes a hierarchy where this actor is the parent and each host
  * becomes a child actor named {@code node-<hostname>}.
@@ -112,6 +130,17 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     public NodeGroupActor(String actorName, NodeGroupInterpreter object) {
         super(actorName, object);
         logger = Logger.getLogger(actorName);
+    }
+
+    /**
+     * Initializes a node group with no inventory yet, as {@code loader.createChild} makes it; the workflow then names
+     * the inventory file with {@code loadInventory}.
+     *
+     * @param actorName the name of this actor
+     * @param system the actor system to register in
+     */
+    public NodeGroupActor(String actorName, IIActorSystem system) {
+        this(actorName, new NodeGroupInterpreter(new NodeGroup(), system), system);
     }
 
     /** Initializes a new {@code NodeGroupActor} that links a {@link NodeGroupInterpreter} to an actor system. */
@@ -297,6 +326,92 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     // ========================================================================
 
     /**
+     * Reads an Ansible inventory file into this node group.
+     *
+     * <p>The path is read under the workflow's base directory: this node group's own, or, when it has none, that of the
+     * interpreter it was created under. A path that is outside the base directory, also once its links are resolved, is
+     * refused. With no base directory the path is read as written.</p>
+     *
+     * <pre>{@code
+     * - actor: nodeGroup
+     *   method: loadInventory
+     *   arguments: {path: inventory.ini}
+     * }</pre>
+     *
+     * @param args the inventory file's path, relative to the base directory or absolute
+     * @return a success naming the file read, or a failure saying why it was not read
+     */
+    @Action(value = "loadInventory", argsType = PathArgs.class)
+    public ActionResult loadInventory(PathArgs args) {
+        try {
+            Path file = underBaseDirectory(baseDirectory(), args.path());
+            try (InputStream in = Files.newInputStream(file)) {
+                this.object.getNodeGroup().loadInventory(in);
+            }
+            return new ActionResult(true, "Inventory loaded: " + file);
+        } catch (IOException e) {
+            logger.log(Level.WARNING, "loadInventory failed: " + args.path(), e);
+            return new ActionResult(false, "loadInventory " + args.path() + ": " + e.getMessage());
+        }
+    }
+
+    /**
+     * Returns the base directory file reads are limited to: this node group's own, else that of the interpreter that is
+     * its parent, else null.
+     */
+    private String baseDirectory() throws IOException {
+        String own = this.object.getWorkflowBaseDir();
+        if (own != null || getParentName() == null) {
+            return own;
+        }
+        IIActorRef<?> parent = ((IIActorSystem) this.system()).getIIActor(getParentName());
+        if (parent == null) {
+            return null;
+        }
+        try {
+            // askNow reads the parent's base directory on a virtual thread of its own, past the parent's mailbox,
+            // which may be busy running the very workflow that called this action.
+            return parent.askNow(o -> o instanceof Interpreter i ? i.getWorkflowBaseDir() : null).get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("interrupted while reading the base directory of " + getParentName(), e);
+        } catch (ExecutionException e) {
+            throw new IOException("cannot read the base directory of " + getParentName(), e.getCause());
+        }
+    }
+
+    /**
+     * Returns the real path of {@code requested} under {@code baseDir}.
+     *
+     * <p>The path is resolved against the base and normalised, so {@code ..} is taken out, and refused when it is not
+     * under the base; then its real path, with links resolved, is compared again, so a link inside the base that points
+     * outside it is refused too. The base is compared by its real path. With no base directory, {@code requested} is
+     * returned as written.</p>
+     *
+     * @throws IOException when the path is outside the base directory, does not exist, or cannot be resolved
+     */
+    static Path underBaseDirectory(String baseDir, String requested) throws IOException {
+        if (baseDir == null) {
+            return Path.of(requested);
+        }
+        Path base = Path.of(baseDir).toRealPath();
+        Path candidate = base.resolve(requested).normalize();
+        if (!candidate.startsWith(base)) {
+            throw new IOException("outside the base directory: " + requested + " (base directory " + base + ")");
+        }
+        Path real;
+        try {
+            real = candidate.toRealPath();
+        } catch (NoSuchFileException e) {
+            throw new IOException("no such file under the base directory: " + candidate, e);
+        }
+        if (!real.startsWith(base)) {
+            throw new IOException("outside the base directory: " + requested + " (base directory " + base + ")");
+        }
+        return real;
+    }
+
+    /**
      * Returns an action result indicating whether an inventory is currently loaded.
      *
      * @param args the argument string (not used)
@@ -363,7 +478,7 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      * @return an action result indicating whether all matched actors succeeded, or a failure message detailing which
      * nodes failed and why.
      */
-    @Action(value = "apply", argsType = ApplyArgs.class)
+    @Action(value = "apply", argsType = ApplyArgs.class, orchestrates = true)
     public ActionResult applyAction(ApplyArgs args) {
         return apply(args.actor(), args.method(), args.arguments());
     }
@@ -404,23 +519,27 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      */
     @Action("hasAccumulator")
     public ActionResult hasAccumulator(String args) {
-        boolean hasAcc = ((IIActorSystem) this.system()).getIIActor("outputMultiplexer") != null;
+        boolean hasAcc = ((IIActorSystem) this.system()).getIIActor(MultiplexerAccumulatorIIAR.ACTOR_NAME) != null;
         return new ActionResult(hasAcc, hasAcc ? "Accumulator exists" : "No accumulator");
     }
 
     /**
-     * Returns a successful action result without performing any work.
+     * Says whether there is an output multiplexer to collect the nodes' output into.
      *
-     * <p>This action is a no-op kept for backward compatibility; the output multiplexer is now automatically created
-     * by the CLI.</p>
+     * <p>This action makes nothing: whoever runs the workflow registers the multiplexer, as the run command does, under
+     * {@link MultiplexerAccumulatorIIAR#ACTOR_NAME}. With none registered the nodes' output would be lost, so this is a
+     * failure, and a workflow that expects its output collected stops here.</p>
      *
      * @param args the argument string (not used)
-     * @return an action result that is always a success with the message "Accumulator managed by CLI"
+     * @return a success when a multiplexer is registered, a failure naming the missing one otherwise
      */
     @Action("createAccumulator")
     public ActionResult createAccumulator(String args) {
-        // No-op: MultiplexerAccumulator is now created by RunCLI
-        return new ActionResult(true, "Accumulator managed by CLI");
+        if (((IIActorSystem) this.system()).getIIActor(MultiplexerAccumulatorIIAR.ACTOR_NAME) == null) {
+            return new ActionResult(false,
+                "No output multiplexer to collect into: nothing is registered as " + MultiplexerAccumulatorIIAR.ACTOR_NAME);
+        }
+        return new ActionResult(true, "Output is collected by " + MultiplexerAccumulatorIIAR.ACTOR_NAME);
     }
 
     /**
@@ -628,10 +747,11 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
     /**
      * Applies an action to all child actors matching a wildcard pattern.
      *
-     * <p>Each child's work runs on the ManagedThreadPool's real threads, never on commonPool. Called
-     * on a thread that is not one of the pool's real threads, the children run in parallel and the
-     * calling thread waits; called on one of the pool's real threads, which is where a workflow
-     * step reaches it, they run on that real thread one after another.</p>
+     * <p>Each child's work runs on the ManagedThreadPool's real threads, never on commonPool. The
+     * action orchestrates, so a workflow step with no {@code execution:} key runs it on the calling
+     * interpreter's mailbox virtual thread: the children run in parallel and that virtual thread
+     * waits. Called on one of the pool's real threads, they run on that real thread one after
+     * another.</p>
      *
      * Returns an action result that is a success if all matched child actors executed the method successfully, or a
      * failure containing a list of specific errors for each failed actor. If no actors match the pattern, it returns a
@@ -678,9 +798,10 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
             // ask(action, pool); nothing here runs on commonPool. Called on a thread that is not
             // one of the pool's real threads (this actor's mailbox virtual thread, say), the
             // children run in parallel on the pool's real threads and this thread waits for them.
-            // Called on one of the pool's real threads, as a workflow step reaches it, ask runs
-            // each child right here, one after another (ActorRef's inline rule): no parallelism,
-            // but no pool real thread waits for work queued behind itself.
+            // A workflow step reaches it on the calling interpreter's mailbox virtual thread (apply
+            // orchestrates). Called on one of the pool's real threads instead, ask runs each child
+            // right here, one after another (ActorRef's inline rule): no parallelism, but no pool
+            // real thread waits for work queued behind itself.
             ExecutorService pool = this.system().getManagedThreadPool();
             List<CompletableFuture<Void>> futures = new ArrayList<>();
 
@@ -849,7 +970,7 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
      */
     private ActionResult getAccumulatorSummary() {
         IIActorSystem sys = (IIActorSystem) this.system();
-        IIActorRef<?> multiplexer = sys.getIIActor("outputMultiplexer");
+        IIActorRef<?> multiplexer = sys.getIIActor(MultiplexerAccumulatorIIAR.ACTOR_NAME);
         if (multiplexer == null) {
             return new ActionResult(false, "No output multiplexer registered");
         }

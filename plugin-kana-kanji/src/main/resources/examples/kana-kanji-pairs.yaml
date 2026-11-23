@@ -76,7 +76,7 @@ steps:
     actions:
       - actor: pairs
         method: closeOutput
-      - actor: log
+      - actor: outputMultiplexer
         method: add
         arguments: {source: "kana-kanji", type: "stdout", data: "All pages processed."}
 
@@ -103,7 +103,7 @@ steps:
   - states: ["5", "3"]
     label: step1-failed-skip
     actions:
-      - actor: log
+      - actor: outputMultiplexer
         method: add
         arguments: {source: "kana-kanji", type: "stderr", data: "Step 1 failed, skipping page"}
 
@@ -139,7 +139,7 @@ steps:
   - states: ["8", "3"]
     label: step2-failed-skip
     actions:
-      - actor: log
+      - actor: outputMultiplexer
         method: add
         arguments: {source: "kana-kanji", type: "stderr", data: "Step 2 failed, skipping page"}
 
@@ -150,6 +150,6 @@ steps:
     actions:
       - actor: pairs
         method: closeOutput
-      - actor: log
+      - actor: outputMultiplexer
         method: add
         arguments: {source: "kana-kanji", type: "stderr", data: "Workflow ended unexpectedly"}
