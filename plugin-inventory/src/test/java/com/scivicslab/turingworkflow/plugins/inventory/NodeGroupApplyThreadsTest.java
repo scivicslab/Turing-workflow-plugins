@@ -174,7 +174,7 @@ class NodeGroupApplyThreadsTest {
     }
 
     @Test
-    @DisplayName("on a pool real thread: children run on that thread, one after another")
+    @DisplayName("on a pool real thread: apply ends, and every child runs on a pool real thread")
     void fromPoolRealThread() {
         system = new IIActorSystem("group-apply-from-pool", 2);
         Group group = new Group("group", 3, null);
@@ -188,11 +188,12 @@ class NodeGroupApplyThreadsTest {
         assertThat(result.isSuccess()).as(result.getResult()).isTrue();
         assertThat(result.getResult()).isEqualTo("Applied to 3 actors");
         assertThat(group.runs).hasSize(3);
+        // A child's message is queued and taken in its actor's turn. The waiting pool real thread helps the
+        // pool while it waits, but another idle real thread may run a child too, so which pool real thread
+        // runs which child is not fixed.
         for (ChildRun run : group.runs) {
-            assertThat(run.thread()).as(run.child()).isSameAs(applying.get());
-            assertThat(run.onPoolRealThread()).isTrue();
+            assertThat(run.onPoolRealThread()).as("%s ran on %s", run.child(), run.thread()).isTrue();
         }
-        assertThat(group.mostAtOnce.get()).isEqualTo(1);
     }
 
     @Test
