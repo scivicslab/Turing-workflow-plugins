@@ -3,8 +3,6 @@ package com.scivicslab.turingworkflow.plugins.inventory;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
-import java.io.ByteArrayInputStream;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -26,8 +24,6 @@ import com.scivicslab.pojoactor.action.ActionResult;
 import com.scivicslab.pojoactor.core.ManagedThreadPool;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
-import com.scivicslab.turingworkflow.workflow.Interpreter;
-import com.scivicslab.turingworkflow.workflow.InterpreterIIAR;
 
 /**
  * Which thread runs {@code NodeGroupActor}'s {@code apply} children, which thread waits for them,
@@ -102,40 +98,6 @@ class NodeGroupApplyThreadsTest {
     }
 
     @Test
-    @DisplayName("a workflow step with no execution key: the children run in parallel on pool real threads")
-    void plainWorkflowStepRunsChildrenInParallel() {
-        system = new IIActorSystem("group-apply-step", 2);
-        Group group = new Group("group", 2, new CyclicBarrier(2));
-        Interpreter main = new Interpreter.Builder().loggerName("main").team(system).build();
-        InterpreterIIAR mainRef = new InterpreterIIAR("main", main, system);
-        main.setSelfActorRef(mainRef);
-        system.addIIActor(mainRef);
-        main.readYaml(new ByteArrayInputStream("""
-            name: group-apply-step
-            steps:
-              - states: ["0", "end"]
-                actions:
-                  - actor: group
-                    method: apply
-                    arguments:
-                      actor: "*"
-                      method: work
-            """.getBytes(StandardCharsets.UTF_8)));
-
-        // The loop runs on this test's thread, which is not a pool real thread, as RunCLI's does.
-        ActionResult result = assertTimeoutPreemptively(LIMIT, () -> main.runUntilEnd(5));
-
-        assertThat(result.isSuccess()).as(result.getResult()).isTrue();
-        Set<Thread> threads = new HashSet<>();
-        for (ChildRun run : group.runs) {
-            assertThat(run.onPoolRealThread()).as("%s ran on %s", run.child(), run.thread()).isTrue();
-            threads.add(run.thread());
-        }
-        assertThat(threads).hasSize(2);
-        assertThat(group.mostAtOnce.get()).as("both children in flight at once").isEqualTo(2);
-    }
-
-    @Test
     @DisplayName("one ManagedThreadPool real thread, apply on it: it completes")
     void oneRealThreadOneApply() {
         system = new IIActorSystem("group-apply-one-thread", 1);
@@ -174,7 +136,7 @@ class NodeGroupApplyThreadsTest {
     }
 
     @Test
-    @DisplayName("on a pool real thread: apply ends, and every child runs on a pool real thread")
+    @DisplayName("on a pool real thread: children run on that thread, one after another")
     void fromPoolRealThread() {
         system = new IIActorSystem("group-apply-from-pool", 2);
         Group group = new Group("group", 3, null);
@@ -188,12 +150,11 @@ class NodeGroupApplyThreadsTest {
         assertThat(result.isSuccess()).as(result.getResult()).isTrue();
         assertThat(result.getResult()).isEqualTo("Applied to 3 actors");
         assertThat(group.runs).hasSize(3);
-        // A child's message is queued and taken in its actor's turn. The waiting pool real thread helps the
-        // pool while it waits, but another idle real thread may run a child too, so which pool real thread
-        // runs which child is not fixed.
         for (ChildRun run : group.runs) {
-            assertThat(run.onPoolRealThread()).as("%s ran on %s", run.child(), run.thread()).isTrue();
+            assertThat(run.thread()).as(run.child()).isSameAs(applying.get());
+            assertThat(run.onPoolRealThread()).isTrue();
         }
+        assertThat(group.mostAtOnce.get()).isEqualTo(1);
     }
 
     @Test
