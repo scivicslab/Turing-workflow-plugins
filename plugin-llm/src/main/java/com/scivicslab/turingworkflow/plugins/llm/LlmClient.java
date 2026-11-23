@@ -136,7 +136,11 @@ public class LlmClient {
      * @return an {@link ActionResult} containing a message describing what was set
      */
     public ActionResult setOpenAiUrl(String url, String model) {
-        this.openAiUrl = url == null ? null : url.trim();
+        String refusal = endpointRefusal(url == null ? null : url.trim());
+        if (refusal != null) {
+            return new ActionResult(false, "setOpenAiUrl: " + refusal);
+        }
+        this.openAiUrl = url.trim();
         if (model != null && !model.isBlank()) {
             this.openAiModel = model.trim();
         }
@@ -146,18 +150,55 @@ public class LlmClient {
         return new ActionResult(true, msg);
     }
 
+    /**
+     * Returns why {@code url} cannot be the endpoint, or {@code null} when it can.
+     *
+     * <p>The endpoint is handed to curl, which speaks many protocols. A {@code file://} URL makes a POST write the
+     * request body into that file, and a text that begins with {@code -} is read by curl as an option. Only an
+     * absolute {@code http} or {@code https} URL with a host is accepted.</p>
+     */
+    static String endpointRefusal(String url) {
+        if (url == null || url.isBlank()) {
+            return "the URL is required";
+        }
+        java.net.URI uri;
+        try {
+            uri = new java.net.URI(url);
+        } catch (java.net.URISyntaxException e) {
+            return "not a URL: " + e.getReason();
+        }
+        String scheme = uri.getScheme();
+        if (scheme == null || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
+            return "only http and https URLs are accepted";
+        }
+        if (uri.getHost() == null) {
+            return "the URL has no host";
+        }
+        return null;
+    }
+
     public ActionResult setOpenAiUrl(String args) {
         String trimmed = args == null ? "" : args.trim();
         if (trimmed.startsWith("[")) {
             try {
                 org.json.JSONArray arr = new org.json.JSONArray(trimmed);
-                this.openAiUrl   = arr.getString(0).trim();
+                String candidate = arr.getString(0).trim();
+                String refusal = endpointRefusal(candidate);
+                if (refusal != null) {
+                    return new ActionResult(false, "setOpenAiUrl: " + refusal);
+                }
+                this.openAiUrl   = candidate;
                 this.openAiModel = arr.length() > 1 ? arr.getString(1).trim() : this.openAiModel;
             } catch (Exception e) {
                 return new ActionResult(false, "setOpenAiUrl: invalid JSON array: " + e.getMessage());
             }
         } else {
-            this.openAiUrl = unwrapJsonArray(trimmed);
+            String candidate = unwrapJsonArray(trimmed);
+            String refusal = endpointRefusal(candidate);
+            if (refusal != null) {
+                return new ActionResult(false, "setOpenAiUrl: " + refusal);
+            }
+            this.openAiUrl = candidate;
         }
         String msg = "OpenAI URL set to: " + this.openAiUrl
                 + (this.openAiModel != null ? " (model: " + this.openAiModel + ")" : "");
@@ -310,9 +351,11 @@ public class LlmClient {
         String what = "POST " + openAiUrl + " (model " + model + ")";
         Process process = new ProcessBuilder(
                 "curl", "-s", "-S", "-N", "-m", String.valueOf(total),
-                "-X", "POST", openAiUrl,
+                "--proto", "=http,https", "--proto-redir", "=http,https",
+                "-X", "POST",
                 "-H", "Content-Type: application/json",
-                "--data", "@" + bodyFile).start();
+                "--data", "@" + bodyFile,
+                "--", openAiUrl).start();
         process.getOutputStream().close();
 
         java.io.ByteArrayOutputStream stdout = new java.io.ByteArrayOutputStream();

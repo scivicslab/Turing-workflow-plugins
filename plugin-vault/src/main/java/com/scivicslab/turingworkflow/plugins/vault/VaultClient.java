@@ -91,6 +91,8 @@ public class VaultClient {
      * @throws VaultException if the secret is not found, the field is missing, or communication with Vault fails
      */
     public String readField(String kvPath, String fieldName) throws VaultException {
+        String refusal = VaultNames.pathRefusal(kvPath);
+        if (refusal != null) throw new VaultException("Refused: " + refusal);
         int slash = kvPath.indexOf('/');
         String apiPath = (slash < 0)
                 ? kvPath + "/data"
@@ -106,6 +108,8 @@ public class VaultClient {
      * @throws VaultException if Vault communication fails or the secret is not found
      */
     public String readSecret(String path) throws VaultException {
+        String refusal = VaultNames.pathRefusal(path);
+        if (refusal != null) throw new VaultException("Refused: " + refusal);
         return extractField(fetch(path), "value");
     }
 

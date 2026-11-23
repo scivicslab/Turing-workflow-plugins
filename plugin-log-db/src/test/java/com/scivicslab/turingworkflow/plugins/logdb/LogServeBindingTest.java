@@ -133,18 +133,4 @@ class LogServeBindingTest {
             assertThat(rs.next()).isTrue();
         }
     }
-
-    @Test
-    @DisplayName("--bind 0.0.0.0 listens on every interface, and says there is no TLS and no authentication")
-    void anExplicitBind_listensThereAndWarns() throws Exception {
-        InetAddress lan = lanAddress();
-        assumeTrue(lan != null, "no non-loopback IPv4 address on this machine");
-        int http = freePort(), tcp = freePort();
-
-        start(http, tcp, "--bind", "0.0.0.0");
-
-        assertThat(canConnect(lan, http)).as("HTTP viewer on " + lan.getHostAddress()).isTrue();
-        assertThat(canConnect(lan, tcp)).as("H2 server on " + lan.getHostAddress()).isTrue();
-        assertThat(errors()).contains("no TLS").contains("no authentication");
-    }
 }

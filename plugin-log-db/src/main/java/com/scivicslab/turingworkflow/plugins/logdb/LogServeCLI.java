@@ -23,12 +23,19 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.KeyStore;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
+import javax.net.ssl.TrustManagerFactory;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
@@ -38,6 +45,9 @@ import org.h2.tools.Server;
 import com.scivicslab.pluggablecli.CommandRepository;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsParameters;
+import com.sun.net.httpserver.HttpsServer;
 
 /**
  * Starts an HTTP server that serves a web log viewer over an H2 log database and an optional H2 TCP server for shared
@@ -56,11 +66,18 @@ import com.sun.net.httpserver.HttpServer;
  *
  * <p><b>Who can reach it.</b> Both servers listen on {@code 127.0.0.1} unless {@code --bind <address>} names another
  * address, so by default only this machine can connect. The database has an empty password and the viewer has no
- * login, and neither has TLS: with another address, such as {@code 0.0.0.0} for every interface, any host that
- * reaches the HTTP port reads every logged line, and any host that reaches the H2 TCP port runs SQL, and with
- * {@code CREATE ALIAS} Java code, as the user running this command. A server started with such an address writes a
- * warning saying so. H2 takes its bind address once, when its classes are loaded, so the TCP server is started
- * only when H2 has not been loaded in this JVM with another address; run the command in a JVM of its own.</p>
+ * login. For that reason an address other than the loopback one is refused at start-up unless the viewer is given
+ * mutual TLS: {@code --tls-keystore} (the server's key and certificate) and {@code --tls-truststore} (the
+ * certificates of the clients that may connect). The viewer then answers over TLS 1.3 or 1.2 and asks every client
+ * for a certificate; a client with none, or one the truststore does not trust, never reaches a request. The
+ * passwords are read from the environment variables named by {@code --tls-keystore-password-env} and
+ * {@code --tls-truststore-password-env}, not from the command line. A program that embeds this class passes an
+ * {@code SSLContext} to {@link #createHttpServer}. No key or certificate is issued or renewed here.</p>
+ *
+ * <p>The H2 TCP server cannot ask its clients for a certificate, and its database has no password. It is therefore
+ * started only on the loopback address; with another address it is not started, and the viewer is the only
+ * listener. H2 takes its bind address once, when its classes are loaded, so the TCP server is started only when H2
+ * has not been loaded in this JVM with another address; run the command in a JVM of its own.</p>
  *
  * @author devteam@scivicslab.com
  * @since 1.5.0
@@ -106,8 +123,25 @@ public class LogServeCLI {
                 .longOpt("bind")
                 .hasArg(true).argName("address")
                 .desc("Address the HTTP viewer and the H2 TCP server listen on (default: 127.0.0.1, this machine only). "
-                        + "Another address, such as 0.0.0.0 for every interface, lets other hosts read every log line and "
-                        + "run SQL and Java as the user running this command: there is no TLS and no authentication")
+                        + "Another address, such as 0.0.0.0 for every interface, is refused unless --tls-keystore and "
+                        + "--tls-truststore give mutual TLS; the H2 TCP server is then not started")
+                .build());
+        opts.addOption(Option.builder()
+                .longOpt("tls-keystore").hasArg(true).argName("path")
+                .desc("PKCS12 key store holding the server's key and certificate; with it the viewer answers over TLS")
+                .build());
+        opts.addOption(Option.builder()
+                .longOpt("tls-keystore-password-env").hasArg(true).argName("variable")
+                .desc("Name of the environment variable that holds the key store password (default: no password)")
+                .build());
+        opts.addOption(Option.builder()
+                .longOpt("tls-truststore").hasArg(true).argName("path")
+                .desc("PKCS12 trust store holding the certificates of the clients that may connect; every client must "
+                        + "present one. Required with --tls-keystore; an address other than 127.0.0.1 needs both")
+                .build());
+        opts.addOption(Option.builder()
+                .longOpt("tls-truststore-password-env").hasArg(true).argName("variable")
+                .desc("Name of the environment variable that holds the trust store password (default: no password)")
                 .build());
         opts.addOption(Option.builder()
                 .longOpt("no-tcp")
@@ -140,18 +174,26 @@ public class LogServeCLI {
             System.exit(1);
             return;
         }
-        if (!bindAddress.isLoopbackAddress()) {
-            System.err.println("Warning: log-serve listens on " + bind + ", which other hosts can reach. There is no TLS and"
-                    + " no authentication: anyone who reaches the HTTP port can read every logged line, and anyone who"
-                    + " reaches the H2 TCP port can run SQL and Java as the user running log-serve. Use the default"
-                    + " (127.0.0.1) unless the readers are hosts on a network only they can reach.");
+        SSLContext tls;
+        try {
+            tls = sslContextFrom(cl);
+            requireMutualTls(bindAddress, tls);
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            System.err.println("Error: " + e.getMessage());
+            System.exit(1);
+            return;
+        }
+        boolean loopback = bindAddress.isLoopbackAddress();
+        if (!loopback && !noTcp) {
+            System.err.println("Notice: the H2 TCP server is not started on " + bind + ": it has no certificate check and"
+                    + " its database has no password. Readers on other hosts use the viewer over mutual TLS.");
         }
 
-        Server tcpServer = startTcpServer(noTcp, tcpPort, bind, bindAddress.isLoopbackAddress());
+        Server tcpServer = startTcpServer(noTcp || !loopback, tcpPort, bind, loopback);
 
         HttpServer http;
         try {
-            http = HttpServer.create(new InetSocketAddress(bindAddress, httpPort), 0);
+            http = createHttpServer(bindAddress, httpPort, tls);
         } catch (IOException e) {
             System.err.println("Error: failed to bind HTTP port " + httpPort + ": " + e.getMessage());
             if (tcpServer != null) {
@@ -167,7 +209,7 @@ public class LogServeCLI {
         http.start();
 
         System.out.println("Log database: " + dbPath);
-        System.out.println("Log viewer:   http://" + (bindAddress.isAnyLocalAddress() ? "localhost" : bind) + ":" + httpPort + "/");
+        System.out.println("Log viewer:   " + (tls != null ? "https://" : "http://") + (bindAddress.isAnyLocalAddress() ? "localhost" : bind) + ":" + httpPort + "/");
         System.out.println("Press Ctrl-C to stop.");
 
         CountDownLatch latch = new CountDownLatch(1);
@@ -184,6 +226,98 @@ public class LogServeCLI {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /**
+     * Fails, before anything listens, when {@code address} is not the loopback address and there is no TLS context.
+     *
+     * @throws IllegalStateException if the address can be reached from other hosts and {@code tls} is {@code null}
+     */
+    static void requireMutualTls(InetAddress address, SSLContext tls) {
+        if (!address.isLoopbackAddress() && tls == null) {
+            throw new IllegalStateException("log-serve will not listen on " + address.getHostAddress()
+                    + " without mutual TLS: give --tls-keystore and --tls-truststore, or use the default 127.0.0.1");
+        }
+    }
+
+    /**
+     * Creates the viewer's HTTP server, bound but not started. With {@code tls} it is an {@link HttpsServer} that
+     * asks every client for a certificate ({@code needClientAuth}) and speaks TLS 1.3 or 1.2.
+     *
+     * @throws IllegalStateException if {@code address} is not the loopback address and {@code tls} is {@code null}
+     */
+    static HttpServer createHttpServer(InetAddress address, int port, SSLContext tls) throws IOException {
+        requireMutualTls(address, tls);
+        InetSocketAddress socket = new InetSocketAddress(address, port);
+        if (tls == null) {
+            return HttpServer.create(socket, 0);
+        }
+        HttpsServer https = HttpsServer.create(socket, 0);
+        https.setHttpsConfigurator(new HttpsConfigurator(tls) {
+            @Override
+            public void configure(HttpsParameters params) {
+                SSLParameters parameters = tls.getDefaultSSLParameters();
+                parameters.setNeedClientAuth(true);
+                parameters.setProtocols(new String[] {"TLSv1.3", "TLSv1.2"});
+                params.setSSLParameters(parameters);
+            }
+        });
+        return https;
+    }
+
+    /**
+     * Builds the TLS context from the command line: {@code null} when no TLS option is given.
+     *
+     * @throws IllegalArgumentException if only one of the key store and the trust store is given, or one cannot be read
+     */
+    static SSLContext sslContextFrom(CommandLine cl) {
+        String keyStore = cl.getOptionValue("tls-keystore");
+        String trustStore = cl.getOptionValue("tls-truststore");
+        if (keyStore == null && trustStore == null) {
+            return null;
+        }
+        if (keyStore == null || trustStore == null) {
+            throw new IllegalArgumentException("--tls-keystore and --tls-truststore go together: the server needs its"
+                    + " certificate, and it asks every client for one");
+        }
+        try {
+            char[] keyPassword = passwordFromEnvironment(cl.getOptionValue("tls-keystore-password-env"));
+            char[] trustPassword = passwordFromEnvironment(cl.getOptionValue("tls-truststore-password-env"));
+            return sslContext(Path.of(keyStore), keyPassword, Path.of(trustStore), trustPassword);
+        } catch (java.security.GeneralSecurityException | IOException e) {
+            throw new IllegalArgumentException("cannot set up TLS: " + e.getMessage(), e);
+        }
+    }
+
+    /** Builds a TLS context from a PKCS12 key store and a PKCS12 trust store. */
+    static SSLContext sslContext(Path keyStore, char[] keyPassword, Path trustStore, char[] trustPassword)
+            throws java.security.GeneralSecurityException, IOException {
+        KeyStore keys = KeyStore.getInstance("PKCS12");
+        try (var in = Files.newInputStream(keyStore)) {
+            keys.load(in, keyPassword);
+        }
+        KeyManagerFactory keyManagers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        keyManagers.init(keys, keyPassword == null ? new char[0] : keyPassword);
+        KeyStore trusted = KeyStore.getInstance("PKCS12");
+        try (var in = Files.newInputStream(trustStore)) {
+            trusted.load(in, trustPassword);
+        }
+        TrustManagerFactory trustManagers = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        trustManagers.init(trusted);
+        SSLContext context = SSLContext.getInstance("TLS");
+        context.init(keyManagers.getKeyManagers(), trustManagers.getTrustManagers(), null);
+        return context;
+    }
+
+    private static char[] passwordFromEnvironment(String variable) {
+        if (variable == null) {
+            return null;
+        }
+        String value = System.getenv(variable);
+        if (value == null) {
+            throw new IllegalArgumentException("the environment variable " + variable + " is not set");
+        }
+        return value.toCharArray();
     }
 
     /**
@@ -210,10 +344,10 @@ public class LogServeCLI {
                         + " its own, or set -D" + H2_BIND_PROPERTY + "=" + bind + ".");
                 return null;
             }
-            List<String> args = new java.util.ArrayList<>(List.of("-tcpPort", String.valueOf(tcpPort)));
             if (!loopback) {
-                args.add("-tcpAllowOthers");
+                return null;
             }
+            List<String> args = new java.util.ArrayList<>(List.of("-tcpPort", String.valueOf(tcpPort)));
             Server server = Server.createTcpServer(args.toArray(new String[0])).start();
             System.out.println("H2 TCP server started on " + bind + ":" + tcpPort);
             return server;

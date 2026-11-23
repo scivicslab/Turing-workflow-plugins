@@ -67,9 +67,20 @@ public class KubectlVaultBackend implements VaultBackend {
 
     @Override
     public String get(String path, String fieldName) throws VaultException {
+        String refusal = firstNonNull(
+                VaultNames.kubernetesNameRefusal("namespace", namespace),
+                VaultNames.kubernetesNameRefusal("pod name", pod),
+                VaultNames.pathRefusal(path),
+                VaultNames.fieldRefusal(fieldName));
+        if (refusal != null) throw new VaultException("Refused: " + refusal);
         return secretPrintedBy(List.of(
                 "kubectl", "exec", "-n", namespace, pod,
                 "--", "vault", "kv", "get", "-field=" + fieldName, path));
+    }
+
+    private static String firstNonNull(String... refusals) {
+        for (String r : refusals) if (r != null) return r;
+        return null;
     }
 
     /**

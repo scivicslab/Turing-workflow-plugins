@@ -22,6 +22,10 @@ public final class LogServeMain {
         opts.addOption(Option.builder().longOpt("tcp-port").hasArg(true).build());
         opts.addOption(Option.builder().longOpt("no-tcp").build());
         opts.addOption(Option.builder().longOpt("bind").hasArg(true).build());
+        opts.addOption(Option.builder().longOpt("tls-keystore").hasArg(true).build());
+        opts.addOption(Option.builder().longOpt("tls-keystore-password-env").hasArg(true).build());
+        opts.addOption(Option.builder().longOpt("tls-truststore").hasArg(true).build());
+        opts.addOption(Option.builder().longOpt("tls-truststore-password-env").hasArg(true).build());
         CommandLine cl = new DefaultParser().parse(opts, args);
         new LogServeCLI().execute(cl);
     }

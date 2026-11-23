@@ -50,8 +50,54 @@ public class VaultConfig {
         if (token == null || token.isEmpty()) {
             throw new IllegalArgumentException("Vault token cannot be null or empty");
         }
+        String refusal = addressRefusal(address);
+        if (refusal != null) {
+            throw new IllegalArgumentException("Vault address " + address + ": " + refusal);
+        }
         this.address = address.endsWith("/") ? address.substring(0, address.length() - 1) : address;
         this.token = token;
+    }
+
+    /** The system property that lets the token travel over plain {@code http} to a host that is not this machine. */
+    public static final String ALLOW_PLAIN_HTTP_PROPERTY = "turingworkflow.vault.allowPlainHttp";
+
+    /**
+     * Returns why the token must not be sent to {@code address}, or {@code null} when it may be.
+     *
+     * <p>Every request carries the token in a header. Over plain {@code http} to another host, anyone on the path
+     * reads it and can use it as the program does. So {@code https} is required, except for a loopback address, or
+     * when the program sets {@value #ALLOW_PLAIN_HTTP_PROPERTY} to {@code true}, which it does by name.</p>
+     */
+    static String addressRefusal(String address) {
+        java.net.URI uri;
+        try {
+            uri = new java.net.URI(address.trim());
+        } catch (java.net.URISyntaxException e) {
+            return "not a URL: " + e.getReason();
+        }
+        String scheme = uri.getScheme();
+        if (uri.getHost() == null || scheme == null) {
+            return "the address needs a scheme and a host";
+        }
+        if (scheme.equalsIgnoreCase("https")) {
+            return null;
+        }
+        if (!scheme.equalsIgnoreCase("http")) {
+            return "only http and https are accepted";
+        }
+        boolean loopback;
+        try {
+            String host = uri.getHost();
+            String bare = host.startsWith("[") ? host.substring(1, host.length() - 1) : host;
+            loopback = bare.equalsIgnoreCase("localhost") || java.net.InetAddress.getByName(bare).isLoopbackAddress();
+        } catch (java.net.UnknownHostException e) {
+            loopback = false;
+        }
+        if (loopback || Boolean.getBoolean(ALLOW_PLAIN_HTTP_PROPERTY)) {
+            return null;
+        }
+        return "the token would travel in clear text; use https (or set -D" + ALLOW_PLAIN_HTTP_PROPERTY
+                + "=true to accept plain http)";
     }
 
     /**
