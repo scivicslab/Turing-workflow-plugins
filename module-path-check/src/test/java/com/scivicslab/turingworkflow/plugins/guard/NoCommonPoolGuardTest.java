@@ -128,6 +128,9 @@ class NoCommonPoolGuardTest {
                     continue;  // a method declaration, not a call
                 }
                 String name = async.group(1);
+                if (name.equals("sendAsync")) {
+                    continue;  // HttpClient's: it runs on the client's executor, checked where the client is built
+                }
                 int arguments = countArguments(code, async.end() - 1);
                 Integer withoutExecutor = ARGUMENTS_WITHOUT_EXECUTOR.get(name);
                 if (withoutExecutor == null) {

@@ -49,6 +49,7 @@ public class OpenAlexClient {
 
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
+            .executor(java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor())
             .build();
 
     /**

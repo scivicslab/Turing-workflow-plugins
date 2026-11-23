@@ -186,7 +186,7 @@ class RealThreadsOnlyInManagedThreadPoolGuardTest {
             }
             Matcher builder = HTTP_BUILDER.matcher(code);
             while (builder.find()) {
-                int end = statementEnd(code, builder.end());
+                int end = statementEnd(code, builder.end(), 1);   // the match ends just after the '(' of newBuilder(
                 if (!EXECUTOR_CALL.matcher(code.substring(builder.start(), end)).find()) {
                     offsets.add(builder.start());
                     what.add("HttpClient.newBuilder() without .executor(: an HttpClient on a pool of real threads of its own");
@@ -227,8 +227,7 @@ class RealThreadsOnlyInManagedThreadPoolGuardTest {
         }
 
         /** The offset of the {@code ;} that ends the statement the code at {@code from} is in. */
-        private static int statementEnd(String code, int from) {
-            int depth = 0;
+        private static int statementEnd(String code, int from, int depth) {
             for (int i = from; i < code.length(); i++) {
                 char c = code.charAt(i);
                 if (c == '(' || c == '[' || c == '{') {

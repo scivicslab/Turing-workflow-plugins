@@ -109,6 +109,7 @@ public class ArxivClient {
             .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(10))
             .followRedirects(HttpClient.Redirect.NORMAL)
+            .executor(java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor())
             .build();
 
     /**

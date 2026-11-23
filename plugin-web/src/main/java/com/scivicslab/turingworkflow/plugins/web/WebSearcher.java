@@ -41,6 +41,7 @@ public class WebSearcher {
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .followRedirects(HttpClient.Redirect.NORMAL)
+            .executor(java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor())
             .build();
 
     /**

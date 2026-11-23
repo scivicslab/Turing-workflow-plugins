@@ -72,6 +72,7 @@ public class OcrClient {
             .version(HttpClient.Version.HTTP_1_1)
             .followRedirects(HttpClient.Redirect.NORMAL)
             .connectTimeout(Duration.ofSeconds(10))
+            .executor(java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor())
             .build();
 
     /**

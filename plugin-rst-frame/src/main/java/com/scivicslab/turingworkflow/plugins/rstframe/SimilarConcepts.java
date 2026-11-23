@@ -135,7 +135,7 @@ public final class SimilarConcepts {
      * @throws IllegalStateException if the endpoint returns a status code other than 200
      */
     public static List<float[]> embed(String url, String model, List<String> texts) throws Exception {
-        HttpClient http = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(Duration.ofSeconds(20)).build();
+        HttpClient http = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(Duration.ofSeconds(20)).executor(java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()).build();
         JSONArray input = new JSONArray();
         // e5 compares two texts of the same kind with the query prefix on both
         for (String t : texts) input.put("query: " + t);

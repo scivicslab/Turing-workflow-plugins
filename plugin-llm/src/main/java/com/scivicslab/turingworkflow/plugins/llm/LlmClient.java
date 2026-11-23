@@ -467,6 +467,7 @@ public class LlmClient {
             String submitBody = "{\"text\": " + jsonEscape(text) + ", \"model\": \"\"}";
             HttpClient client = HttpClient.newBuilder()
                     .connectTimeout(Duration.ofSeconds(10))
+                    .executor(java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor())
                     .build();
 
             HttpRequest submitReq = HttpRequest.newBuilder()
