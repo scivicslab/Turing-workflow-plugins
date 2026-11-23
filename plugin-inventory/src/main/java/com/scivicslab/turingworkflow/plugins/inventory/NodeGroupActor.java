@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import com.scivicslab.pojoactor.core.ManagedThreadPool;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
@@ -802,7 +803,7 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
             // orchestrates). Called on one of the pool's real threads instead, ask runs each child
             // right here, one after another (ActorRef's inline rule): no parallelism, but no pool
             // real thread waits for work queued behind itself.
-            ExecutorService pool = this.system().getManagedThreadPool();
+            ManagedThreadPool pool = this.system().getManagedThreadPool();
             List<CompletableFuture<Void>> futures = new ArrayList<>();
 
             for (IIActorRef<?> actor : matchedActors) {
@@ -833,7 +834,13 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
                 futures.add(future);
             }
 
-            // Wait for all async tasks to complete
+            // Wait for all async tasks to complete. A pool real thread that waits runs the pool's queued
+            // tasks meanwhile (awaitHelping), so a pool whose real threads all wait here makes progress.
+            if (pool.ownsCurrentThread()) {
+                for (CompletableFuture<Void> f : futures) {
+                    pool.awaitHelping(f);
+                }
+            }
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
 
             if (failures.isEmpty()) {
