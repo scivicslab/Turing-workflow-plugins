@@ -834,9 +834,15 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
 
             // Wait for all async tasks to complete. A pool real thread that waits runs the pool's queued
             // tasks meanwhile (awaitHelping), so a pool whose real threads all wait here makes progress.
+            // The futures that ask returns do this in get() and join(); allOf(...) does not, so each
+            // answer is waited for on its own first.
             if (pool.ownsCurrentThread()) {
                 for (CompletableFuture<Void> f : futures) {
-                    pool.awaitHelping(f);
+                    try {
+                        f.join();
+                    } catch (java.util.concurrent.CompletionException e) {
+                        // a child's failure surfaces again at the join below
+                    }
                 }
             }
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
