@@ -18,7 +18,6 @@
 package com.scivicslab.turingworkflow.plugins.inventory;
 
 import java.util.List;
-import java.util.concurrent.ExecutorService;
 
 import org.json.JSONObject;
 
@@ -28,6 +27,7 @@ import com.scivicslab.turingworkflow.plugins.logoutput.WorkflowStreamingAccumula
 import com.scivicslab.turingworkflow.plugins.ssh.Node;
 import com.scivicslab.pojoactor.action.ActionResult;
 import com.scivicslab.pojoactor.core.ActorRef;
+import com.scivicslab.pojoactor.core.ManagedThreadPool;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 import com.scivicslab.turingworkflow.workflow.Interpreter;
@@ -56,7 +56,7 @@ import com.scivicslab.turingworkflow.workflow.Transition;
  * the current session ID.</li>
  * <li><code>getLogStore</code> returns the synchronous log store instance or {@code null}.</li>
  * <li><code>getLogStoreActor</code> returns the actor reference for asynchronous logging or {@code null}.</li>
- * <li><code>getDbExecutor</code> returns the executor service used for database writes or {@code null}.</li>
+ * <li><code>getDbExecutor</code> returns the managed thread pool used for database writes or {@code null}.</li>
  * <li><code>getSessionId</code> returns the current session ID or -1 if not set.</li>
  * </ul>
  *
@@ -99,7 +99,7 @@ public class NodeGroupInterpreter extends Interpreter {
     /**
      * Executes database write tasks in a single-threaded manner to ensure serialized logging of workflow transitions.
      */
-    private ExecutorService dbExecutor;
+    private ManagedThreadPool dbExecutor;
 
     /** The unique identifier for the current workflow execution. */
     private long sessionId = -1;
@@ -209,12 +209,12 @@ public class NodeGroupInterpreter extends Interpreter {
      *
      * @param logStore the instance used for synchronous read operations
      * @param logStoreActor the actor reference used for asynchronous write operations
-     * @param dbExecutor the executor service used to run database write tasks
+     * @param dbExecutor the managed thread pool used to run database write tasks
      * @param sessionId the unique identifier for the current execution session
      */
     public void setLogStore(DistributedLogStore logStore,
                             ActorRef<DistributedLogStore> logStoreActor,
-                            ExecutorService dbExecutor, long sessionId) {
+                            ManagedThreadPool dbExecutor, long sessionId) {
         this.logStore = logStore;
         this.logStoreActor = logStoreActor;
         this.dbExecutor = dbExecutor;
@@ -243,7 +243,7 @@ public class NodeGroupInterpreter extends Interpreter {
      * Returns the executor service used for serialized writes to the distributed log store, or {@code null} if not
      * set.
      */
-    public ExecutorService getDbExecutor() {
+    public ManagedThreadPool getDbExecutor() {
         return dbExecutor;
     }
 

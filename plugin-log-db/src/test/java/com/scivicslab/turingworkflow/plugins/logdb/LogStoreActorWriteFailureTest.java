@@ -2,9 +2,6 @@ package com.scivicslab.turingworkflow.plugins.logdb;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
 import org.json.JSONObject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -12,6 +9,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import com.scivicslab.pojoactor.action.ActionResult;
+import com.scivicslab.pojoactor.core.ManagedThreadPool;
 import com.scivicslab.turingworkflow.workflow.IIActorSystem;
 
 /**
@@ -26,14 +24,14 @@ class LogStoreActorWriteFailureTest {
 
     private IIActorSystem system;
     private H2LogStore store;
-    private ExecutorService dbExecutor;
+    private ManagedThreadPool dbExecutor;
     private LogStoreActor actor;
 
     @BeforeEach
     void setUp() throws Exception {
         system = new IIActorSystem("log-store-write-failure-test");
         store = new H2LogStore();
-        dbExecutor = Executors.newSingleThreadExecutor();
+        dbExecutor = new ManagedThreadPool(1);
         actor = new LogStoreActor("logStore", store, system, dbExecutor);
         system.addIIActor(actor);
     }

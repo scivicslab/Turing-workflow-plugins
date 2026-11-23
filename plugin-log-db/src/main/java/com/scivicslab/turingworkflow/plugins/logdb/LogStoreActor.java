@@ -17,7 +17,6 @@
 
 package com.scivicslab.turingworkflow.plugins.logdb;
 
-import java.util.concurrent.ExecutorService;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -25,6 +24,7 @@ import org.json.JSONObject;
 
 import com.scivicslab.pojoactor.action.Action;
 import com.scivicslab.pojoactor.action.ActionResult;
+import com.scivicslab.pojoactor.core.ManagedThreadPool;
 
 import jakarta.validation.constraints.NotNull;
 import com.scivicslab.turingworkflow.workflow.IIActorRef;
@@ -66,8 +66,8 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
 
     private static final Logger logger = Logger.getLogger(LogStoreActor.class.getName());
 
-    /** The executor service used to serialize database write operations. */
-    private final ExecutorService dbExecutor;
+    /** The managed thread pool whose real thread runs the database write operations, in this actor's turn. */
+    private final ManagedThreadPool dbExecutor;
 
     /**
      * Initializes a new {@code LogStoreActor} with a dedicated executor for asynchronous database writes.
@@ -75,10 +75,10 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
      * @param actorName the name of this actor
      * @param logStore the {@link DistributedLogStore} implementation
      * @param system the actor system
-     * @param dbExecutor the dedicated executor service for DB writes
+     * @param dbExecutor the managed thread pool for DB writes
      */
     public LogStoreActor(String actorName, DistributedLogStore logStore,
-                         IIActorSystem system, ExecutorService dbExecutor) {
+                         IIActorSystem system, ManagedThreadPool dbExecutor) {
         super(actorName, logStore, system);
         this.dbExecutor = dbExecutor;
     }
@@ -351,7 +351,7 @@ public class LogStoreActor extends IIActorRef<DistributedLogStore> {
      *
      * @return the executor service used for database operations
      */
-    public ExecutorService getDbExecutor() {
+    public ManagedThreadPool getDbExecutor() {
         return dbExecutor;
     }
 

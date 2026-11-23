@@ -17,10 +17,10 @@
 
 package com.scivicslab.turingworkflow.plugins.logdb;
 
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import com.scivicslab.pojoactor.core.ActorRef;
+import com.scivicslab.pojoactor.core.ManagedThreadPool;
 import com.scivicslab.pojoactor.core.accumulator.Accumulator;
 
 /**
@@ -56,8 +56,8 @@ public class DatabaseAccumulator implements Accumulator {
 
     /** The actor reference used to send log entries to the distributed log store. */
     private final ActorRef<DistributedLogStore> logStoreActor;
-    /** The executor service used to perform asynchronous database write operations. */
-    private final ExecutorService dbExecutor;
+    /** The managed thread pool whose real thread performs the database writes, in the log store actor's turn. */
+    private final ManagedThreadPool dbExecutor;
     /** The session ID used to associate all accumulated log entries with a specific workflow execution. */
     private final long sessionId;
     /**
@@ -70,11 +70,11 @@ public class DatabaseAccumulator implements Accumulator {
      * Initializes a new DatabaseAccumulator that writes output to an H2 database asynchronously.
      *
      * @param logStoreActor the actor reference for the distributed log store
-     * @param dbExecutor the executor service for async DB writes
+     * @param dbExecutor the managed thread pool for async DB writes
      * @param sessionId the session ID for this workflow execution
      */
     public DatabaseAccumulator(ActorRef<DistributedLogStore> logStoreActor,
-                               ExecutorService dbExecutor,
+                               ManagedThreadPool dbExecutor,
                                long sessionId) {
         this.logStoreActor = logStoreActor;
         this.dbExecutor = dbExecutor;
