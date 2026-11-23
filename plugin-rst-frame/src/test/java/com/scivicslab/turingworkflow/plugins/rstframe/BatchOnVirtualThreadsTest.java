@@ -62,14 +62,15 @@ class BatchOnVirtualThreadsTest {
         AtomicInteger inFlight = new AtomicInteger();
         AtomicInteger mostAtOnce = new AtomicInteger();
         ThreadMXBean threads = ManagementFactory.getThreadMXBean();
-        long startedBefore;
-        long realThreadsStarted;
+        java.util.Set<Long> idsBefore;
+        java.util.List<String> newRealThreads;
 
         String summary;
         try (BookStore store = BookStore.forWriting("jdbc:h2:" + db + ";AUTO_SERVER=TRUE")) {
             // Counted from here: the store is open, so H2's own real threads are already running.
             startCarriers();
-            startedBefore = threads.getTotalStartedThreadCount();
+            idsBefore = new java.util.HashSet<>();
+            for (long id : threads.getAllThreadIds()) idsBefore.add(id);
             summary = SectionTagging.tagAll(store, "core", List.of(), q -> {
                 virtual.add(Thread.currentThread().isVirtual());
                 mostAtOnce.accumulateAndGet(inFlight.incrementAndGet(), Math::max);
@@ -82,13 +83,24 @@ class BatchOnVirtualThreadsTest {
                 }
                 return fair(q);
             }, PARALLEL, line -> { });
-            realThreadsStarted = threads.getTotalStartedThreadCount() - startedBefore;
+            // Real threads that are new and still alive after the batch, not counting the JVM's own JIT
+            // compiler threads, the JDK's virtual-thread scheduler threads and H2's own threads, which start by
+            // themselves while the batch runs. The batch's own code makes none.
+            newRealThreads = new java.util.ArrayList<>();
+            for (java.lang.management.ThreadInfo info : threads.getThreadInfo(threads.getAllThreadIds())) {
+                if (info != null && !idsBefore.contains(info.getThreadId())
+                        && !info.getThreadName().contains("CompilerThread")
+                        && !info.getThreadName().startsWith("ForkJoinPool-")   // the JDK's virtual-thread scheduler threads
+                        && !info.getThreadName().startsWith("H2-")) {          // H2's own writer threads, started on the first write
+                    newRealThreads.add(info.getThreadName());
+                }
+            }
         }
 
         assertEquals(SECTIONS + " section(s) of core made into rule files, 0 failed", summary);
         assertTrue(virtual.size() >= SECTIONS, "the writer was asked " + virtual.size() + " times");
         assertTrue(virtual.stream().allMatch(v -> v), "every item ran on a virtual thread: " + virtual);
         assertEquals(PARALLEL, mostAtOnce.get(), "at most, and up to, " + PARALLEL + " items at once");
-        assertEquals(0, realThreadsStarted, "real threads started during the batch");
+        assertTrue(newRealThreads.isEmpty(), "real threads started during the batch: " + newRealThreads);
     }
 }
