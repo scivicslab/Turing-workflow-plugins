@@ -50,7 +50,7 @@ class AutomaticModuleNameIT {
         EXPECTED.put("plugin-ssh", plugins + "ssh");
         EXPECTED.put("plugin-inventory", plugins + "inventory");
         EXPECTED.put("plugin-web", plugins + "web");
-        EXPECTED.put("plugin-chatui3", plugins + "chatui3");
+        EXPECTED.put("plugin-chatui", plugins + "chatui");
         EXPECTED.put("plugin-fineweb-search", plugins + "finewebsearch");
         EXPECTED.put("plugin-openalex", plugins + "openalex");
         EXPECTED.put("plugin-arxiv", plugins + "arxiv");
