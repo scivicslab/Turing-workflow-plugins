@@ -7,12 +7,12 @@
     <parent>
         <groupId>com.scivicslab.turingworkflow.plugins</groupId>
         <artifactId>turing-workflow-plugins-parent</artifactId>
-        <version>5.0.0-SNAPSHOT</version>
+        <version>5.0.0</version>
     </parent>
 
     <artifactId>plugin-chatui</artifactId>
     <!-- Declared rather than inherited from the parent, as in the other modules. -->
-    <version>5.0.0-SNAPSHOT</version>
+    <version>5.0.0</version>
     <name>Turing Workflow Plugin: ChatUI</name>
     <description>Actor that calls one conversation of chat-ui-with-audit-trail through its REST API: send a prompt and read the answer from the history, cancel, status, conversation, models, provider, chats, sessions, turns, trace</description>
 

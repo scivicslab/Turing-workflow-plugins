@@ -7,7 +7,7 @@
     <parent>
         <groupId>com.scivicslab.turingworkflow.plugins</groupId>
         <artifactId>turing-workflow-plugins-parent</artifactId>
-        <version>5.0.0-SNAPSHOT</version>
+        <version>5.0.0</version>
     </parent>
 
     <!-- Not published. It checks the jars that are published: pojo-actor, turing-workflow and every
@@ -15,7 +15,7 @@
          A jar exists only after the package phase, so the check is a failsafe test that runs in
          integration-test, after every module it depends on has been packaged. -->
     <artifactId>module-path-check</artifactId>
-    <version>5.0.0-SNAPSHOT</version>
+    <version>5.0.0</version>
     <name>Turing Workflow Plugins: module path check</name>
     <description>Resolves the published jars on the module path (not published)</description>
 

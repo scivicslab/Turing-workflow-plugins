@@ -1,10 +1,47 @@
 # Changelog
 
-## 5.0.0 (draft)
+## 5.0.0
 
 Changes since `v4.8.0` (`7a76ef5`). The plugins move to 5.0.0 together with POJO-actor 5.0.0 and Turing-workflow 5.0.0 (see their `CHANGELOG.md`). Most entries below follow one rule: an action that did not do all its work returns `false` with the reason, and a wait on another process or server has a limit.
 
 Breaking changes for Java callers are in `plugin-rst-frame`: the public constructor `BookStore(String)` is gone, and a books database from before schema version 2 is refused until it is migrated.
+
+### `plugin-chatui` replaces `plugin-chatui3`
+
+Commit `0822dd8`. `plugin-chatui3`, which called quarkus-chat-ui3, is removed. `plugin-chatui` calls the chat-ui that runs today (chat-ui-with-audit-trail, through `/api/projects` and `/api/sessions`). Its actions work on one conversation, `project1/chat-01` at first: `setBaseUrl`, `setChat`, `setTimeLimits`, `send`, `cancel`, `getStatus`, `getConversation`, `clearConversation`.
+
+**What 4.8 YAML must change:** a workflow that loaded `plugin-chatui3` loads `plugin-chatui` and uses its actions.
+
+### `plugin-ssh`: a host key that is not in `known_hosts` is refused
+
+Commit `977c3ad`. Up to 4.8.0, with no `~/.ssh/known_hosts`, every host key was accepted on every connection, so anyone on the network path could answer as the host. Now a key that is not in `~/.ssh/known_hosts` is refused, for the jump host too. A program that must accept unknown keys says so by name: `-Dturingworkflow.ssh.acceptUnknownHostKeys=true`, which logs a warning at every connection. `NodeInterpreter` also quotes and checks every path and URL it puts in a shell command line (`538080a`).
+
+**What 4.8 code must change:** add each host to `~/.ssh/known_hosts` (`ssh-keyscan`, after checking the fingerprint).
+
+### Listening and inputs: `log-serve` binds to 127.0.0.1; the book steps' `db` is a file path
+
+- `log-serve` listens on 127.0.0.1 unless `--bind` names another address, and says so when it does (`869e2b6`).
+- The `db` argument of the `plugin-rst-frame` book steps is a file path and can no longer add settings to the JDBC URL (`5826f1d`).
+
+### Threads: no real thread outside the `ManagedThreadPool`
+
+Commits `5fc9247`, `d2b3c35`, `58836d9`, `b29724f`, `af2954b`, `916f5a5`.
+
+- Every `HttpClient` is built with a virtual-thread executor; without one the JDK makes a pool of real threads of its own.
+- `plugin-rst-frame` batches run their items on virtual threads, at most `parallel` at once.
+- The database write pool of `plugin-log-db` and `plugin-inventory` is a `ManagedThreadPool`.
+- `NodeGroupActor.apply` orchestrates like the interpreter's `apply`: a plain step runs its nodes in parallel, each node's work in that node's turn.
+- The guard test of `module-path-check` reads every module's `src/main/java` and fails on a real thread made outside the `ManagedThreadPool`.
+
+**What 4.8 YAML or code must change:** nothing. Nodes of one `apply` may now run at the same time.
+
+### A reply cut off at the token limit, or with no text, is a failure
+
+Commits `a66ef65`, `406c0f3`, `488668c`. `plugin-llm` (`callOpenAi`), `plugin-kana-kanji` (vLLM) and `plugin-rst-frame` treat a reply cut off at `max_tokens`, empty or unreadable as a failed action or item, with the reason, instead of using the partial text.
+
+### Dependencies
+
+`org.json` 20260719, which fixes CVE-2026-59171 (an unbounded number in `JSONTokener`) (`1368cf0`).
 
 ### `plugin-codedoc`: lists come back in the result; lists and texts go in as values
 
