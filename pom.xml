@@ -167,6 +167,13 @@
                         <goals>
                             <goal>jar</goal>
                         </goals>
+                        <configuration>
+                            <!-- No bundled web fonts: about 3.9 MB of every javadoc jar, unused by IDEs and
+                                 javadoc.io, and the bulk of each release's size on Maven Central. -->
+                            <additionalOptions>
+                                <additionalOption>--no-fonts</additionalOption>
+                            </additionalOptions>
+                        </configuration>
                     </execution>
                     <execution>
                         <id>generate-plugin-manifest</id>
