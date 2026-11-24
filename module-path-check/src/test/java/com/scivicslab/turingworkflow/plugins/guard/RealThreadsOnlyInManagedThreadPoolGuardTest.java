@@ -58,8 +58,10 @@ import org.junit.jupiter.api.Test;
  *       statement without {@code .executor(}.</li>
  * </ul>
  * <p>{@code Executors.newVirtualThreadPerTaskExecutor()} and {@code Thread.ofVirtual()} make
- * virtual threads and are allowed. The exemptions are listed in {@link #EXEMPT}, each with its
- * reason; nothing else is exempted.</p>
+ * virtual threads and are allowed, and so is an {@code Executors} pool whose own arguments build its
+ * thread factory with {@code Thread.ofVirtual()}: every thread of that pool is a virtual thread. A pool
+ * given a factory built anywhere else is reported, since this test cannot tell what that factory makes.
+ * The exemptions are listed in {@link #EXEMPT}, each with its reason; nothing else is exempted.</p>
  */
 @DisplayName("src/main/java makes no real thread outside the ManagedThreadPool")
 class RealThreadsOnlyInManagedThreadPoolGuardTest {
@@ -129,6 +131,7 @@ class RealThreadsOnlyInManagedThreadPoolGuardTest {
         static final Pattern ASYNC = Pattern.compile("\\b(\\w+Async)\\s*\\(");
         static final Pattern HTTP_BUILDER = Pattern.compile("\\bHttpClient\\s*\\.\\s*newBuilder\\s*\\(");
         static final Pattern EXECUTOR_CALL = Pattern.compile("\\.\\s*executor\\s*\\(");
+        static final Pattern VIRTUAL_FACTORY = Pattern.compile("\\bThread\\s*\\.\\s*ofVirtual\\s*\\(");
 
         private RealThreadScan() {
         }
@@ -161,6 +164,10 @@ class RealThreadsOnlyInManagedThreadPoolGuardTest {
             for (Rule rule : RULES) {
                 Matcher m = rule.pattern().matcher(code);
                 while (m.find()) {
+                    if (rule == RULES.get(0) && VIRTUAL_FACTORY.matcher(
+                            code.substring(m.end() - 1, statementEnd(code, m.end(), 1))).find()) {
+                        continue;  // an Executors pool given Thread.ofVirtual()'s factory: virtual threads only
+                    }
                     offsets.add(m.start());
                     what.add(rule.what() + ": " + m.group().replaceAll("\\s+", " ").trim());
                 }

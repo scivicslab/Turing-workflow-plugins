@@ -58,6 +58,7 @@ class NodeGroupApplyThreadsTest {
         final List<ChildRun> runs = new CopyOnWriteArrayList<>();
         final AtomicInteger running = new AtomicInteger();
         final AtomicInteger mostAtOnce = new AtomicInteger();
+        final List<IIActorRef<Object>> children = new CopyOnWriteArrayList<>();
 
         Group(String name, int children, CyclicBarrier together) {
             ref = new NodeGroupActor(name, new NodeGroupInterpreter(new NodeGroup(), system), system);
@@ -87,6 +88,7 @@ class NodeGroupApplyThreadsTest {
                     }
                 }
             };
+            children.add(child);
             child.setParentName(ref.getName());
             ref.getNamesOfChildren().add(childName);
             system.addIIActor(child);
@@ -136,25 +138,54 @@ class NodeGroupApplyThreadsTest {
     }
 
     @Test
-    @DisplayName("on a pool real thread: children run on that thread, one after another")
-    void fromPoolRealThread() {
+    @DisplayName("on a pool real thread: each child's work runs in that child's turn, on a pool real thread")
+    void fromPoolRealThread() throws Exception {
         system = new IIActorSystem("group-apply-from-pool", 2);
         Group group = new Group("group", 3, null);
+        IIActorRef<Object> held = group.children.get(1);
         AtomicReference<Thread> applying = new AtomicReference<>();
 
-        ActionResult result = assertTimeoutPreemptively(LIMIT, () -> group.ref.ask(o -> {
+        // Another message holds group-node-1's turn: its mailbox virtual thread is inside it.
+        CountDownLatch holding = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        held.ask(o -> {
+            holding.countDown();
+            try {
+                release.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return null;
+        });
+        assertThat(holding.await(10, TimeUnit.SECONDS)).as("group-node-1's turn is held").isTrue();
+
+        CompletableFuture<ActionResult> applied = group.ref.ask(o -> {
             applying.set(Thread.currentThread());
             return group.apply();
-        }, system.getManagedThreadPool()).get());
+        }, system.getManagedThreadPool());
+
+        // The other two children run; group-node-1's work waits for its turn instead of entering the
+        // object while another message is inside it.
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (group.runs.size() < 2 && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        Thread.sleep(300);
+        assertThat(group.runs).as("only the two children whose turn is free have run").hasSize(2);
+        assertThat(group.runs).as("group-node-1 ran while another message held its turn")
+            .noneMatch(r -> r.child().equals(held.getName()));
+        assertThat(applied.isDone()).as("apply waits for group-node-1").isFalse();
+
+        release.countDown();
+        ActionResult result = assertTimeoutPreemptively(LIMIT, () -> applied.get());
 
         assertThat(result.isSuccess()).as(result.getResult()).isTrue();
         assertThat(result.getResult()).isEqualTo("Applied to 3 actors");
+        assertThat(applying.get().isVirtual()).as("apply ran on %s", applying.get()).isFalse();
         assertThat(group.runs).hasSize(3);
         for (ChildRun run : group.runs) {
-            assertThat(run.thread()).as(run.child()).isSameAs(applying.get());
-            assertThat(run.onPoolRealThread()).isTrue();
+            assertThat(run.onPoolRealThread()).as("%s ran on %s", run.child(), run.thread()).isTrue();
         }
-        assertThat(group.mostAtOnce.get()).isEqualTo(1);
     }
 
     @Test

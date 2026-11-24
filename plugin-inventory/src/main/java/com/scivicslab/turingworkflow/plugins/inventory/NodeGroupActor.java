@@ -798,9 +798,10 @@ public class NodeGroupActor extends IIActorRef<NodeGroupInterpreter> {
             // ask(action, pool); nothing here runs on commonPool. Called on a thread that is not
             // one of the pool's real threads (this actor's mailbox virtual thread, say), the
             // children run in parallel on the pool's real threads and this thread waits for them.
-            // Called on one of the pool's real threads, as a workflow step reaches it, ask runs
-            // each child right here, one after another (ActorRef's inline rule): no parallelism,
-            // but no pool real thread waits for work queued behind itself.
+            // Called on one of the pool's real threads, as a workflow step reaches it, each child's
+            // work is still taken in that child's turn, through its receive loop, and may run on any
+            // of the pool's real threads; this real thread runs queued pool work while it waits for
+            // each answer (awaitHelping), so it never waits for work that only it could run.
             ManagedThreadPool pool = this.system().getManagedThreadPool();
             List<CompletableFuture<Void>> futures = new ArrayList<>();
 

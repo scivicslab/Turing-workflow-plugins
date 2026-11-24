@@ -25,6 +25,9 @@ class BatchOnVirtualThreadsTest {
     private static final int SECTIONS = 6;
     private static final int PARALLEL = 2;
 
+    /** The real threads H2's MVStore starts for its background writes, by their exact names. */
+    private static final java.util.Set<String> H2_WRITERS = java.util.Set.of("H2-serialization", "H2-save");
+
     private static String fair(String q) {
         if (q.contains("misread")) return q.substring(q.indexOf("The paragraph:\n") + 15, q.indexOf("\n\nParagraph after:"));
         long n = q.lines().filter(l -> l.matches("^\\d+\\. .*")).count();
@@ -43,6 +46,14 @@ class BatchOnVirtualThreadsTest {
             }));
         }
         for (Thread t : spinners) t.join();
+        // A virtual thread that sleeps starts the JDK's timer for virtual threads (ForkJoinPool-N-delayScheduler).
+        Thread.ofVirtual().start(() -> {
+            try {
+                Thread.sleep(1);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }).join();
     }
 
     @Test
@@ -67,7 +78,7 @@ class BatchOnVirtualThreadsTest {
 
         String summary;
         try (BookStore store = BookStore.forWriting("jdbc:h2:" + db + ";AUTO_SERVER=TRUE")) {
-            // Counted from here: the store is open, so H2's own real threads are already running.
+            // Counted from here: the store is open, and the JDK's virtual-thread carriers and timer are running.
             startCarriers();
             idsBefore = new java.util.HashSet<>();
             for (long id : threads.getAllThreadIds()) idsBefore.add(id);
@@ -83,15 +94,14 @@ class BatchOnVirtualThreadsTest {
                 }
                 return fair(q);
             }, PARALLEL, line -> { });
-            // Real threads that are new and still alive after the batch, not counting the JVM's own JIT
-            // compiler threads, the JDK's virtual-thread scheduler threads and H2's own threads, which start by
-            // themselves while the batch runs. The batch's own code makes none.
+            // Real threads that are new and still alive after the batch. Not counted: the JVM's own JIT compiler
+            // threads, which it adds when it compiles more, and H2's two background writers, which H2 starts by
+            // itself when it decides to write in the background; their exact names are H2's own.
             newRealThreads = new java.util.ArrayList<>();
             for (java.lang.management.ThreadInfo info : threads.getThreadInfo(threads.getAllThreadIds())) {
                 if (info != null && !idsBefore.contains(info.getThreadId())
                         && !info.getThreadName().contains("CompilerThread")
-                        && !info.getThreadName().startsWith("ForkJoinPool-")   // the JDK's virtual-thread scheduler threads
-                        && !info.getThreadName().startsWith("H2-")) {          // H2's own writer threads, started on the first write
+                        && !H2_WRITERS.contains(info.getThreadName())) {
                     newRealThreads.add(info.getThreadName());
                 }
             }
